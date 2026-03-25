@@ -24,7 +24,7 @@ from typing import AsyncIterator
 import httpx
 import yaml
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from .model_manager import ModelManager
 from .orchestrator import Orchestrator
@@ -163,12 +163,18 @@ async def models() -> JSONResponse:
 
 
 # ---------------------------------------------------------------------------
-# Health / root — Open WebUI probes this on startup
+# UI — serve the chat interface
 # ---------------------------------------------------------------------------
 
+_STATIC = os.path.join(os.path.dirname(__file__), "static")
+
 @app.get("/")
+async def index() -> FileResponse:
+    return FileResponse(os.path.join(_STATIC, "index.html"))
+
+@app.get("/health")
 async def health() -> JSONResponse:
-    return JSONResponse(content={"status": "ok", "service": "local-ai-orchestrator"})
+    return JSONResponse(content={"status": "ok"})
 
 
 # ---------------------------------------------------------------------------

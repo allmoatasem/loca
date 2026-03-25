@@ -4,7 +4,6 @@
 DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
 LMS="$HOME/.lmstudio/bin/lms"
 VENV="$DIR/.venv"
-VENV_WEBUI="$DIR/.venv-webui"
 VENV_SEARXNG="$DIR/.venv-searxng"
 SEARXNG_SRC="$DIR/searxng"
 
@@ -23,10 +22,9 @@ notify() {
 
 shutdown() {
     notify "Shutting down Loca..."
-    [ -f /tmp/loca-searxng.pid ] && kill "$(cat /tmp/loca-searxng.pid)" 2>/dev/null
-    [ -f /tmp/loca-proxy.pid ]   && kill "$(cat /tmp/loca-proxy.pid)"   2>/dev/null
-    [ -f /tmp/loca-webui.pid ]   && kill "$(cat /tmp/loca-webui.pid)"   2>/dev/null
-    [ -f "$LMS" ] && "$LMS" server stop 2>/dev/null
+    [ -f /tmp/loca-searxng.pid ] && kill "$(cat /tmp/loca-searxng.pid)" 2>/dev/null || true
+    [ -f /tmp/loca-proxy.pid ]   && kill "$(cat /tmp/loca-proxy.pid)"   2>/dev/null || true
+    [ -f "$LMS" ] && "$LMS" server stop 2>/dev/null || true
     exit 0
 }
 
@@ -41,13 +39,11 @@ if [ ! -f "$LMS" ]; then
     bail "LM Studio CLI not found. Install LM Studio from lmstudio.ai."
 fi
 
-# Open the LM Studio GUI if it isn't running
 if ! pgrep -x "LM Studio" > /dev/null 2>&1; then
     open -a "LM Studio"
-    sleep 10   # give the GUI time to fully initialise before we poke the CLI
+    sleep 10
 fi
 
-# Retry lms server start up to 3 times in case the GUI isn't quite ready
 for attempt in 1 2 3; do
     "$LMS" server start 2>/dev/null || true
     sleep 4
@@ -55,11 +51,9 @@ for attempt in 1 2 3; do
     [ "$attempt" -eq 3 ] || sleep 6
 done
 
-# Wait up to 3 min for port 1234 to accept connections; retry server start every 30 s
 for i in $(seq 1 90); do
     sleep 2
     curl -s http://localhost:1234/v1/models > /dev/null 2>&1 && break
-    # Re-issue server start every 15 iterations (~30 s)
     [ $((i % 15)) -eq 0 ] && "$LMS" server start 2>/dev/null || true
     if [ "$i" -eq 90 ]; then
         bail "LM Studio server isn't responding on port 1234 after 3 min. Open LM Studio manually and check the server tab."
@@ -73,17 +67,11 @@ if [ ! -d "$VENV" ]; then
     "$VENV/bin/pip" install -r "$DIR/requirements.txt" -q || bail "Failed to install orchestrator dependencies."
 fi
 
-# ── 3. Open WebUI venv (first-run setup) ─────────────────────────────────────
+# ── 3. SearXNG setup (first-run) ─────────────────────────────────────────────
 if [ -z "$PYTHON312" ] || [ ! -f "$PYTHON312" ]; then
     bail "Python 3.12 not found. Run: brew install python@3.12"
 fi
-if [ ! -d "$VENV_WEBUI" ]; then
-    notify "First run: setting up Open WebUI (2-3 min)..."
-    "$PYTHON312" -m venv "$VENV_WEBUI" || bail "Failed to create Open WebUI venv."
-    "$VENV_WEBUI/bin/pip" install open-webui -q || bail "Failed to install Open WebUI."
-fi
 
-# ── 4. SearXNG setup (first-run) ─────────────────────────────────────────────
 if [ ! -d "$SEARXNG_SRC" ]; then
     notify "First run: cloning SearXNG..."
     git clone --depth=1 https://github.com/searxng/searxng "$SEARXNG_SRC" 2>/dev/null \
@@ -95,19 +83,18 @@ if [ ! -d "$VENV_SEARXNG" ]; then
     "$PYTHON312" -m venv "$VENV_SEARXNG" || bail "Failed to create SearXNG venv."
     "$VENV_SEARXNG/bin/pip" install -U pip setuptools wheel pyyaml -q \
         || bail "Failed to upgrade pip for SearXNG."
-    # Requirements must be installed first — setup.py imports them during editable install
     "$VENV_SEARXNG/bin/pip" install -r "$SEARXNG_SRC/requirements.txt" -q \
         || bail "Failed to install SearXNG requirements."
     "$VENV_SEARXNG/bin/pip" install --use-pep517 --no-build-isolation -e "$SEARXNG_SRC" -q \
         || bail "Failed to install SearXNG."
 fi
 
-# ── 5. Sync model list from LM Studio / Ollama → config.yaml ─────────────────
+# ── 4. Sync model list from LM Studio → config.yaml ──────────────────────────
 notify "Syncing models..."
 cd "$DIR"
 "$VENV/bin/python" src/model_sync.py >> /tmp/loca-proxy.log 2>&1 || true
 
-# ── 6. Start orchestrator proxy ───────────────────────────────────────────────
+# ── 5. Start orchestrator proxy ───────────────────────────────────────────────
 notify "Starting orchestrator proxy..."
 lsof -ti tcp:8000 | xargs kill -9 2>/dev/null || true
 cd "$DIR"
@@ -117,22 +104,11 @@ echo $! > /tmp/loca-proxy.pid
 
 for i in $(seq 1 20); do
     sleep 1
-    curl -s http://localhost:8000/ > /dev/null 2>&1 && break
+    curl -s http://localhost:8000/health > /dev/null 2>&1 && break
     [ "$i" -eq 20 ] && bail "Orchestrator proxy didn't start. Check /tmp/loca-proxy.log"
 done
 
-# ── 7. Start Open WebUI ───────────────────────────────────────────────────────
-notify "Starting Open WebUI..."
-lsof -ti tcp:3000 | xargs kill -9 2>/dev/null || true
-
-OPENAI_API_BASE_URL=http://localhost:8000/v1 \
-OPENAI_API_KEY=local \
-WEBUI_AUTH=False \
-"$VENV_WEBUI/bin/open-webui" serve --port 3000 \
-    > /tmp/loca-webui.log 2>&1 &
-echo $! > /tmp/loca-webui.pid
-
-# ── 8. Start SearXNG ─────────────────────────────────────────────────────────
+# ── 6. Start SearXNG ─────────────────────────────────────────────────────────
 notify "Starting SearXNG..."
 lsof -ti tcp:8888 | xargs kill -9 2>/dev/null || true
 cd "$SEARXNG_SRC"
@@ -148,24 +124,17 @@ for i in $(seq 1 30); do
     [ "$i" -eq 30 ] && bail "SearXNG didn't start. Check /tmp/loca-searxng.log"
 done
 
-# ── 9. Wait for Open WebUI then open browser ──────────────────────────────────
-notify "Waiting for Open WebUI to load..."
-for i in $(seq 1 60); do
-    sleep 2
-    curl -s http://localhost:3000 > /dev/null 2>&1 && break
-    [ "$i" -eq 60 ] && bail "Open WebUI didn't start. Check /tmp/loca-webui.log"
-done
-
-open http://localhost:3000
+# ── 7. Open the UI ────────────────────────────────────────────────────────────
+open http://localhost:8000
 notify "Loca is ready."
 
-# ── Keep alive ────────────────────────────────────────────────────────────────
+# ── Keep alive + watchdog ─────────────────────────────────────────────────────
 trap shutdown INT TERM EXIT
 
 while true; do
     sleep 15
 
-    # LM Studio server — restart automatically if it was stopped
+    # LM Studio server watchdog
     if [ -f "$LMS" ] && ! "$LMS" server status 2>&1 | grep -q "running"; then
         notify "LM Studio server stopped — restarting..."
         if ! pgrep -x "LM Studio" > /dev/null 2>&1; then
@@ -177,14 +146,13 @@ while true; do
             sleep 4
             "$LMS" server status 2>&1 | grep -q "running" && break
         done
-        # Wait for port
         for j in $(seq 1 30); do
             sleep 2
             curl -s http://localhost:1234/v1/models > /dev/null 2>&1 && break
         done
     fi
 
-    # Orchestrator proxy
+    # Orchestrator proxy watchdog
     if ! kill -0 "$(cat /tmp/loca-proxy.pid 2>/dev/null)" 2>/dev/null; then
         cd "$DIR"
         "$VENV/bin/python" -m uvicorn src.proxy:app --host 0.0.0.0 --port 8000 \
@@ -192,17 +160,7 @@ while true; do
         echo $! > /tmp/loca-proxy.pid
     fi
 
-    # Open WebUI
-    if ! kill -0 "$(cat /tmp/loca-webui.pid 2>/dev/null)" 2>/dev/null; then
-        OPENAI_API_BASE_URL=http://localhost:8000/v1 \
-        OPENAI_API_KEY=local \
-        WEBUI_AUTH=False \
-        "$VENV_WEBUI/bin/open-webui" serve --port 3000 \
-            >> /tmp/loca-webui.log 2>&1 &
-        echo $! > /tmp/loca-webui.pid
-    fi
-
-    # SearXNG
+    # SearXNG watchdog
     if ! kill -0 "$(cat /tmp/loca-searxng.pid 2>/dev/null)" 2>/dev/null; then
         cd "$SEARXNG_SRC"
         SEARXNG_SETTINGS_PATH="$DIR/searxng-settings.yml" \
