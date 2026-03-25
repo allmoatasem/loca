@@ -84,16 +84,17 @@ async def openai_chat(request: Request) -> Response:
     messages: list[dict] = body.get("messages", [])
     stream: bool = body.get("stream", False)
     has_image = _detect_image(messages)
+    model_hint: str | None = body.get("model")
 
     assert _orchestrator is not None
 
     if stream:
         return StreamingResponse(
-            _openai_stream_response(_orchestrator, messages, has_image),
+            _openai_stream_response(_orchestrator, messages, has_image, model_hint),
             media_type="text/event-stream",
         )
 
-    response_data = await _orchestrator.handle(messages, has_image=has_image, stream=False)
+    response_data = await _orchestrator.handle(messages, has_image=has_image, stream=False, model_hint=model_hint)
     # response_data is already an OpenAI-shaped dict from LM Studio — pass it through
     content = ""
     try:
@@ -120,9 +121,10 @@ async def _openai_stream_response(
     orchestrator: Orchestrator,
     messages: list[dict],
     has_image: bool,
+    model_hint: str | None = None,
 ) -> AsyncIterator[bytes]:
     try:
-        gen = await orchestrator.handle(messages, has_image=has_image, stream=True)
+        gen = await orchestrator.handle(messages, has_image=has_image, stream=True, model_hint=model_hint)
         async for chunk in gen:
             delta = {"role": "assistant", "content": chunk}
             payload = json.dumps({
@@ -150,20 +152,14 @@ async def _openai_stream_response(
 
 @app.get("/v1/models")
 async def models() -> JSONResponse:
-    lmstudio_url = _config.get("proxy", {}).get("lmstudio_base_url", "http://localhost:1234")
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        try:
-            resp = await client.get(f"{lmstudio_url}/v1/models")
-            resp.raise_for_status()
-            return JSONResponse(content=resp.json())
-        except httpx.HTTPError:
-            # Fallback: return our configured model aliases
-            models_cfg = _config.get("models", {})
-            model_list = [
-                {"id": alias, "object": "model", "owned_by": "local"}
-                for alias in models_cfg
-            ]
-            return JSONResponse(content={"object": "list", "data": model_list})
+    # Always return our friendly model aliases so Open WebUI's dropdown is clean
+    # and model selection maps directly to routing logic.
+    models_cfg = _config.get("models", {})
+    model_list = [
+        {"id": alias, "object": "model", "owned_by": "local"}
+        for alias in models_cfg
+    ]
+    return JSONResponse(content={"object": "list", "data": model_list})
 
 
 # ---------------------------------------------------------------------------

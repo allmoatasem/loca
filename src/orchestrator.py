@@ -53,9 +53,10 @@ class Orchestrator:
         messages: list[dict],
         has_image: bool = False,
         stream: bool = False,
+        model_hint: str | None = None,
     ) -> dict | AsyncIterator[str]:
         user_message = _last_user_content(messages)
-        result: RouteResult = route(user_message, has_image=has_image)
+        result: RouteResult = route(user_message, has_image=has_image, model_hint=model_hint)
         logger.info(f"Route: {result.model.value} | {result.reason} | search={result.search_triggered}")
 
         model_name, api_base = await self.mm.ensure_loaded(result.model)

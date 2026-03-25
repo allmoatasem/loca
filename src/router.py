@@ -149,10 +149,19 @@ def _parse_web_command(message: str) -> tuple[str | None, str]:
 # Public API
 # ---------------------------------------------------------------------------
 
+_MODEL_HINT_MAP = {
+    "general": Model.GENERAL,
+    "reason": Model.REASON,
+    "code": Model.CODE,
+    "write": Model.WRITE,
+}
+
+
 def route(
     message: str,
     has_image: bool = False,
     conversation_history: list[dict] | None = None,
+    model_hint: str | None = None,
 ) -> RouteResult:
     """
     Determine which model to use and whether a web search should be triggered.
@@ -162,6 +171,9 @@ def route(
         has_image:            True if the request includes an attached image.
         conversation_history: Prior messages (unused by heuristic router but
                                available for future enhancement).
+        model_hint:           Model name from the client request (e.g. Open WebUI
+                               model selector). Overrides content-based routing if
+                               it matches a known model alias.
 
     Returns:
         RouteResult with .model, .reason, .search_triggered, .search_query
@@ -170,6 +182,20 @@ def route(
     web_query, message = _parse_web_command(message)
     search_triggered = web_query is not None
     search_query = web_query
+
+    # 1b. Honour explicit model selection from the client (e.g. Open WebUI dropdown)
+    if model_hint and model_hint.lower() in _MODEL_HINT_MAP:
+        forced_model = _MODEL_HINT_MAP[model_hint.lower()]
+        # Still auto-detect search intent for the chosen model
+        if not search_triggered and _any_match(message, _SEARCH_KEYWORDS):
+            search_triggered = True
+            search_query = message
+        return RouteResult(
+            model=forced_model,
+            reason=f"Client selected model: {model_hint}",
+            search_triggered=search_triggered,
+            search_query=search_query,
+        )
 
     # 2. Image attached → always general
     if has_image:
