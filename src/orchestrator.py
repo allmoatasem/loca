@@ -145,13 +145,32 @@ class Orchestrator:
         stream: bool = False,
     ) -> dict:
         """Call LM Studio's OpenAI-compatible /v1/chat/completions endpoint."""
+        import asyncio
         payload = {"model": model, "messages": messages, "stream": stream}
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            resp = await client.post(
-                f"{self._lmstudio_base}/v1/chat/completions", json=payload
-            )
-            resp.raise_for_status()
-            return resp.json()
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            if attempt:
+                await asyncio.sleep(3 * attempt)  # 3s, 6s
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                try:
+                    resp = await client.post(
+                        f"{self._lmstudio_base}/v1/chat/completions", json=payload
+                    )
+                    if resp.status_code == 400 and attempt < 2:
+                        logger.warning(f"LM Studio 400 on attempt {attempt + 1}, retrying (model may still be loading)...")
+                        last_exc = httpx.HTTPStatusError(
+                            f"400 Bad Request", request=resp.request, response=resp
+                        )
+                        continue
+                    resp.raise_for_status()
+                    return resp.json()
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code in (400, 503) and attempt < 2:
+                        logger.warning(f"LM Studio {e.response.status_code} on attempt {attempt + 1}, retrying...")
+                        last_exc = e
+                        continue
+                    raise
+        raise last_exc  # type: ignore[misc]
 
     # ------------------------------------------------------------------
     # Tool execution dispatcher

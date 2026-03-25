@@ -26,7 +26,7 @@ routing:
   max_tool_calls_per_turn: 5
 
 search:
-  searxng_url: "http://100.64.0.1:8080"   # update with actual EliteDesk Tailscale IP
+  searxng_url: "http://127.0.0.1:8888"
   max_results: 5
   max_tokens_per_result: 500
   content_extractor: "trafilatura"

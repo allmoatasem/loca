@@ -1,6 +1,10 @@
 # Python virtualenvs
 .venv/
 .venv-webui/
+.venv-searxng/
+
+# SearXNG source clone (fetched at first run)
+searxng/
 
 # Byte-compiled / cache
 __pycache__/

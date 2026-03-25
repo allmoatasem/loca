@@ -1,0 +1,24 @@
+use_default_settings: true
+
+general:
+  instance_name: "Loca Search"
+  debug: false
+
+server:
+  secret_key: "loca-local-only-do-not-expose"
+  bind_address: "127.0.0.1"
+  port: 8888
+  limiter: false        # no Redis needed on local instance
+  image_proxy: true
+
+search:
+  safe_search: 0
+  default_lang: "en"
+  ban_time_on_fail: 5
+  max_ban_time_on_fail: 120
+
+ui:
+  static_use_hash: true
+  infinite_scroll: false
+  default_theme: simple
+  query_in_title: false
