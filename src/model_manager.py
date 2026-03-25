@@ -4,11 +4,9 @@ Model manager — tracks which models are active and enforces the loading strate
   - Only one specialist loaded alongside general
   - Specialists unload after idle_unload_minutes of inactivity
 
-LM Studio exposes an OpenAI-compatible API at localhost:1234/v1.
-Loading is triggered by sending a warmup chat request (LM Studio loads the model
-on first use if it's configured in the server). Unloading is tracked in our state
-— LM Studio doesn't expose an HTTP unload endpoint, so idle timeout logging is
-advisory; the actual memory release happens when LM Studio swaps models on next use.
+Supports both LM Studio (default) and Ollama backends — each model entry in
+config.yaml may carry an optional `api_base` field that overrides the default
+LM Studio URL.  model_sync.py sets this automatically for Ollama models.
 """
 
 import asyncio
@@ -37,38 +35,41 @@ class ModelManager:
     # Public interface
     # ------------------------------------------------------------------
 
-    async def ensure_loaded(self, model: Model) -> str:
+    async def ensure_loaded(self, model: Model) -> tuple[str, str]:
         """
-        Ensure the model is active and return its lmstudio_name.
-        For specialists, unloads any conflicting specialist first (state tracking only —
-        LM Studio will handle the actual memory swap when the new model is called).
+        Ensure the model is active and return (lmstudio_name, api_base).
+        For specialists, evicts any conflicting specialist from state tracking first.
         """
         cfg = self._model_cfg[model.value]
         model_name: str = cfg["lmstudio_name"]
+        api_base: str = cfg.get("api_base", self.base_url)
 
         if model == Model.GENERAL:
             self._last_used[model.value] = time.time()
-            return model_name
+            return model_name, api_base
 
-        # Specialist: evict any different specialist from our state tracking
+        # Specialist: evict any different specialist from state tracking
         if self._loaded_specialist and self._loaded_specialist != model:
             logger.info(
                 f"Swapping specialist: {self._loaded_specialist.value} → {model.value} "
-                f"(LM Studio will release {self._loaded_specialist.value} on next model call)"
+                f"(backend will release {self._loaded_specialist.value} on next model call)"
             )
             self._loaded_specialist = None
 
         if self._loaded_specialist != model:
             logger.info(f"Loading specialist: {model.value} ({model_name})")
-            await self._warmup(model_name)
+            await self._warmup(model_name, api_base)
             self._loaded_specialist = model
 
         self._last_used[model.value] = time.time()
         self._schedule_idle_check()
-        return model_name
+        return model_name, api_base
 
     async def get_model_name(self, model: Model) -> str:
         return self._model_cfg[model.value]["lmstudio_name"]
+
+    async def get_model_api_base(self, model: Model) -> str:
+        return self._model_cfg[model.value].get("api_base", self.base_url)
 
     async def list_loaded(self) -> list[str]:
         """Return model IDs currently reported by LM Studio's /v1/models."""
@@ -83,18 +84,19 @@ class ModelManager:
                 return []
 
     # ------------------------------------------------------------------
-    # Warmup (load) via LM Studio
+    # Warmup (load trigger)
     # ------------------------------------------------------------------
 
-    async def _warmup(self, model_name: str) -> None:
+    async def _warmup(self, model_name: str, api_base: str | None = None) -> None:
         """
-        Send a minimal chat completion to trigger LM Studio to load the model.
-        LM Studio loads models on first request; this pre-warms before the real query.
+        Send a minimal chat completion to trigger the backend to load the model.
+        Non-fatal — the real request will still attempt the load if this fails.
         """
+        base = (api_base or self.base_url).rstrip("/")
         async with httpx.AsyncClient(timeout=120.0) as client:
             try:
                 await client.post(
-                    f"{self.base_url}/v1/chat/completions",
+                    f"{base}/v1/chat/completions",
                     json={
                         "model": model_name,
                         "messages": [{"role": "user", "content": "hi"}],
@@ -104,7 +106,6 @@ class ModelManager:
                 )
                 logger.info(f"Warmup complete: {model_name}")
             except httpx.HTTPError as e:
-                # Non-fatal — the real request will still attempt the load
                 logger.warning(f"Warmup request failed for {model_name}: {e}")
 
     # ------------------------------------------------------------------
@@ -132,7 +133,7 @@ class ModelManager:
             if idle_for >= idle_minutes:
                 logger.info(
                     f"Specialist {specialist.value} idle for {idle_for:.1f}m — "
-                    f"marking unloaded (LM Studio will release RAM on next model swap)"
+                    f"marking unloaded (backend will release RAM on next model swap)"
                 )
                 self._loaded_specialist = None
                 break

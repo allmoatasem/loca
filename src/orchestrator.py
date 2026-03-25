@@ -4,12 +4,13 @@ Orchestrator — the main request loop.
 Flow per turn:
   1. Route the message to a model
   2. Optionally trigger web search and inject results as system context
-  3. Call the model via LM Studio's OpenAI-compatible API (localhost:1234/v1)
+  3. Call the model via its backend API (LM Studio or Ollama, OpenAI-compatible)
   4. Parse any tool calls in the response
   5. Execute tools → inject results → re-call model (max N times)
   6. Return final response
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -53,38 +54,25 @@ class Orchestrator:
         has_image: bool = False,
         stream: bool = False,
     ) -> dict | AsyncIterator[str]:
-        """
-        Handle a full conversation turn.
-
-        Args:
-            messages:  OpenAI-style message list. Last message is the user turn.
-            has_image: Whether the request contains an image attachment.
-            stream:    If True, returns an async generator of text chunks.
-
-        Returns:
-            OpenAI-compatible /v1/chat/completions response dict (or async generator if stream=True).
-        """
         user_message = _last_user_content(messages)
         result: RouteResult = route(user_message, has_image=has_image)
         logger.info(f"Route: {result.model.value} | {result.reason} | search={result.search_triggered}")
 
-        model_name = await self.mm.ensure_loaded(result.model)
+        model_name, api_base = await self.mm.ensure_loaded(result.model)
         system_prompt = _load_system_prompt(result.model)
 
-        # Inject search results if triggered
         augmented_messages = list(messages)
         if result.search_triggered and result.search_query:
             search_ctx = await self._run_search(result.search_query)
             if search_ctx:
                 augmented_messages = _inject_search_context(augmented_messages, search_ctx)
 
-        # Build final message list with system prompt
         full_messages = _prepend_system(augmented_messages, system_prompt)
 
         if stream:
-            return self._stream_with_tools(model_name, full_messages, result)
+            return self._stream_with_tools(model_name, api_base, full_messages, result)
 
-        return await self._call_with_tools(model_name, full_messages, result)
+        return await self._call_with_tools(model_name, api_base, full_messages, result)
 
     # ------------------------------------------------------------------
     # Internal: model calls + tool loop
@@ -93,6 +81,7 @@ class Orchestrator:
     async def _call_with_tools(
         self,
         model_name: str,
+        api_base: str,
         messages: list[dict],
         route_result: RouteResult,
     ) -> dict:
@@ -100,7 +89,7 @@ class Orchestrator:
         tool_call_count = 0
 
         while tool_call_count <= self._max_tool_calls:
-            response = await self._lmstudio_chat(model_name, messages, stream=False)
+            response = await self._chat(model_name, api_base, messages, stream=False)
             assistant_text: str = _extract_content(response)
 
             tool_call = _extract_tool_call(assistant_text)
@@ -113,63 +102,64 @@ class Orchestrator:
             tool_result = await self._execute_tool(tool_name, tool_args)
             tool_result_text = json.dumps(tool_result, ensure_ascii=False)
 
-            # Append assistant turn + tool result as a user message
             messages = messages + [
                 {"role": "assistant", "content": assistant_text},
                 {"role": "user", "content": f"<tool_result tool=\"{tool_name}\">\n{tool_result_text}\n</tool_result>"},
             ]
             tool_call_count += 1
 
-        return await self._lmstudio_chat(model_name, messages, stream=False)
+        return await self._chat(model_name, api_base, messages, stream=False)
 
     async def _stream_with_tools(
         self,
         model_name: str,
+        api_base: str,
         messages: list[dict],
         route_result: RouteResult,
     ) -> AsyncIterator[str]:
-        """Streaming version: yields text chunks, handles tool calls mid-stream."""
-        # Collect the full response first (keeps tool-call logic simple),
-        # then stream it in chunks.
-        response = await self._call_with_tools(model_name, messages, route_result)
+        """Streaming: collects full response (for tool-call simplicity), yields in chunks."""
+        response = await self._call_with_tools(model_name, api_base, messages, route_result)
         content = _extract_content(response)
-        # Yield in chunks of 50 chars to simulate streaming
         chunk_size = 50
         for i in range(0, len(content), chunk_size):
             yield content[i: i + chunk_size]
 
-    async def _lmstudio_chat(
+    async def _chat(
         self,
         model: str,
+        api_base: str,
         messages: list[dict],
         stream: bool = False,
     ) -> dict:
-        """Call LM Studio's OpenAI-compatible /v1/chat/completions endpoint."""
-        import asyncio
+        """Call an OpenAI-compatible /v1/chat/completions endpoint with retry on 400/503."""
+        base = api_base.rstrip("/")
         payload = {"model": model, "messages": messages, "stream": stream}
         last_exc: Exception | None = None
+
         for attempt in range(3):
             if attempt:
-                await asyncio.sleep(3 * attempt)  # 3s, 6s
+                await asyncio.sleep(3 * attempt)  # 3 s, 6 s
             async with httpx.AsyncClient(timeout=300.0) as client:
                 try:
-                    resp = await client.post(
-                        f"{self._lmstudio_base}/v1/chat/completions", json=payload
-                    )
-                    if resp.status_code == 400 and attempt < 2:
-                        logger.warning(f"LM Studio 400 on attempt {attempt + 1}, retrying (model may still be loading)...")
+                    resp = await client.post(f"{base}/v1/chat/completions", json=payload)
+                    if resp.status_code in (400, 503) and attempt < 2:
+                        logger.warning(
+                            f"Backend {resp.status_code} on attempt {attempt + 1}, "
+                            "retrying (model may still be loading)..."
+                        )
                         last_exc = httpx.HTTPStatusError(
-                            f"400 Bad Request", request=resp.request, response=resp
+                            f"{resp.status_code}", request=resp.request, response=resp
                         )
                         continue
                     resp.raise_for_status()
                     return resp.json()
                 except httpx.HTTPStatusError as e:
                     if e.response.status_code in (400, 503) and attempt < 2:
-                        logger.warning(f"LM Studio {e.response.status_code} on attempt {attempt + 1}, retrying...")
+                        logger.warning(f"Backend {e.response.status_code} on attempt {attempt + 1}, retrying...")
                         last_exc = e
                         continue
                     raise
+
         raise last_exc  # type: ignore[misc]
 
     # ------------------------------------------------------------------
@@ -213,11 +203,10 @@ class Orchestrator:
                 )
 
             case "image_describe":
-                # Route to general (vision-capable) model using OpenAI image_url format
                 image_path = args.get("path", "")
                 general_name = await self.mm.get_model_name(Model.GENERAL)
+                general_base = await self.mm.get_model_api_base(Model.GENERAL)
                 prompt = args.get("prompt", "Describe this image in detail.")
-                # Build base64 data URL if given a file path, else assume it's already a URL/data URI
                 image_url = image_path if image_path.startswith(("http", "data:")) else f"file://{image_path}"
                 vision_messages = [{"role": "user", "content": [
                     {"type": "text", "text": prompt},
@@ -225,7 +214,7 @@ class Orchestrator:
                 ]}]
                 async with httpx.AsyncClient(timeout=120.0) as client:
                     resp = await client.post(
-                        f"{self._lmstudio_base}/v1/chat/completions",
+                        f"{general_base.rstrip('/')}/v1/chat/completions",
                         json={"model": general_name, "messages": vision_messages, "stream": False},
                     )
                     resp.raise_for_status()
@@ -261,7 +250,6 @@ def _last_user_content(messages: list[dict]) -> str:
         if msg.get("role") == "user":
             content = msg.get("content", "")
             if isinstance(content, list):
-                # multi-part (text + images)
                 return " ".join(
                     p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"
                 )
