@@ -1,0 +1,71 @@
+# Python virtualenvs
+.venv/
+.venv-webui/
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Distribution / build
+dist/
+build/
+*.egg-info/
+*.egg
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
+/tmp/localai-*.log
+/tmp/localai-*.pid
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+
+# App bundle (generated — rebuild with make_icon.py + script in Loca.app/Contents/MacOS/)
+Loca.app/
+
+# Icon generation artifacts
+*.iconset/
+
+# Spec / planning docs (reference only, not part of the runnable project)
+LOCAL_ORCHESTRATOR_SPEC.md
+SEARXNG_DEPLOYMENT_SPEC.md
+DEPENDENCIES.md
+
+# SearXNG deployment files (EliteDesk-specific, not part of this repo)
+docker-compose.searxng.yaml
+searxng-settings.yaml
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Env / secrets
+.env
+.env.*
+
+# Open WebUI runtime data
+.webui_secret_key
+data/
+uploads/
+cache/
+
+# Open WebUI database (if created at project root)
+webui.db
+*.db
+*.sqlite

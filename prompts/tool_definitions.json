@@ -1,0 +1,102 @@
+{
+  "tools": [
+    {
+      "name": "web_search",
+      "description": "Search the web via SearXNG for current information, news, prices, documentation, or anything the model might hallucinate.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The search query string"
+          }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "web_fetch",
+      "description": "Fetch and extract the readable text content from a specific URL.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The full URL to fetch"
+          }
+        },
+        "required": ["url"]
+      }
+    },
+    {
+      "name": "file_read",
+      "description": "Read the contents of a local file.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Absolute or relative path to the file"
+          }
+        },
+        "required": ["path"]
+      }
+    },
+    {
+      "name": "file_write",
+      "description": "Write or create a local file with the given content.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path where the file should be written"
+          },
+          "content": {
+            "type": "string",
+            "description": "The text content to write"
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "Whether to overwrite an existing file (default: true)",
+            "default": true
+          }
+        },
+        "required": ["path", "content"]
+      }
+    },
+    {
+      "name": "shell_exec",
+      "description": "Execute an allowed shell command and return stdout/stderr. Allowed: ls, cat, grep, find, wc, head, tail, git, python3, pwd.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "The shell command to run"
+          }
+        },
+        "required": ["command"]
+      }
+    },
+    {
+      "name": "image_describe",
+      "description": "Send an image to the vision-capable general model for analysis and description.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to the image file, or base64-encoded image data"
+          },
+          "prompt": {
+            "type": "string",
+            "description": "What to ask about the image",
+            "default": "Describe this image in detail."
+          }
+        },
+        "required": ["path"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+models:
+  general:
+    lmstudio_name: "qwen3.5-35b-a3b"
+    always_loaded: true
+    idle_unload_minutes: null
+    capabilities: [vision, code, chat, analysis]
+  reason:
+    lmstudio_name: "nvidia/nemotron-3-nano"
+    always_loaded: false
+    idle_unload_minutes: 10
+    capabilities: [reasoning, planning]
+  code:
+    lmstudio_name: "qwen/qwen3-coder-next"
+    always_loaded: false
+    idle_unload_minutes: 10
+    capabilities: [code]
+  write:
+    lmstudio_name: "qwen3.5-27b-claude-4.6-opus-distilled-mlx"
+    always_loaded: false
+    idle_unload_minutes: 10
+    capabilities: [creative_writing, summarization, drafting, instruction_following]
+
+routing:
+  default_model: general
+  code_complexity_threshold: "multi-file or >100 lines or architecture"
+  max_tool_calls_per_turn: 5
+
+search:
+  searxng_url: "http://100.64.0.1:8080"   # update with actual EliteDesk Tailscale IP
+  max_results: 5
+  max_tokens_per_result: 500
+  content_extractor: "trafilatura"
+
+tools:
+  shell_exec:
+    enabled: true
+    timeout_seconds: 30
+    allowed_commands: ["ls", "cat", "grep", "find", "wc", "head", "tail", "git", "python3", "pwd"]
+
+proxy:
+  host: "0.0.0.0"
+  port: 8000
+  lmstudio_base_url: "http://localhost:1234"
