@@ -1,64 +1,52 @@
-# Local AI Orchestrator
+# Loca — Local AI Orchestrator
 
-A lightweight proxy that sits between **Open WebUI** and **LM Studio**, adding:
-- Intelligent model routing (keyword/heuristic — zero extra LLM calls, no latency overhead)
-- Automatic web search injection via SearXNG
-- Tool use: web search, web fetch, file I/O, shell execution
-- Specialist model load/unload tracking with idle timeout
+A self-contained Mac app that runs a full local AI stack:
 
----
+- **Open WebUI** — chat interface (localhost:3000)
+- **LM Studio** — model backend (localhost:1234)
+- **Orchestrator proxy** — sits between WebUI and LM Studio, adding intelligent routing, web search, and tool use (localhost:8000)
+- **SearXNG** — local web search engine (localhost:8888)
 
-## Architecture
-
-```
-Open WebUI → Proxy (localhost:8000) → LM Studio (localhost:1234)
-                    ↓
-              Router (heuristic)
-              Web Search (SearXNG)
-              Tool execution
-```
-
-The proxy intercepts every `/v1/chat/completions` request, routes it to the right model, optionally injects web search results, and handles any tool calls the model makes — then returns the final response in standard OpenAI format.
+Everything is set up automatically on first launch.
 
 ---
 
-## File Structure
+## Requirements
 
-```
-local-orchestrator/
-├── config.yaml              # Model registry, SearXNG URL, tool settings
-├── requirements.txt
-├── src/
-│   ├── router.py            # Keyword/heuristic routing + /command overrides
-│   ├── model_manager.py     # LM Studio model loading, idle timeout tracking
-│   ├── orchestrator.py      # Main loop: route → search → call model → tools
-│   ├── proxy.py             # FastAPI server (intercepts /v1/chat/completions)
-│   └── tools/
-│       ├── web_search.py    # SearXNG integration + trafilatura extraction
-│       ├── web_fetch.py     # Single URL fetch + content extraction
-│       ├── file_ops.py      # file_read / file_write
-│       └── shell.py         # shell_exec with allowlist + timeout
-├── prompts/
-│   ├── system_general.md    # System prompt for general model
-│   ├── system_reason.md     # System prompt for reasoning model
-│   ├── system_code.md       # System prompt for coding model
-│   └── tool_definitions.json
-└── tests/
-    ├── test_router.py
-    └── test_tools.py
-```
+- macOS (Apple Silicon or Intel)
+- [LM Studio](https://lmstudio.ai) installed
+- Python 3.12 — `brew install python@3.12`
+- Git (for cloning SearXNG on first run)
 
 ---
 
 ## Quick Start
 
-### 1. Install dependencies
+1. Clone the repo
+2. Open `Loca.app` (double-click, or `open Loca.app`)
+3. On first launch it will set up everything automatically (~5 min)
+4. Browser opens at `http://localhost:3000` when ready
+
+> **Note:** The app bundle is not included in the repo. Build it by copying `Loca.app/Contents/MacOS/LocalAI` and creating the bundle structure, or just run `start.sh` directly from the terminal.
+
+---
+
+## Running from the terminal
 
 ```bash
-pip install -r requirements.txt
+cd /path/to/Loca
+bash Loca.app/Contents/MacOS/LocalAI
 ```
 
-### 2. Find your LM Studio model names
+Press `Ctrl+C` to stop everything cleanly.
+
+---
+
+## Configuration
+
+Edit `config.yaml` before first launch to set your model names.
+
+### Finding your LM Studio model IDs
 
 Start the LM Studio server, then:
 
@@ -66,120 +54,78 @@ Start the LM Studio server, then:
 curl http://localhost:1234/v1/models | python3 -m json.tool
 ```
 
-Copy the `id` value for each model and update `config.yaml`:
+Copy the `id` values and update `config.yaml`:
 
 ```yaml
 models:
   general:
-    lmstudio_name: "your-exact-model-id-here"
+    lmstudio_name: "your-model-id-here"
   reason:
-    lmstudio_name: "your-exact-model-id-here"
+    lmstudio_name: "your-model-id-here"
   code:
-    lmstudio_name: "your-exact-model-id-here"
+    lmstudio_name: "your-model-id-here"
+  write:
+    lmstudio_name: "your-model-id-here"
 ```
 
-### 3. Configure SearXNG URL
+The proxy also auto-syncs model names from LM Studio on every launch via `src/model_sync.py`.
 
-Update `config.yaml` with your EliteDesk's Tailscale IP:
+---
 
-```yaml
-search:
-  searxng_url: "http://<elitedesk-tailscale-ip>:8080"
+## Architecture
+
+```
+Open WebUI (3000) → Proxy (8000) → LM Studio (1234)
+                         ↓
+                    Router (heuristic)
+                    Web Search (SearXNG :8888)
+                    Tool execution
 ```
 
-To deploy SearXNG on the EliteDesk:
-```bash
-docker compose -f docker-compose.searxng.yaml up -d
-# Verify:
-curl "http://localhost:8080/search?q=test&format=json"
-```
-
-### 4. Start LM Studio server
-
-LM Studio → Local Server → Start Server (default port 1234).
-
-### 5. Start the proxy
-
-```bash
-uvicorn src.proxy:app --host 0.0.0.0 --port 8000 --reload
-```
-
-### 6. Configure Open WebUI
-
-In Open WebUI settings:
-- Set API base URL to `http://localhost:8000`
-- Select "OpenAI-compatible" mode
-- The proxy's `/v1/models` endpoint will populate the model list automatically
-- Set default model to `general`
+The proxy intercepts every `/v1/chat/completions` request, routes it to the right model, optionally injects web search results, and handles tool calls — returning the final response in standard OpenAI format.
 
 ---
 
 ## Model Routing
 
-Routing is keyword + heuristic based — no LLM call, no added latency. First match wins.
+Routing is keyword/heuristic based — no LLM call, no added latency. First match wins.
 
 | Priority | Trigger | Model |
 |---|---|---|
-| 1 | Image attached | `general` — only vision-capable model |
-| 2 | `/code` prefix | `code` (Qwen3 Coder Next) |
-| 2 | `/reason` prefix | `reason` (Nemotron 3 Nano) |
-| 2 | `/write` prefix | `write` (Qwen3.5 27B Claude Opus distilled) |
-| 2 | `/general` prefix | `general` (Qwen3.5 35B A3B) |
-| 3 | Multi-file / architecture / large codebase signals | `code` |
-| 4 | Planning / trade-offs / math / logic / step-by-step | `reason` |
-| 5 | Draft / summarize / email / essay / rewrite / edit | `write` |
-| 6 | Everything else | `general` |
+| 1 | Model selected in UI dropdown | That model directly |
+| 2 | Image attached | `general` — only vision-capable model |
+| 3 | `/code` prefix | `code` |
+| 3 | `/reason` prefix | `reason` |
+| 3 | `/write` prefix | `write` |
+| 3 | `/general` prefix | `general` |
+| 4 | Multi-file / architecture / large codebase signals | `code` |
+| 5 | Planning / trade-offs / math / logic / step-by-step | `reason` |
+| 6 | Draft / summarize / email / essay / rewrite / edit | `write` |
+| 7 | Everything else | `general` |
 
-### Manual overrides
+### Manual overrides (in message)
 
 ```
-/code    <message>   → force Qwen3 Coder Next
-/reason  <message>   → force Nemotron 3 Nano
-/write   <message>   → force Qwen3.5 27B Claude Opus distilled
-/general <message>   → force Qwen3.5 35B A3B
-/web     <query>     → trigger web search, feed results into current model
+/code    <message>   → force code model
+/reason  <message>   → force reasoning model
+/write   <message>   → force writing model
+/general <message>   → force general model
+/web     <query>     → trigger web search into current model
 ```
-
----
-
-## Model Loading Strategy
-
-- `general` stays loaded at all times.
-- Only one specialist (`reason`, `code`, or `write`) is loaded alongside `general`.
-- Before loading any specialist, any other currently loaded specialist is evicted from state first.
-- After **10 minutes of inactivity**, the specialist is marked idle. LM Studio releases its memory when the next different model is called.
-
-> **Note:** LM Studio doesn't expose an HTTP unload endpoint. The proxy tracks idle state and logs when a specialist should be released — the actual RAM swap happens when LM Studio loads the next requested model.
 
 ---
 
 ## Web Search
 
-Auto-triggered when messages contain signals like:
+Auto-triggered when messages contain signals like "latest", "current", "news", "price", "look up", "search for", etc.
 
-- "latest", "current", "recently", "today"
-- "news", "price", "stock", "release"
-- "look up", "search for", "find information about"
-- "who is the CEO/founder of...", version numbers, announcements
-
-Force a search regardless: `/web <query>`
-
-Results are injected as XML context before the model's system prompt:
-```xml
-<search_results>
-  <result url="..." title="..." snippet="...">
-    [extracted content, up to 500 tokens]
-  </result>
-  ...
-</search_results>
-```
-The model is instructed to cite sources by URL.
+Results are fetched from SearXNG and injected as context before the model responds. Force a search with `/web <query>`.
 
 ---
 
 ## Tools Available to Models
 
-Models can request tools by outputting a JSON call in their response:
+Models can call tools by outputting a JSON block in their response:
 ```json
 {"tool": "tool_name", "args": {"param": "value"}}
 ```
@@ -188,61 +134,21 @@ Models can request tools by outputting a JSON call in their response:
 |---|---|
 | `web_search(query)` | Search via SearXNG, extract page content |
 | `web_fetch(url)` | Fetch and extract readable text from a URL |
-| `file_read(path)` | Read a local file (up to ~8k tokens) |
-| `file_write(path, content, overwrite)` | Write or create a local file |
-| `shell_exec(command)` | Run a whitelisted shell command with timeout |
-| `image_describe(path, prompt)` | Vision analysis via the `general` model |
+| `file_read(path)` | Read a local file |
+| `file_write(path, content)` | Write a local file |
+| `shell_exec(command)` | Run a whitelisted shell command |
+| `image_describe(path, prompt)` | Vision analysis via the general model |
 
-Max **5 tool calls per turn** (prevents runaway loops).
-
-### Allowed shell commands
-
-`ls`, `cat`, `grep`, `find`, `wc`, `head`, `tail`, `git`, `python3`, `pwd`
-
-Configure in `config.yaml` under `tools.shell_exec.allowed_commands`.
+Max 5 tool calls per turn. Allowed shell commands are configured in `config.yaml`.
 
 ---
 
-## Config Reference
+## Logs
 
-```yaml
-models:
-  general:
-    lmstudio_name: "qwen3.5-35b-a3b"  # from `curl localhost:1234/v1/models`
-    always_loaded: true
-    idle_unload_minutes: null          # never idle-unload general
-  reason:
-    lmstudio_name: "nvidia/nemotron-3-nano"
-    always_loaded: false
-    idle_unload_minutes: 10
-  code:
-    lmstudio_name: "qwen/qwen3-coder-next"
-    always_loaded: false
-    idle_unload_minutes: 10
-  write:
-    lmstudio_name: "qwen3.5-27b-claude-4.6-opus-distilled-mlx"
-    always_loaded: false
-    idle_unload_minutes: 10
-
-routing:
-  default_model: general
-  max_tool_calls_per_turn: 5
-
-search:
-  searxng_url: "http://<elitedesk-tailscale-ip>:8080"
-  max_results: 5
-  max_tokens_per_result: 500
-
-tools:
-  shell_exec:
-    enabled: true
-    timeout_seconds: 30
-    allowed_commands: ["ls", "cat", "grep", "find", "wc", "head", "tail", "git", "python3", "pwd"]
-
-proxy:
-  host: "0.0.0.0"
-  port: 8000
-  lmstudio_base_url: "http://localhost:1234"
+```
+/tmp/loca-proxy.log      # Orchestrator proxy
+/tmp/loca-webui.log      # Open WebUI
+/tmp/loca-searxng.log    # SearXNG
 ```
 
 ---
@@ -250,30 +156,8 @@ proxy:
 ## Running Tests
 
 ```bash
-# Offline tests only (no network or LM Studio required)
-pytest tests/ -v -m "not network"
-
-# All tests including network (requires SearXNG running)
-pytest tests/ -v
-```
-
----
-
-## Verification Checklist
-
-```bash
-# Python version (needs 3.11+)
-python3 --version
-
-# Dependencies installed
-python3 -c "import fastapi, httpx, trafilatura, pydantic, yaml; print('OK')"
-
-# LM Studio server responding
-curl http://localhost:1234/v1/models
-
-# SearXNG reachable from Mac Studio
-curl -s "http://<elitedesk-tailscale-ip>:8080/search?q=hello&format=json" | python3 -m json.tool | head -20
-
-# Proxy running and routing
-curl -s http://localhost:8000/v1/models | python3 -m json.tool
+cd Loca
+source .venv/bin/activate
+pytest tests/ -v -m "not network"   # offline only
+pytest tests/ -v                    # all (requires SearXNG running)
 ```

@@ -38,8 +38,8 @@ Icon?
 .Spotlight-V100
 .Trashes
 
-# App bundle (generated — rebuild with make_icon.py + script in Loca.app/Contents/MacOS/)
-Loca.app/
+# App bundle resources (generated)
+Loca.app/Contents/Resources/
 
 # Icon generation artifacts
 *.iconset/
