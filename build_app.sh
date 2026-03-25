@@ -7,7 +7,7 @@
 
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
-SRC="$DIR/Loca.app/Contents/MacOS/LocalAI.swift"
+SRC="$DIR/LocalAI.swift"
 OUT="$DIR/Loca.app/Contents/MacOS/LocalAI"
 
 # Prefer full Xcode toolchain if available; fall back to xcode-select default
@@ -38,4 +38,14 @@ if file "$OUT" | grep -q "shell script"; then
 fi
 
 chmod +x "$OUT"
+
+# Copy services script into the bundle's Resources/
+RESOURCES="$DIR/Loca.app/Contents/Resources"
+mkdir -p "$RESOURCES"
+cp "$DIR/start_services.sh" "$RESOURCES/start_services.sh"
+chmod +x "$RESOURCES/start_services.sh"
+
+# Ad-hoc code-sign the binary — required on Apple Silicon
+codesign --sign - --force "$OUT"
+
 echo "Done — open Loca.app to launch."

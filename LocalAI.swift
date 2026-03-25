@@ -72,10 +72,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     // MARK: - Backend
 
     func launchBackend() {
-        guard let execURL = Bundle.main.executableURL else { return }
-        let scriptURL = execURL
-            .deletingLastPathComponent()
-            .appendingPathComponent("start_services.sh")
+        guard let scriptURL = Bundle.main.url(forResource: "start_services", withExtension: "sh") else {
+            showError("start_services.sh not found in app bundle.")
+            return
+        }
 
         guard FileManager.default.fileExists(atPath: scriptURL.path) else {
             showError("start_services.sh not found at:\n\(scriptURL.path)")
@@ -88,7 +88,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")
         p.arguments = [scriptURL.path]
-        p.currentDirectoryURL = scriptURL.deletingLastPathComponent()
+        // Working directory = repo root (parent of Loca.app)
+        let repoRoot = Bundle.main.bundleURL.deletingLastPathComponent()
+        p.currentDirectoryURL = repoRoot
         p.environment = env
 
         do {

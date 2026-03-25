@@ -124,8 +124,8 @@ for i in $(seq 1 30); do
     [ "$i" -eq 30 ] && bail "SearXNG didn't start. Check /tmp/loca-searxng.log"
 done
 
-# ── 7. Open the UI ────────────────────────────────────────────────────────────
-open http://localhost:8000
+# ── 7. Signal ready ──────────────────────────────────────────────────────────
+# Swift app polls /health and loads the UI in WKWebView — no browser needed.
 notify "Loca is ready."
 
 # ── Keep alive + watchdog ─────────────────────────────────────────────────────
