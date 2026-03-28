@@ -13,9 +13,9 @@ final class ChatInputActions: ObservableObject {
 
 // MARK: - ChatTextEditor
 
-/// Full-control NSTextView wrapper:
+/// Full-control NSTextView wrapper.
 ///  • Return → send,  Shift+Return → newline
-///  • Native placeholder text drawn inside the view (no positioning hacks)
+///  • Native placeholder text drawn inside the view
 ///  • Exposes selection-wrapping through ChatInputActions
 struct ChatTextEditor: NSViewRepresentable {
     @Binding var text: String
@@ -27,22 +27,34 @@ struct ChatTextEditor: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSScrollView {
         let tv = PlaceholderTextView()
-        tv.placeholderString           = placeholder
-        tv.delegate                    = context.coordinator
-        tv.isRichText                  = false
-        tv.font                        = .systemFont(ofSize: 14)
-        tv.textContainerInset          = NSSize(width: 2, height: 7)
+        tv.placeholderString = placeholder
+        tv.delegate          = context.coordinator
+        tv.isRichText        = false
+        tv.font              = .systemFont(ofSize: 14)
+        tv.textContainerInset = NSSize(width: 2, height: 7)
         tv.isAutomaticQuoteSubstitutionEnabled = false
         tv.isAutomaticDashSubstitutionEnabled  = false
-        tv.allowsUndo                  = true
-        tv.drawsBackground             = false
+        tv.allowsUndo        = true
+        tv.drawsBackground   = false
+
+        // ── Critical: NSTextView must be told to fill and wrap inside its scroll view ──
+        tv.isVerticallyResizable   = true
+        tv.isHorizontallyResizable = false
+        tv.autoresizingMask        = .width
+        tv.minSize = NSSize(width: 0, height: 0)
+        tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        tv.textContainer?.widthTracksTextView = true
+        tv.textContainer?.containerSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
 
         let sv = NSScrollView()
-        sv.documentView       = tv
         sv.hasVerticalScroller = true
         sv.autohidesScrollers  = true
         sv.drawsBackground     = false
         sv.borderType          = .noBorder
+        sv.documentView        = tv
 
         context.coordinator.textView = tv
         actions.coordinator = context.coordinator
@@ -51,7 +63,8 @@ struct ChatTextEditor: NSViewRepresentable {
 
     func updateNSView(_ sv: NSScrollView, context: Context) {
         guard let tv = sv.documentView as? PlaceholderTextView else { return }
-        // Only write back when the binding changed externally (e.g. cleared after send)
+        // Only overwrite when the binding changed from outside (e.g. cleared after send).
+        // During normal typing textDidChange keeps both in sync, so this branch is skipped.
         if tv.string != text {
             let sel = tv.selectedRange()
             tv.string = text
@@ -73,9 +86,9 @@ struct ChatTextEditor: NSViewRepresentable {
             parent.text = tv.string
         }
 
-        func textView(_ textView: NSTextView, doCommandBy sel: Selector) -> Bool {
+        func textView(_ tv: NSTextView, doCommandBy sel: Selector) -> Bool {
             if sel == #selector(NSResponder.insertNewline(_:)) {
-                // Shift+Return inserts a newline; plain Return sends.
+                // Shift+Return → let NSTextView insert a newline normally
                 if NSEvent.modifierFlags.contains(.shift) { return false }
                 parent.onSend()
                 return true
@@ -83,7 +96,7 @@ struct ChatTextEditor: NSViewRepresentable {
             return false
         }
 
-        // MARK: Format helpers (called by InputBar toolbar buttons)
+        // MARK: Format helpers
 
         func wrapSelection(_ marker: String) {
             guard let tv = textView else { return }
@@ -101,7 +114,6 @@ struct ChatTextEditor: NSViewRepresentable {
             guard let tv = textView else { return }
             let range = tv.selectedRange()
             tv.insertText("```\n\n```", replacementRange: range)
-            // Park cursor on the blank line inside the fence
             tv.setSelectedRange(NSRange(location: range.location + 4, length: 0))
         }
     }
@@ -109,7 +121,6 @@ struct ChatTextEditor: NSViewRepresentable {
 
 // MARK: - PlaceholderTextView
 
-/// NSTextView that draws its own placeholder string when empty.
 final class PlaceholderTextView: NSTextView {
     var placeholderString: String = "" { didSet { needsDisplay = true } }
 

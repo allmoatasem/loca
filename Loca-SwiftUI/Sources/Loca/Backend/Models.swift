@@ -140,30 +140,43 @@ struct LMModel: Decodable, Identifiable {
     let id: String
 
     /// Infers capabilities from the model's ID / name.
+    /// If your model is misclassified, check the exact ID shown in LM Studio — the
+    /// detection is based on substrings of that ID.
     var capabilities: Set<ModelCapability> {
         let lower = id.lowercased()
         var caps: Set<ModelCapability> = []
 
-        // Vision models
-        let visionTerms = ["llava", "moondream", "bakllava", "minicpm-v", "idefics",
-                           "cogvlm", "internvl", "qwen-vl", "blip", "clip"]
-        if visionTerms.contains(where: { lower.contains($0) })
-            || lower.hasSuffix("-vl") || lower.contains("-vl-") || lower.hasSuffix("vl") {
+        // Vision models — explicit name terms + any "-vl" component
+        let visionTerms = [
+            "llava", "moondream", "bakllava", "minicpm-v", "idefics", "cogvlm",
+            "internvl", "qwen-vl", "qwen2-vl", "qwen2.5-vl", "qwen3-vl",
+            "blip", "pixtral", "phi-vision", "phi3-vision", "phi3.5-vision",
+            "gemini-vision", "paligemma", "idefics", "florence",
+        ]
+        // Also match any model with "vl" as a standalone component: -vl, -vl-, vl-
+        let hasVLComponent = lower.hasPrefix("vl-") || lower.contains("-vl-")
+            || lower.hasSuffix("-vl") || lower.hasSuffix(".vl")
+        if visionTerms.contains(where: { lower.contains($0) }) || hasVLComponent {
             caps.insert(.vision)
         }
 
         // Thinking / reasoning models
-        let thinkTerms = ["qwq", "deepseek-r1", "r1-distill", "thinking",
-                          "skywork-o1", "marco-o1"]
-        if thinkTerms.contains(where: { lower.contains($0) })
-            || lower.contains("-r1-") || lower.hasSuffix("-r1") {
+        let thinkTerms = [
+            "qwq", "deepseek-r1", "r1-distill", "thinking",
+            "skywork-o1", "marco-o1", "nemotron",
+        ]
+        let hasR1Component = lower.contains("-r1-") || lower.hasSuffix("-r1")
+            || lower.contains(":r1") // some GGUF tags use colon separators
+        if thinkTerms.contains(where: { lower.contains($0) }) || hasR1Component {
             caps.insert(.thinking)
         }
 
         // Code-specialist models
-        let codeTerms = ["coder", "codellama", "code-llama", "starcoder", "deepseek-coder",
-                         "codestral", "codegemma", "codeqwen", "wizardcoder", "phind-code",
-                         "magicoder", "qwen2.5-coder"]
+        let codeTerms = [
+            "coder", "codellama", "code-llama", "starcoder", "deepseek-coder",
+            "codestral", "codegemma", "codeqwen", "wizardcoder", "phind-code",
+            "magicoder", "qwen2.5-coder", "qwen3-coder",
+        ]
         if codeTerms.contains(where: { lower.contains($0) }) {
             caps.insert(.code)
         }

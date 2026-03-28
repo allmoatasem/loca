@@ -40,11 +40,19 @@ struct SidebarView: View {
                     }
                 }
                 .labelsHidden()
+                // Show raw ID on hover so misclassified models are easy to diagnose
+                .help(capModels.first(where: { $0.id == state.selectedModelId })?.id ?? "")
                 .onChange(of: state.selectedCapability) {
                     if let first = state.models(for: state.selectedCapability).first {
                         state.selectedModelId = first.id
                     }
                 }
+            } else if !state.availableModels.isEmpty {
+                // No models match the capability — show a hint
+                Text("No \(state.selectedCapability.label.lowercased()) models loaded in LM Studio")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             HStack {
