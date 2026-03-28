@@ -424,15 +424,16 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   border-radius: var(--radius);
   border-bottom-right-radius: 4px;
   padding: 11px 16px;
-  max-width: 75%;
   font-size: 15px;
   line-height: 1.6;
-  white-space: pre-wrap;
   word-break: break-word;
   box-shadow: var(--shadow-sm);
+  -webkit-user-select: text;
   user-select: text;
   cursor: text;
 }
+.user-bubble p { margin: 0 0 6px; }
+.user-bubble p:last-child { margin-bottom: 0; }
 
 /* Assistant message */
 .asst-row { display: flex; gap: 14px; align-items: flex-start; }
@@ -968,11 +969,11 @@ code[class*="language-"] {
         <div id="attach-strip"></div>
         <div id="input" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Message input" spellcheck="true"></div>
         <div id="fmt-bar">
-          <button class="fmt-btn" onclick="fmt('bold')"      title="Bold (⌘B)"><b>B</b></button>
-          <button class="fmt-btn" onclick="fmt('italic')"    title="Italic (⌘I)"><i>I</i></button>
+          <button class="fmt-btn" onmousedown="event.preventDefault()" onclick="fmt('bold')"      title="Bold (⌘B)"><b>B</b></button>
+          <button class="fmt-btn" onmousedown="event.preventDefault()" onclick="fmt('italic')"    title="Italic (⌘I)"><i>I</i></button>
           <div class="fmt-sep"></div>
-          <button class="fmt-btn mono" onclick="fmt('code')"      title="Inline code (⌘⇧C)">`&nbsp;`</button>
-          <button class="fmt-btn mono" onclick="fmt('codeblock')" title="Code block (⌘⇧K)">```</button>
+          <button class="fmt-btn mono" onmousedown="event.preventDefault()" onclick="fmt('code')"      title="Inline code (⌘⇧C)">`&nbsp;`</button>
+          <button class="fmt-btn mono" onmousedown="event.preventDefault()" onclick="fmt('codeblock')" title="Code block (⌘⇧K)">```</button>
           <div class="fmt-sep"></div>
           <button class="fmt-btn" onclick="document.getElementById('file-input').click()" title="Attach file (image, PDF, audio, video…)">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
@@ -1160,6 +1161,15 @@ inputEl.addEventListener('keydown', e => {
     return;
   }
   const mod = e.metaKey || e.ctrlKey;
+  if (mod && (e.key === 'a' || e.key === 'A') && !e.shiftKey) {
+    e.preventDefault();
+    const r = document.createRange();
+    r.selectNodeContents(inputEl);
+    const s = window.getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+    return;
+  }
   if (mod && e.key === 'b') { e.preventDefault(); fmt('bold'); return; }
   if (mod && e.key === 'i') { e.preventDefault(); fmt('italic'); return; }
   if (mod && e.shiftKey && (e.key === 'C' || e.key === 'c')) { e.preventDefault(); fmt('code'); return; }
@@ -1379,12 +1389,12 @@ async function sendMessage() {
   inputEl.innerHTML = '';
   setStreaming(true);
 
-  const { bodyEl, statsEl, copyBtn } = appendAssistant(model);
+  const { bodyEl, statsEl, copyBtn } = appendAssistant(currentModel);
   bodyEl.innerHTML = '<div class="dots"><span></span><span></span><span></span></div>';
 
   let full = '';
   let outputTokens = 0;
-  let actualModel  = model;
+  let actualModel  = currentModel;
   const t_start   = performance.now();
   let   t_first   = null;
 
@@ -1456,7 +1466,7 @@ async function sendMessage() {
     copyBtn.onclick = () => copyText(full, copyBtn);
 
     // Auto-save conversation
-    saveConv(model);
+    saveConv(actualModel);
 
   } catch (err) {
     bodyEl.innerHTML = `<span style="color:#c0392b">Error: ${esc(err.message)}</span>`;
