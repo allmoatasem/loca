@@ -19,7 +19,9 @@ from typing import Any, AsyncIterator
 import httpx
 
 from .model_manager import ModelManager
+from .memory_extractor import extract_memories
 from .router import Model, RouteResult, route
+from .store import add_memory, get_memories_context
 from .tools.web_search import format_search_results, web_search
 from .tools.web_fetch import web_fetch
 from .tools.file_ops import file_read, file_write
@@ -54,6 +56,8 @@ class Orchestrator:
         has_image: bool = False,
         stream: bool = False,
         model_hint: str | None = None,
+        num_ctx: int | None = None,
+        research_mode: bool = False,
     ) -> dict | AsyncIterator[str]:
         user_message = _last_user_content(messages)
         result: RouteResult = route(user_message, has_image=has_image, model_hint=model_hint)
@@ -61,19 +65,22 @@ class Orchestrator:
 
         model_name, api_base = await self.mm.ensure_loaded(result.model)
         system_prompt = _load_system_prompt(result.model)
+        mem_ctx = get_memories_context()
+        if mem_ctx:
+            system_prompt = f"{system_prompt}\n\n{mem_ctx}"
 
         augmented_messages = list(messages)
         if result.search_triggered and result.search_query:
-            search_ctx = await self._run_search(result.search_query)
+            search_ctx = await self._run_search(result.search_query, research_mode=research_mode)
             if search_ctx:
                 augmented_messages = _inject_search_context(augmented_messages, search_ctx)
 
         full_messages = _prepend_system(augmented_messages, system_prompt)
 
         if stream:
-            return self._stream_with_tools(model_name, api_base, full_messages, result)
+            return self._stream_with_tools(model_name, api_base, full_messages, result, num_ctx=num_ctx, research_mode=research_mode)
 
-        return await self._call_with_tools(model_name, api_base, full_messages, result)
+        return await self._call_with_tools(model_name, api_base, full_messages, result, num_ctx=num_ctx)
 
     # ------------------------------------------------------------------
     # Internal: model calls + tool loop
@@ -85,12 +92,13 @@ class Orchestrator:
         api_base: str,
         messages: list[dict],
         route_result: RouteResult,
+        num_ctx: int | None = None,
     ) -> dict:
         """Call model, handle tool calls, return final response."""
         tool_call_count = 0
 
         while tool_call_count <= self._max_tool_calls:
-            response = await self._chat(model_name, api_base, messages, stream=False)
+            response = await self._chat(model_name, api_base, messages, stream=False, num_ctx=num_ctx)
             assistant_text: str = _extract_content(response)
 
             tool_call = _extract_tool_call(assistant_text)
@@ -109,7 +117,7 @@ class Orchestrator:
             ]
             tool_call_count += 1
 
-        return await self._chat(model_name, api_base, messages, stream=False)
+        return await self._chat(model_name, api_base, messages, stream=False, num_ctx=num_ctx)
 
     async def _stream_with_tools(
         self,
@@ -117,9 +125,14 @@ class Orchestrator:
         api_base: str,
         messages: list[dict],
         route_result: RouteResult,
-    ) -> AsyncIterator[str]:
-        """Streaming: collects full response (for tool-call simplicity), yields in chunks."""
-        response = await self._call_with_tools(model_name, api_base, messages, route_result)
+        num_ctx: int | None = None,
+        research_mode: bool = False,
+    ) -> AsyncIterator[str | dict]:
+        """Streaming: collects full response (for tool-call simplicity), yields in chunks.
+        Yields a metadata dict first so the proxy can forward the actual model name."""
+        response = await self._call_with_tools(model_name, api_base, messages, route_result, num_ctx=num_ctx)
+        actual_model = response.get("model", model_name)
+        yield {"__model__": actual_model}
         content = _extract_content(response)
         chunk_size = 50
         for i in range(0, len(content), chunk_size):
@@ -131,10 +144,13 @@ class Orchestrator:
         api_base: str,
         messages: list[dict],
         stream: bool = False,
+        num_ctx: int | None = None,
     ) -> dict:
         """Call an OpenAI-compatible /v1/chat/completions endpoint with retry on 400/503."""
         base = api_base.rstrip("/")
-        payload = {"model": model, "messages": messages, "stream": stream}
+        payload: dict = {"model": model, "messages": messages, "stream": stream}
+        if num_ctx:
+            payload["num_ctx"] = num_ctx
         last_exc: Exception | None = None
 
         for attempt in range(3):
@@ -225,19 +241,38 @@ class Orchestrator:
                 return {"error": f"Unknown tool: {tool_name}"}
 
     # ------------------------------------------------------------------
+    # Memory extraction (called from proxy after conversation turns)
+    # ------------------------------------------------------------------
+
+    async def extract_and_save_memories(
+        self, messages: list[dict], conv_id: str | None = None
+    ) -> list[dict]:
+        """Extract memorable facts from messages, persist them, return list."""
+        model_name, api_base = await self.mm.ensure_loaded(Model.GENERAL)
+        facts = await extract_memories(messages, model_name, api_base)
+        saved = []
+        for fact in facts:
+            mid = add_memory(fact, conv_id=conv_id)
+            saved.append({"id": mid, "content": fact})
+        return saved
+
+    # ------------------------------------------------------------------
     # Search helper
     # ------------------------------------------------------------------
 
-    async def _run_search(self, query: str) -> str:
+    async def _run_search(self, query: str, research_mode: bool = False) -> str:
         searxng_url = self._search_cfg.get("searxng_url", "")
         if not searxng_url:
             logger.warning("Search triggered but searxng_url not configured")
             return ""
+        if research_mode:
+            logger.info("Research mode ON — using Playwright for content extraction")
         results = await web_search(
             query=query,
             searxng_url=searxng_url,
             max_results=self._search_cfg.get("max_results", 5),
             max_tokens_per_result=self._search_cfg.get("max_tokens_per_result", 500),
+            research_mode=research_mode,
         )
         return format_search_results(results)
 

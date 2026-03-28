@@ -1,0 +1,1830 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Loca</title>
+<link id="prism-css" rel="stylesheet" href="/assets/prism-light.min.css">
+<style>
+/* ── Tokens ──────────────────────────────────────────────────────────────── */
+:root {
+  --bg:           #f5f5f0;
+  --surface:      #ffffff;
+  --border:       #e5e5e0;
+  --border-light: #efefeb;
+  --text:         #1a1a1a;
+  --text-dim:     #8a8a8a;
+  --text-muted:   #b0b0a8;
+  --accent:       #5b5bd6;
+  --accent-hover: #4f4fc4;
+  --user-bg:      #5b5bd6;
+  --user-text:    #ffffff;
+  --code-bg:      #f0f0ec;
+  --code-border:  #e0e0da;
+  --tag-bg:       #efefeb;
+  --tag-text:     #606060;
+  --shadow-sm:    0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+  --shadow-md:    0 4px 12px rgba(0,0,0,.08), 0 2px 4px rgba(0,0,0,.04);
+  --radius:       12px;
+  --radius-sm:    8px;
+  --tb-height:    38px;
+}
+
+body.dark {
+  --bg:           #1c1c1e;
+  --surface:      #252528;
+  --border:       #3a3a3e;
+  --border-light: #2e2e32;
+  --text:         #e8e8e8;
+  --text-dim:     #9a9a9a;
+  --text-muted:   #5e5e62;
+  --code-bg:      #2a2a2e;
+  --code-border:  #3a3a3e;
+  --tag-bg:       #333338;
+  --tag-text:     #aaaaaa;
+  --user-bg:      #4a4ab8;
+  --shadow-sm:    0 1px 3px rgba(0,0,0,.4);
+  --shadow-md:    0 4px 12px rgba(0,0,0,.5);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+  font-size: 15px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+body { display: flex; flex-direction: column; overflow: hidden; }
+
+/* ── Titlebar (draggable) ────────────────────────────────────────────────── */
+#titlebar {
+  height: var(--tb-height);
+  min-height: var(--tb-height);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 12px 0 76px; /* 76px left = space for traffic lights */
+  -webkit-app-region: drag;
+  -webkit-user-select: none;
+  user-select: none;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 10;
+}
+
+#tb-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  letter-spacing: -.1px;
+  flex: 1;
+  text-align: center;
+  pointer-events: none;
+  user-select: none;
+}
+
+#tb-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  -webkit-app-region: no-drag;
+}
+
+.tb-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: background .12s, color .12s;
+  -webkit-app-region: no-drag;
+}
+.tb-btn:hover { background: var(--border-light); color: var(--text); }
+.tb-btn svg  { flex-shrink: 0; }
+.tb-btn.active {
+  background: rgba(91,91,214,.12);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ── Layout ──────────────────────────────────────────────────────────────── */
+#layout { display: flex; flex: 1; overflow: hidden; }
+
+/* ── Sidebar ─────────────────────────────────────────────────────────────── */
+#sidebar {
+  width: 220px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+#sidebar-header {
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+#new-chat-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background .15s;
+}
+#new-chat-btn:hover { background: var(--accent-hover); }
+#new-chat-btn svg   { flex-shrink: 0; }
+
+#model-section {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+#model-section label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+#model-select {
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 28px 7px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  outline: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a8a8a' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+#model-select:focus { border-color: var(--accent); }
+
+#model-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 5px;
+  line-height: 1.4;
+}
+
+/* ── Conversations list ──────────────────────────────────────────────────── */
+#conv-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+  border-top: 1px solid var(--border-light);
+}
+
+#conv-section-hdr {
+  padding: 8px 16px 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+#conv-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2px 0;
+}
+#conv-list::-webkit-scrollbar { width: 4px; }
+#conv-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.conv-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px 6px 16px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: background .1s;
+  gap: 6px;
+  min-width: 0;
+}
+.conv-item:hover { background: var(--border-light); }
+.conv-item.active { background: rgba(91,91,214,.09); border-left-color: var(--accent); }
+
+.conv-title {
+  flex: 1;
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.conv-date {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.conv-del {
+  opacity: 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 13px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.conv-item:hover .conv-del { opacity: 1; }
+.conv-del:hover { color: #c0392b; }
+
+/* ── Sidebar bottom ──────────────────────────────────────────────────────── */
+#sidebar-bottom { flex-shrink: 0; }
+
+#mem-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border-light);
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text-dim);
+  transition: background .1s;
+}
+#mem-trigger:hover { background: var(--border-light); }
+#mem-count { font-size: 11px; color: var(--accent); font-weight: 500; }
+
+#sidebar-stats {
+  padding: 8px 16px 12px;
+  border-top: 1px solid var(--border-light);
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 3px 0;
+}
+.stat-val { font-weight: 500; color: var(--text); }
+
+/* ── Main ────────────────────────────────────────────────────────────────── */
+#main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* ── Messages ────────────────────────────────────────────────────────────── */
+#messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 28px 0 16px;
+  scroll-behavior: smooth;
+}
+
+#messages::-webkit-scrollbar        { width: 6px; }
+#messages::-webkit-scrollbar-track  { background: transparent; }
+#messages::-webkit-scrollbar-thumb  { background: var(--border); border-radius: 3px; }
+#messages::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+#empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  gap: 12px;
+  pointer-events: none;
+  user-select: none;
+}
+#empty .e-icon {
+  width: 48px; height: 48px;
+  background: var(--border);
+  border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px;
+}
+#empty h2 { font-size: 17px; font-weight: 600; color: var(--text-dim); }
+#empty p  { font-size: 13px; max-width: 300px; text-align: center; line-height: 1.5; }
+
+/* Message rows */
+.msg-wrap {
+  padding: 4px 32px;
+  max-width: 860px;
+  margin: 0 auto;
+  width: 100%;
+}
+.msg-wrap.user { display: flex; justify-content: flex-end; }
+
+/* User bubble */
+.user-bubble {
+  background: var(--user-bg);
+  color: var(--user-text);
+  border-radius: var(--radius);
+  border-bottom-right-radius: 4px;
+  padding: 11px 16px;
+  max-width: 75%;
+  font-size: 15px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  box-shadow: var(--shadow-sm);
+  user-select: text;
+  cursor: text;
+}
+
+/* Assistant message */
+.asst-row { display: flex; gap: 14px; align-items: flex-start; }
+
+.asst-avatar {
+  width: 30px; height: 30px;
+  background: var(--accent);
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+  font-size: 14px;
+  color: #fff;
+  font-weight: 700;
+}
+
+.asst-body { flex: 1; min-width: 0; }
+
+.asst-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.model-chip {
+  background: var(--tag-bg);
+  color: var(--tag-text);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+}
+
+.asst-content {
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text);
+  word-break: break-word;
+  user-select: text;
+  cursor: text;
+}
+
+/* Per-message footer: stats + copy */
+.msg-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  min-height: 22px;
+}
+
+.msg-stats {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.msg-stats span { display: flex; align-items: center; gap: 3px; }
+
+.copy-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 3px 9px;
+  border-radius: 5px;
+  font-size: 11px;
+  opacity: 0;
+  transition: opacity .15s, background .12s, color .12s;
+  flex-shrink: 0;
+}
+.msg-wrap:hover .copy-btn { opacity: 1; }
+.copy-btn:hover { background: var(--border-light); color: var(--text); }
+.copy-btn.copied { color: #2da44e; border-color: #2da44e; }
+
+/* Typing dots */
+.dots {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  padding: 6px 0;
+}
+.dots span {
+  width: 7px; height: 7px;
+  background: var(--text-muted);
+  border-radius: 50%;
+  animation: dot-bounce 1.3s ease-in-out infinite;
+}
+.dots span:nth-child(2) { animation-delay: .15s; }
+.dots span:nth-child(3) { animation-delay: .3s; }
+@keyframes dot-bounce {
+  0%,60%,100% { transform: translateY(0); opacity: .35; }
+  30%          { transform: translateY(-5px); opacity: 1; }
+}
+
+/* ── Markdown ────────────────────────────────────────────────────────────── */
+.asst-content p           { margin: 0 0 10px; }
+.asst-content p:last-child { margin-bottom: 0; }
+.asst-content h1          { font-size: 20px; font-weight: 700; margin: 18px 0 8px; }
+.asst-content h2          { font-size: 17px; font-weight: 700; margin: 16px 0 6px; }
+.asst-content h3          { font-size: 15px; font-weight: 600; margin: 14px 0 4px; }
+.asst-content ul,
+.asst-content ol          { padding-left: 22px; margin: 8px 0; }
+.asst-content li          { margin: 3px 0; }
+.asst-content strong      { font-weight: 600; }
+.asst-content em          { font-style: italic; }
+.asst-content hr          { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
+.asst-content a           { color: var(--accent); text-decoration: none; }
+.asst-content a:hover     { text-decoration: underline; }
+.asst-content blockquote  {
+  border-left: 3px solid var(--border);
+  padding-left: 14px;
+  color: var(--text-dim);
+  margin: 10px 0;
+}
+
+/* Tables */
+.asst-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 12px 0;
+  font-size: 14px;
+}
+.asst-content th,
+.asst-content td {
+  border: 1px solid var(--border);
+  padding: 8px 14px;
+  text-align: left;
+  line-height: 1.5;
+}
+.asst-content th {
+  background: var(--code-bg);
+  font-weight: 600;
+  font-size: 13px;
+}
+.asst-content tr:nth-child(even) td { background: var(--border-light); }
+
+/* Code */
+.asst-content pre {
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  overflow-x: auto;
+  margin: 12px 0;
+}
+.asst-content pre code {
+  font-family: "SF Mono", "Fira Code", "Menlo", "Consolas", monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  background: none;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  color: var(--text);
+}
+.asst-content code {
+  font-family: "SF Mono", "Fira Code", "Menlo", "Consolas", monospace;
+  font-size: 13px;
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: #c0392b;
+}
+body.dark .asst-content code { color: #e06c75; }
+
+/* ── Input area ──────────────────────────────────────────────────────────── */
+#input-area {
+  padding: 12px 32px 20px;
+  max-width: 860px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+#input-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  transition: border-color .15s, box-shadow .15s;
+  overflow: hidden;
+}
+#input-box:focus-within {
+  border-color: #c0c0f0;
+  box-shadow: var(--shadow-md), 0 0 0 3px rgba(91,91,214,.08);
+}
+
+#input {
+  display: block;
+  width: 100%;
+  background: none;
+  outline: none;
+  padding: 14px 16px 6px;
+  font-size: 15px;
+  font-family: inherit;
+  color: var(--text);
+  line-height: 1.6;
+  min-height: 50px;
+  max-height: 180px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+#input:empty::before {
+  content: "Message Loca\2026";
+  color: var(--text-muted);
+  pointer-events: none;
+}
+/* Visual formatting inside the editor */
+#input strong, #input b { font-weight: 700; }
+#input em, #input i     { font-style: italic; }
+#input code {
+  font-family: "SF Mono", "Menlo", monospace;
+  font-size: 13px;
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: #c0392b;
+}
+body.dark #input code { color: #e06c75; }
+
+/* ── Memory panel ────────────────────────────────────────────────────────── */
+#mem-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.35);
+  z-index: 200;
+  display: none;
+  align-items: flex-start;
+}
+#mem-overlay.open { display: flex; }
+#mem-panel {
+  width: 380px;
+  max-width: 92vw;
+  height: 100vh;
+  background: var(--surface);
+  box-shadow: 4px 0 24px rgba(0,0,0,.15);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#mem-panel-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#mem-panel-hdr h3 { font-size: 14px; font-weight: 600; }
+.panel-close {
+  background: none; border: none; color: var(--text-dim);
+  cursor: pointer; font-size: 18px; line-height: 1;
+  padding: 2px 6px; border-radius: 4px;
+}
+.panel-close:hover { background: var(--border-light); }
+
+#mem-add {
+  display: flex; gap: 8px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+#mem-input {
+  flex: 1;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px; font-size: 13px; color: var(--text); outline: none;
+}
+#mem-input:focus { border-color: var(--accent); }
+#mem-save-btn {
+  background: var(--accent); color: #fff; border: none;
+  border-radius: var(--radius-sm);
+  padding: 6px 12px; font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+#mem-save-btn:hover { background: var(--accent-hover); }
+
+#mem-extract-btn {
+  margin: 8px 18px;
+  padding: 7px 12px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  flex-shrink: 0;
+  transition: background .12s, color .12s;
+}
+#mem-extract-btn:hover { background: var(--border-light); color: var(--text); }
+
+#mem-list { flex: 1; overflow-y: auto; padding: 4px 0; }
+#mem-list::-webkit-scrollbar { width: 4px; }
+#mem-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.mem-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--border-light);
+  font-size: 13px;
+}
+.mem-item:last-child { border-bottom: none; }
+.mem-body { flex: 1; min-width: 0; }
+.mem-content { color: var(--text); line-height: 1.5; user-select: text; }
+.mem-date { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+.mem-del {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; padding: 2px 4px; font-size: 13px;
+  opacity: .4; flex-shrink: 0;
+}
+.mem-del:hover { color: #c0392b; opacity: 1; }
+#mem-empty { text-align: center; color: var(--text-muted); font-size: 13px; padding: 32px 20px; }
+
+/* ── Selectable text everywhere ──────────────────────────────────────────── */
+#input           { user-select: text; }
+.msg-stats       { user-select: text; }
+.stat-row span   { user-select: text; }
+.stat-val        { user-select: text; }
+.user-bubble     { user-select: text; }
+
+/* User bubble copy wrapper */
+.user-msg-wrap { position: relative; max-width: 75%; }
+.user-copy-btn {
+  position: absolute; top: -6px; right: 4px;
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--text-muted); cursor: pointer;
+  padding: 2px 7px; border-radius: 4px; font-size: 10px;
+  opacity: 0; transition: opacity .15s;
+}
+.msg-wrap.user:hover .user-copy-btn { opacity: 1; }
+.user-copy-btn:hover { color: var(--text); }
+#input pre {
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  margin: 4px 0;
+  overflow-x: auto;
+}
+#input pre code {
+  background: none; border: none; padding: 0; color: var(--text);
+}
+
+/* Formatting toolbar */
+#fmt-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 12px 2px 12px;
+  border-top: 1px solid var(--border-light);
+}
+
+.fmt-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 7px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  transition: background .1s, color .1s;
+}
+.fmt-btn:hover { background: var(--border-light); color: var(--text); }
+.fmt-btn.mono { font-family: "SF Mono", "Menlo", monospace; font-weight: 500; }
+.fmt-sep { width: 1px; height: 14px; background: var(--border); margin: 0 4px; }
+
+#input-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px 10px 16px;
+}
+
+#input-hint { font-size: 12px; color: var(--text-muted); }
+
+#send-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background .15s;
+}
+#send-btn:hover:not(:disabled) { background: var(--accent-hover); }
+#send-btn:disabled {
+  background: var(--border);
+  color: var(--text-muted);
+  cursor: default;
+}
+</style>
+</head>
+<body>
+
+<!-- Draggable titlebar -->
+<div id="titlebar">
+  <div id="tb-title">Loca</div>
+  <div id="tb-actions">
+    <button class="tb-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle dark/light mode">
+      <svg id="theme-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="5"/>
+        <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+      </svg>
+    </button>
+  </div>
+</div>
+
+<div id="layout">
+
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <button id="new-chat-btn" onclick="newConversation()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+        New conversation
+      </button>
+    </div>
+
+    <div id="model-section">
+      <label>Model</label>
+      <select id="model-select"></select>
+      <div id="model-desc"></div>
+    </div>
+
+    <div id="model-section" style="border-top:none;padding-top:0">
+      <label>Context window</label>
+      <select id="ctx-select" style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm);padding:7px 28px 7px 10px;font-size:13px;cursor:pointer;outline:none;appearance:none;background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a8a8a' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E\");background-repeat:no-repeat;background-position:right 10px center">
+        <option value="8192">8k</option>
+        <option value="16384">16k</option>
+        <option value="32768" selected>32k</option>
+        <option value="65536">64k</option>
+        <option value="131072">128k</option>
+        <option value="262144">256k</option>
+      </select>
+    </div>
+
+    <div id="conv-section">
+      <div id="conv-section-hdr">Conversations</div>
+      <div id="conv-list"></div>
+    </div>
+
+    <div id="sidebar-bottom">
+      <div id="mem-trigger" onclick="openMemPanel()">
+        <span>Memory</span>
+        <span id="mem-count">—</span>
+      </div>
+      <div id="sidebar-stats">
+        <div class="stat-row">
+          <span>Context used</span>
+          <span class="stat-val" id="stat-ctx">—</span>
+        </div>
+        <div class="stat-row">
+          <span>Messages</span>
+          <span class="stat-val" id="stat-msgs">0</span>
+        </div>
+        <div class="stat-row">
+          <span>RAM used</span>
+          <span class="stat-val" id="stat-ram">—</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div id="main">
+    <div id="messages">
+      <div id="empty">
+        <div class="e-icon">◈</div>
+        <h2>Start a conversation</h2>
+        <p>Select a model on the left and send a message to begin.</p>
+      </div>
+    </div>
+
+    <div id="input-area">
+      <div id="input-box">
+        <div id="input" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Message input" spellcheck="true"></div>
+        <div id="fmt-bar">
+          <button class="fmt-btn" onclick="fmt('bold')"      title="Bold (⌘B)"><b>B</b></button>
+          <button class="fmt-btn" onclick="fmt('italic')"    title="Italic (⌘I)"><i>I</i></button>
+          <div class="fmt-sep"></div>
+          <button class="fmt-btn mono" onclick="fmt('code')"      title="Inline code (⌘⇧C)">`&nbsp;`</button>
+          <button class="fmt-btn mono" onclick="fmt('codeblock')" title="Code block (⌘⇧K)">```</button>
+        </div>
+        <div id="input-footer">
+          <span id="input-hint">Enter to send · Shift+Enter for new line</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button class="tb-btn" id="research-btn" onclick="toggleResearch()"
+                    title="Research mode: Playwright browser + SearXNG for deeper search"
+                    style="-webkit-app-region:no-drag;border-radius:6px;font-size:11px;padding:5px 8px">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+              </svg>
+              Research
+            </button>
+            <button id="send-btn" onclick="sendMessage()">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m22 2-7 20-4-9-9-4 20-7z"/></svg>
+              Send
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Prism syntax highlighting -->
+<script src="/assets/prism.min.js" data-manual></script>
+<script src="/assets/prism-markup.min.js"></script>
+<script src="/assets/prism-python.min.js"></script>
+<script src="/assets/prism-javascript.min.js"></script>
+<script src="/assets/prism-typescript.min.js"></script>
+<script src="/assets/prism-bash.min.js"></script>
+<script src="/assets/prism-json.min.js"></script>
+<script src="/assets/prism-yaml.min.js"></script>
+<script src="/assets/prism-css.min.js"></script>
+<script src="/assets/prism-sql.min.js"></script>
+<script src="/assets/prism-rust.min.js"></script>
+<script src="/assets/prism-go.min.js"></script>
+<script src="/assets/prism-java.min.js"></script>
+<script src="/assets/prism-c.min.js"></script>
+<script src="/assets/prism-cpp.min.js"></script>
+<script src="/assets/prism-swift.min.js"></script>
+
+<!-- Memory panel -->
+<div id="mem-overlay" onclick="if(event.target===this)closeMemPanel()">
+  <div id="mem-panel">
+    <div id="mem-panel-hdr">
+      <h3>Memory</h3>
+      <button class="panel-close" onclick="closeMemPanel()">×</button>
+    </div>
+    <div id="mem-add">
+      <input id="mem-input" type="text" placeholder="Add a memory manually…"
+        onkeydown="if(event.key==='Enter')saveManualMem()">
+      <button id="mem-save-btn" onclick="saveManualMem()">Save</button>
+    </div>
+    <button id="mem-extract-btn" onclick="triggerExtract()">
+      ✦ Extract memories from current conversation
+    </button>
+    <div id="mem-list"></div>
+  </div>
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let history        = [];
+let ctxTokens      = 0;
+let streaming      = false;
+let currentConvId  = null;
+let currentModel   = null;
+let researchMode   = false;
+
+const MODEL_DESCS = {
+  general: 'Vision · chat · code · analysis',
+  reason:  'Planning · trade-offs · math · logic',
+  code:    'Code generation · debugging · review',
+  write:   'Drafting · editing · summarisation',
+};
+
+// ── Theme ─────────────────────────────────────────────────────────────────────
+(function initTheme() {
+  const saved = localStorage.getItem('loca-theme');
+  const dark = saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  if (dark) {
+    document.body.classList.add('dark');
+    setThemeIcon(true);
+    document.getElementById('prism-css').href = '/assets/prism-dark.min.css';
+  }
+})();
+
+function toggleTheme() {
+  const dark = document.body.classList.toggle('dark');
+  localStorage.setItem('loca-theme', dark ? 'dark' : 'light');
+  setThemeIcon(dark);
+  document.getElementById('prism-css').href = dark ? '/assets/prism-dark.min.css' : '/assets/prism-light.min.css';
+}
+
+// ── Research mode ─────────────────────────────────────────────────────────────
+function toggleResearch() {
+  researchMode = !researchMode;
+  const btn = document.getElementById('research-btn');
+  btn.classList.toggle('active', researchMode);
+  btn.title = researchMode
+    ? 'Research mode ON — SearXNG + Playwright browser (click to disable)'
+    : 'Research mode: uses Playwright browser + SearXNG for deeper search';
+}
+
+function setThemeIcon(dark) {
+  const btn = document.getElementById('theme-icon');
+  if (dark) {
+    btn.innerHTML = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
+  } else {
+    btn.innerHTML = '<circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>';
+  }
+}
+
+// ── Models ────────────────────────────────────────────────────────────────────
+(async () => {
+  try {
+    const { data = [] } = await (await fetch('/v1/models')).json();
+    const sel = document.getElementById('model-select');
+    sel.innerHTML = data.map(m =>
+      `<option value="${esc(m.id)}">${esc(m.id)}</option>`
+    ).join('');
+    updateModelDesc();
+  } catch (_) {
+    document.getElementById('model-select').innerHTML =
+      ['general','reason','code','write']
+        .map(m => `<option value="${m}">${m}</option>`).join('');
+    updateModelDesc();
+  }
+})();
+
+document.getElementById('model-select').addEventListener('change', updateModelDesc);
+
+function updateModelDesc() {
+  const m = document.getElementById('model-select').value;
+  document.getElementById('model-desc').textContent = MODEL_DESCS[m] || '';
+}
+
+// ── System stats polling ──────────────────────────────────────────────────────
+async function pollSystemStats() {
+  try {
+    const s = await (await fetch('/system-stats')).json();
+    const el = document.getElementById('stat-ram');
+    if (s.ram_used_gb != null) {
+      el.textContent = `${s.ram_used_gb} / ${s.ram_total_gb} GB`;
+    }
+  } catch (_) {}
+}
+pollSystemStats();
+setInterval(pollSystemStats, 15000);
+
+// ── Editor (contenteditable) ──────────────────────────────────────────────────
+const inputEl = document.getElementById('input');
+
+// Paste as plain text only
+inputEl.addEventListener('paste', e => {
+  e.preventDefault();
+  const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const range = sel.getRangeAt(0);
+  range.deleteContents();
+  range.insertNode(document.createTextNode(text));
+  range.collapse(false);
+  sel.removeAllRanges();
+  sel.addRange(range);
+});
+
+inputEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    if (!streaming) sendMessage();
+    return;
+  }
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod && e.key === 'b') { e.preventDefault(); fmt('bold'); return; }
+  if (mod && e.key === 'i') { e.preventDefault(); fmt('italic'); return; }
+  if (mod && e.shiftKey && (e.key === 'C' || e.key === 'c')) { e.preventDefault(); fmt('code'); return; }
+  if (mod && e.shiftKey && (e.key === 'K' || e.key === 'k')) { e.preventDefault(); fmt('codeblock'); return; }
+
+  // Enter after ```lang → create a code block in the input
+  if (e.key === 'Enter' && !e.shiftKey) {
+    const sel2 = window.getSelection();
+    if (sel2 && sel2.rangeCount) {
+      const r2 = sel2.getRangeAt(0);
+      const n2 = r2.startContainer;
+      if (n2.nodeType === Node.TEXT_NODE) {
+        const before2 = n2.textContent.substring(0, r2.startOffset);
+        const m2 = before2.match(/(?:^|\n)```(\w*)$/);
+        if (m2) {
+          e.preventDefault();
+          createInputCodeBlock(n2, r2, m2[1] || 'plaintext');
+          return;
+        }
+      }
+    }
+  }
+
+  // ArrowRight at end of a styled inline element: escape to a node after it
+  if (e.key === 'ArrowRight') {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount && sel.isCollapsed) {
+      const range  = sel.getRangeAt(0);
+      const node   = range.startContainer;
+      const parent = node.parentElement;
+      if (parent && parent !== inputEl && ['STRONG','EM','CODE'].includes(parent.tagName)) {
+        const atEnd = (node.nodeType === Node.TEXT_NODE)
+          ? range.startOffset === node.textContent.length
+          : range.startOffset === parent.childNodes.length;
+        if (atEnd && !parent.nextSibling) {
+          e.preventDefault();
+          const spacer = document.createTextNode('\u200B');
+          parent.parentNode.insertBefore(spacer, parent.nextSibling);
+          const r = document.createRange();
+          r.setStart(spacer, 0); r.collapse(true);
+          sel.removeAllRanges(); sel.addRange(r);
+        }
+      }
+    }
+  }
+});
+
+// Live markdown: convert completed patterns to styled elements as you type
+inputEl.addEventListener('input', () => { tryAutoFormat(); });
+
+function tryAutoFormat() {
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount || !sel.isCollapsed) return;
+  const range = sel.getRangeAt(0);
+  const node  = range.startContainer;
+  if (node.nodeType !== Node.TEXT_NODE) return;
+
+  const text   = node.textContent;
+  const pos    = range.startOffset;
+  const before = text.substring(0, pos);
+
+  // **bold**
+  const boldM = before.match(/\*\*([^*\n]+)\*\*$/);
+  if (boldM) { convertInlinePattern(node, pos, boldM, 'strong'); return; }
+
+  // *italic* — only when not preceded by another * (avoid triggering inside **)
+  const italicM = before.match(/(?<!\*)\*([^*\n]+)\*$/);
+  if (italicM) { convertInlinePattern(node, pos, italicM, 'em'); return; }
+
+  // `code`
+  const codeM = before.match(/`([^`\n]+)`$/);
+  if (codeM) { convertInlinePattern(node, pos, codeM, 'code'); return; }
+}
+
+function convertInlinePattern(textNode, cursorPos, match, tagName) {
+  const patStart  = cursorPos - match[0].length;
+  const innerText = match[1];
+  const afterText = textNode.textContent.substring(cursorPos);
+  const beforeText = textNode.textContent.substring(0, patStart);
+
+  const el = document.createElement(tagName);
+  el.textContent = innerText;
+
+  const parent     = textNode.parentNode;
+  const beforeNode = beforeText ? document.createTextNode(beforeText) : null;
+  // Always create an afterNode so cursor can never get trapped inside the element.
+  // Use ZWS if nothing follows; getInputText() strips ZWS before sending.
+  const afterNode  = document.createTextNode(afterText || '\u200B');
+
+  if (beforeNode) parent.insertBefore(beforeNode, textNode);
+  parent.insertBefore(el, textNode);
+  parent.insertBefore(afterNode, textNode);
+  parent.removeChild(textNode);
+
+  // Cursor lands at position 0 of afterNode — outside the styled element
+  const r = document.createRange();
+  r.setStart(afterNode, 0);
+  r.collapse(true);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(r);
+}
+
+// ── New conversation ──────────────────────────────────────────────────────────
+async function newConversation() {
+  // Extract memories from the outgoing conversation (fire-and-forget)
+  if (currentConvId && history.length >= 2) {
+    fetch('/api/extract-memories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: history, conv_id: currentConvId }),
+    }).then(() => loadMemCount()).catch(() => {});
+  }
+
+  history       = [];
+  ctxTokens     = 0;
+  currentConvId = null;
+  currentModel  = null;
+  updateStats();
+  document.getElementById('messages').innerHTML = `
+    <div id="empty">
+      <div class="e-icon">◈</div>
+      <h2>Start a conversation</h2>
+      <p>Select a model on the left and send a message to begin.</p>
+    </div>`;
+  // Deactivate any selected conv
+  document.querySelectorAll('.conv-item.active').forEach(el => el.classList.remove('active'));
+}
+
+// ── Send ──────────────────────────────────────────────────────────────────────
+async function sendMessage() {
+  const text = getInputText();
+  if (!text || streaming) return;
+
+  const model  = document.getElementById('model-select').value;
+  const numCtx = parseInt(document.getElementById('ctx-select').value, 10);
+  currentModel = model;
+  document.getElementById('empty')?.remove();
+
+  history.push({ role: 'user', content: text });
+  appendUser(text);
+
+  inputEl.innerHTML = '';
+  setStreaming(true);
+
+  const { bodyEl, statsEl, copyBtn } = appendAssistant(model);
+  bodyEl.innerHTML = '<div class="dots"><span></span><span></span><span></span></div>';
+
+  let full = '';
+  let outputTokens = 0;
+  let actualModel  = model;
+  const t_start   = performance.now();
+  let   t_first   = null;
+
+  try {
+    const resp = await fetch('/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, messages: history, stream: true, num_ctx: numCtx, research_mode: researchMode })
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+    const reader = resp.body.getReader();
+    const dec    = new TextDecoder();
+    let   buf    = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6).trim();
+        if (raw === '[DONE]') continue;
+        try {
+          const parsed  = JSON.parse(raw);
+          // Usage chunk (final, no content) — also carries actual model name
+          if (parsed.usage && parsed.usage.completion_tokens) {
+            outputTokens = parsed.usage.completion_tokens;
+            if (parsed.model) actualModel = parsed.model;
+            continue;
+          }
+          const delta = parsed.choices?.[0]?.delta?.content;
+          if (delta != null) {
+            if (t_first === null) t_first = performance.now();
+            if (!full) bodyEl.innerHTML = '';
+            full += delta;
+            bodyEl.innerHTML = renderMd(full);
+            scrollBottom();
+          }
+        } catch (_) {}
+      }
+    }
+
+    if (!full) bodyEl.innerHTML = '<span style="color:var(--text-muted)">No response.</span>';
+    else bodyEl.innerHTML = renderMd(full);
+
+    history.push({ role: 'assistant', content: full });
+
+    // Token stats
+    if (!outputTokens) outputTokens = Math.max(1, Math.ceil(full.length / 4));
+    const inputTokens = Math.ceil(text.length / 4);
+    ctxTokens += inputTokens + outputTokens;
+    updateStats();
+
+    const t_end        = performance.now();
+    const ttft_s       = t_first ? ((t_first - t_start) / 1000).toFixed(2) : null;
+    // Use total elapsed time for tok/s — the proxy buffers internally so t_first→t_end
+    // is near-zero (just localhost chunk delivery), not real generation time.
+    const total_sec    = (t_end - t_start) / 1000;
+    const tok_per_sec  = total_sec > 0 ? (outputTokens / total_sec).toFixed(1) : '—';
+
+    renderStats(statsEl, { outputTokens, tok_per_sec, ttft_s, ctxTokens, numCtx, model: actualModel });
+
+    // Enable copy
+    copyBtn.style.display = 'inline-flex';
+    copyBtn.onclick = () => copyText(full, copyBtn);
+
+    // Auto-save conversation
+    saveConv(model);
+
+  } catch (err) {
+    bodyEl.innerHTML = `<span style="color:#c0392b">Error: ${esc(err.message)}</span>`;
+  }
+
+  setStreaming(false);
+}
+
+function renderStats(el, { outputTokens, tok_per_sec, ttft_s, ctxTokens, numCtx, model }) {
+  const ctxLimit = numCtx || 32768;
+  const pct      = Math.min(100, Math.round((ctxTokens / ctxLimit) * 100));
+  const ctxLabel = ctxLimit >= 1000 ? `${Math.round(ctxLimit/1024)}k` : ctxLimit;
+  const items = [
+    model ? `model:${model}` : null,
+    `${outputTokens} tok`,
+    `${tok_per_sec} tok/s`,
+    ttft_s !== null ? `TTFT ${ttft_s}s` : null,
+    `Ctx ${(ctxTokens/1000).toFixed(1)}k/${ctxLabel} (${pct}%)`,
+    researchMode ? `🔍 research` : null,
+  ].filter(Boolean);
+
+  el.innerHTML = items.map(t => `<span>${esc(t)}</span>`).join('');
+
+  // Click to copy stats line
+  el._statsText = items.join(' · ');
+  el.onclick = async () => {
+    try { await navigator.clipboard.writeText(el._statsText); } catch(_) {}
+    const prev = el.style.opacity;
+    el.style.opacity = '0.4';
+    setTimeout(() => el.style.opacity = prev, 300);
+  };
+}
+
+async function copyText(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+    btn.textContent = 'Copied';
+    btn.classList.add('copied');
+    setTimeout(() => {
+      btn.textContent = 'Copy';
+      btn.classList.remove('copied');
+    }, 1800);
+  } catch (_) {
+    // Fallback: select all in a temp textarea
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    btn.textContent = 'Copied';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1800);
+  }
+}
+
+// ── DOM helpers ───────────────────────────────────────────────────────────────
+function appendUser(text) {
+  const msgs = document.getElementById('messages');
+  const wrap = document.createElement('div');
+  wrap.className = 'msg-wrap user';
+  const inner = document.createElement('div');
+  inner.className = 'user-msg-wrap';
+  const bub = document.createElement('div');
+  bub.className = 'user-bubble';
+  bub.innerHTML = renderMd(text);
+  const cpBtn = document.createElement('button');
+  cpBtn.className = 'user-copy-btn';
+  cpBtn.textContent = 'Copy';
+  cpBtn.onclick = () => copyText(text, cpBtn);
+  inner.appendChild(bub);
+  inner.appendChild(cpBtn);
+  wrap.appendChild(inner);
+  msgs.appendChild(wrap);
+  scrollBottom();
+}
+
+function appendAssistant(model) {
+  const msgs = document.getElementById('messages');
+  const wrap = document.createElement('div');
+  wrap.className = 'msg-wrap';
+
+  wrap.innerHTML = `
+    <div class="asst-row">
+      <div class="asst-avatar">L</div>
+      <div class="asst-body">
+        <div class="asst-name">
+          Loca
+          <span class="model-chip">${esc(model)}</span>
+        </div>
+        <div class="asst-content"></div>
+        <div class="msg-footer">
+          <div class="msg-stats" title="Click to copy stats" style="cursor:pointer"></div>
+          <button class="copy-btn" style="display:none">Copy</button>
+        </div>
+      </div>
+    </div>`;
+
+  msgs.appendChild(wrap);
+  scrollBottom();
+  return {
+    bodyEl:  wrap.querySelector('.asst-content'),
+    statsEl: wrap.querySelector('.msg-stats'),
+    copyBtn: wrap.querySelector('.copy-btn'),
+  };
+}
+
+// ── Markdown renderer ─────────────────────────────────────────────────────────
+function renderMd(text) {
+  // 1. Extract fenced code blocks — emit Prism class names
+  const blocks = [];
+  let s = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    const cls = lang ? `language-${esc(lang)}` : 'language-none';
+    const highlighted = (lang && typeof Prism !== 'undefined' && Prism.languages[lang])
+      ? Prism.highlight(code.trimEnd(), Prism.languages[lang], lang)
+      : escHtml(code.trimEnd());
+    blocks.push(`<pre class="${cls}"><code class="${cls}">${highlighted}</code></pre>`);
+    return `\x00CODE${blocks.length - 1}\x00`;
+  });
+
+  // 2. Extract tables (before HTML escaping so | isn't affected)
+  const tables = [];
+  s = s.replace(/((?:\|.+\|\n?)+)/g, (match) => {
+    const rows = match.trim().split('\n').filter(r => r.trim());
+    // Need at least header + separator row
+    if (rows.length < 2 || !/^\|[-: |]+\|/.test(rows[1])) return match;
+    tables.push(buildTable(rows));
+    return `\x00TABLE${tables.length - 1}\x00`;
+  });
+
+  // 3. Escape HTML in remaining text
+  s = escHtml(s);
+
+  // 4. Inline formatting
+  s = s
+    .replace(/`([^`\n]+)`/g,    '<code>$1</code>')
+    .replace(/\*\*(.+?)\*\*/g,  '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g,      '<em>$1</em>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+  // 5. Block elements
+  s = s
+    .replace(/^#{3} (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^#{2} (.+)$/gm, '<h2>$1</h2>')
+    .replace(/^# (.+)$/gm,    '<h1>$1</h1>')
+    .replace(/^---$/gm,       '<hr>')
+    .replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>')
+    .replace(/^[-*] (.+)$/gm, '<li>$1</li>')
+    .replace(/^(\d+)\. (.+)$/gm, '<li>$2</li>');
+
+  // Wrap consecutive <li> in <ul>
+  s = s.replace(/(<li>[\s\S]*?<\/li>\n?)+/g, m => `<ul>${m}</ul>`);
+
+  // 6. Paragraphs (skip block-level elements and placeholders)
+  s = s.split(/\n{2,}/).map(p => {
+    p = p.trim();
+    if (!p) return '';
+    if (/^\x00(CODE|TABLE)\d+\x00$/.test(p)) return p;
+    if (/^<(h[1-3]|ul|ol|pre|hr|blockquote|table)/.test(p)) return p;
+    return `<p>${p.replace(/\n/g, '<br>')}</p>`;
+  }).join('\n');
+
+  // 7. Restore tables then code blocks
+  s = s.replace(/\x00TABLE(\d+)\x00/g, (_, i) => tables[+i]);
+  s = s.replace(/\x00CODE(\d+)\x00/g,  (_, i) => blocks[+i]);
+
+  return s;
+}
+
+function buildTable(rows) {
+  const parseRow = r => r.split('|').slice(1, -1).map(c => c.trim());
+  const headers  = parseRow(rows[0]);
+  // rows[1] is the separator — skip it
+  const bodyRows = rows.slice(2);
+
+  const thead = `<tr>${headers.map(h => `<th>${escHtml(h)}</th>`).join('')}</tr>`;
+  const tbody = bodyRows.map(row => {
+    const cells = parseRow(row);
+    return `<tr>${cells.map(c => `<td>${escHtml(c)}</td>`).join('')}</tr>`;
+  }).join('');
+
+  return `<table><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function esc(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Utility ───────────────────────────────────────────────────────────────────
+function setStreaming(v) {
+  streaming = v;
+  document.getElementById('send-btn').disabled = v;
+  document.getElementById('model-select').disabled = v;
+  // Keep input editable so user can compose the next message while waiting
+  if (!v) document.getElementById('input').focus();
+}
+
+function scrollBottom() {
+  const msgs = document.getElementById('messages');
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+// ── Formatting toolbar ────────────────────────────────────────────────────────
+function fmt(type) {
+  const input = document.getElementById('input');
+  input.focus();
+
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const range   = sel.getRangeAt(0);
+  const selText = range.toString();
+
+  if (type === 'codeblock') {
+    const pre  = document.createElement('pre');
+    const code = document.createElement('code');
+    code.textContent = selText || '';
+    pre.appendChild(code);
+    if (selText) range.deleteContents();
+    range.insertNode(pre);
+    // ensure a newline after so typing can continue
+    const br = document.createElement('br');
+    if (pre.nextSibling) pre.parentNode.insertBefore(br, pre.nextSibling);
+    else pre.parentNode.appendChild(br);
+    const r = document.createRange();
+    r.setStart(code, 0); r.collapse(true);
+    sel.removeAllRanges(); sel.addRange(r);
+    return;
+  }
+
+  const tagMap = { bold: 'strong', italic: 'em', code: 'code' };
+  const tag = tagMap[type];
+  if (!tag) return;
+  const el = document.createElement(tag);
+
+  if (selText) {
+    try { range.surroundContents(el); }
+    catch(_) { const f = range.extractContents(); el.appendChild(f); range.insertNode(el); }
+    const r = document.createRange();
+    r.setStartAfter(el); r.collapse(true);
+    sel.removeAllRanges(); sel.addRange(r);
+  } else {
+    // Insert element with zero-width space so cursor lands inside it
+    el.appendChild(document.createTextNode('\u200B'));
+    range.insertNode(el);
+    const r = document.createRange();
+    r.selectNodeContents(el); r.collapse(false);
+    sel.removeAllRanges(); sel.addRange(r);
+  }
+}
+
+// Convert contenteditable HTML → markdown for sending to the LLM
+function nodeToMd(node) {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent;
+  const tag   = node.tagName?.toLowerCase();
+  const inner = () => Array.from(node.childNodes).map(nodeToMd).join('');
+  switch (tag) {
+    case 'strong': case 'b': return `**${inner()}**`;
+    case 'em':    case 'i': return `*${inner()}*`;
+    case 'code': {
+      const inPre = node.parentElement?.tagName?.toLowerCase() === 'pre';
+      return inPre ? inner() : `\`${inner()}\``;
+    }
+    case 'pre': {
+      const code = node.querySelector('code');
+      return `\`\`\`\n${(code ? code.textContent : node.textContent).trim()}\n\`\`\``;
+    }
+    case 'br':  return '\n';
+    case 'div': { const t = inner(); return t.endsWith('\n') ? t : t + '\n'; }
+    default: return inner();
+  }
+}
+
+function getInputText() {
+  const el = document.getElementById('input');
+  // Strip zero-width spaces inserted by fmt()
+  return Array.from(el.childNodes).map(nodeToMd).join('')
+    .replace(/\u200B/g, '').trim();
+}
+
+function updateStats() {
+  const n = ctxTokens;
+  document.getElementById('stat-ctx').textContent =
+    n >= 1000 ? `~${(n/1000).toFixed(1)}k` : `~${n}`;
+  document.getElementById('stat-msgs').textContent =
+    Math.floor(history.length / 2);
+}
+
+// ── Input code blocks ─────────────────────────────────────────────────────────
+function createInputCodeBlock(textNode, range, lang) {
+  const before = textNode.textContent.substring(0, range.startOffset).replace(/```\w*$/, '');
+  const after  = textNode.textContent.substring(range.startOffset);
+  const parent = textNode.parentNode;
+
+  const pre  = document.createElement('pre');
+  const code = document.createElement('code');
+  code.className = `language-${lang}`;
+  pre.className  = `language-${lang}`;
+  pre.appendChild(code);
+
+  const beforeNode = before ? document.createTextNode(before) : null;
+  const afterNode  = document.createTextNode(after || '\u200B');
+
+  if (beforeNode) parent.insertBefore(beforeNode, textNode);
+  parent.insertBefore(pre, textNode);
+  parent.insertBefore(afterNode, textNode);
+  parent.removeChild(textNode);
+
+  // Cursor lands inside the code element ready to type
+  const r = document.createRange();
+  r.setStart(code, 0); r.collapse(true);
+  const s = window.getSelection();
+  s.removeAllRanges(); s.addRange(r);
+}
+
+// Debounced syntax highlighting for code blocks in the input field
+let _hlTimer = null;
+function scheduleInputHighlight() {
+  clearTimeout(_hlTimer);
+  _hlTimer = setTimeout(highlightInputCode, 350);
+}
+
+function highlightInputCode() {
+  if (typeof Prism === 'undefined') return;
+  inputEl.querySelectorAll('pre code[class*="language-"]').forEach(codeEl => {
+    const lang = (codeEl.className.match(/language-(\w+)/) || [])[1];
+    if (!lang || !Prism.languages[lang]) return;
+
+    const sel = window.getSelection();
+    const inside = sel && sel.rangeCount && codeEl.contains(sel.getRangeAt(0).startContainer);
+
+    if (inside) {
+      // Insert cursor marker, highlight, restore cursor
+      const range = sel.getRangeAt(0);
+      const marker = document.createTextNode('\x01');
+      range.insertNode(marker);
+      const rawText = codeEl.textContent;
+      const cursorIdx = rawText.indexOf('\x01');
+      marker.remove();
+      const clean = rawText.replace('\x01', '');
+      codeEl.innerHTML = Prism.highlight(clean, Prism.languages[lang], lang);
+      // Restore cursor
+      if (cursorIdx >= 0) setCursorInNode(codeEl, cursorIdx);
+    } else {
+      const text = codeEl.textContent;
+      codeEl.innerHTML = Prism.highlight(text, Prism.languages[lang], lang);
+    }
+  });
+}
+
+function setCursorInNode(root, targetOffset) {
+  let chars = 0;
+  const sel = window.getSelection();
+  const r = document.createRange();
+  let found = false;
+  (function walk(node) {
+    if (found) return;
+    if (node.nodeType === Node.TEXT_NODE) {
+      if (chars + node.textContent.length >= targetOffset) {
+        r.setStart(node, targetOffset - chars);
+        r.collapse(true);
+        found = true;
+      } else {
+        chars += node.textContent.length;
+      }
+    } else {
+      node.childNodes.forEach(walk);
+    }
+  })(root);
+  if (found) { sel.removeAllRanges(); sel.addRange(r); }
+}
+
+// Wire up highlighting on input
+inputEl.addEventListener('input', scheduleInputHighlight);
+
+// ── Conversation persistence ───────────────────────────────────────────────────
+async function saveConv(model) {
+  if (!history.length) return;
+  const firstUser = history.find(m => m.role === 'user');
+  const title     = firstUser ? firstUser.content.slice(0, 60) : 'Conversation';
+  try {
+    const res = await fetch('/api/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: currentConvId, title, messages: history, model }),
+    });
+    const data = await res.json();
+    if (!currentConvId) {
+      currentConvId = data.id;
+      loadConvList(); // First save: refresh list
+    } else {
+      // Update title in existing list item
+      const el = document.querySelector(`.conv-item[data-id="${currentConvId}"] .conv-title`);
+      if (el) el.textContent = title;
+    }
+  } catch (_) {}
+}
+
+async function loadConvList() {
+  try {
+    const { conversations = [] } = await (await fetch('/api/conversations')).json();
+    const list = document.getElementById('conv-list');
+    if (!conversations.length) {
+      list.innerHTML = '<div style="padding:10px 16px;font-size:12px;color:var(--text-muted)">No conversations yet</div>';
+      return;
+    }
+    list.innerHTML = conversations.map(c => `
+      <div class="conv-item${c.id === currentConvId ? ' active' : ''}" data-id="${esc(c.id)}"
+           onclick="loadConv('${esc(c.id)}')">
+        <span class="conv-title">${esc(c.title)}</span>
+        <span class="conv-date">${relTime(c.updated)}</span>
+        <button class="conv-del" onclick="event.stopPropagation();deleteConv('${esc(c.id)}')" title="Delete">×</button>
+      </div>`).join('');
+  } catch (_) {}
+}
+
+async function loadConv(id) {
+  if (streaming) return;
+  try {
+    const conv = await (await fetch(`/api/conversations/${id}`)).json();
+    if (conv.error) return;
+
+    history       = conv.messages || [];
+    ctxTokens     = Math.ceil(history.reduce((s, m) => s + (typeof m.content === 'string' ? m.content.length : 0), 0) / 4);
+    currentConvId = id;
+    currentModel  = conv.model || null;
+    updateStats();
+
+    const msgs = document.getElementById('messages');
+    msgs.innerHTML = '';
+
+    for (const m of history) {
+      if (m.role === 'user') {
+        appendUser(typeof m.content === 'string' ? m.content : '');
+      } else if (m.role === 'assistant') {
+        const { bodyEl, copyBtn } = appendAssistant(conv.model || '');
+        bodyEl.innerHTML = renderMd(typeof m.content === 'string' ? m.content : '');
+        copyBtn.style.display = 'inline-flex';
+        copyBtn.onclick = () => copyText(m.content, copyBtn);
+      }
+    }
+
+    // Mark active in list
+    document.querySelectorAll('.conv-item').forEach(el => {
+      el.classList.toggle('active', el.dataset.id === id);
+    });
+    scrollBottom();
+  } catch (_) {}
+}
+
+async function deleteConv(id) {
+  try {
+    await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
+    if (currentConvId === id) newConversation();
+    loadConvList();
+  } catch (_) {}
+}
+
+function relTime(ts) {
+  const d = Date.now() / 1000 - ts;
+  if (d < 60)          return 'now';
+  if (d < 3600)        return `${Math.floor(d/60)}m`;
+  if (d < 86400)       return `${Math.floor(d/3600)}h`;
+  if (d < 86400 * 7)   return `${Math.floor(d/86400)}d`;
+  return new Date(ts * 1000).toLocaleDateString();
+}
+
+// Kick off initial load
+loadConvList();
+
+// ── Memory panel ───────────────────────────────────────────────────────────────
+async function loadMemCount() {
+  try {
+    const { memories = [] } = await (await fetch('/api/memories')).json();
+    document.getElementById('mem-count').textContent =
+      memories.length ? `${memories.length} fact${memories.length > 1 ? 's' : ''}` : 'empty';
+    return memories;
+  } catch (_) { return []; }
+}
+
+async function openMemPanel() {
+  document.getElementById('mem-overlay').classList.add('open');
+  await renderMemList();
+}
+
+function closeMemPanel() {
+  document.getElementById('mem-overlay').classList.remove('open');
+}
+
+async function renderMemList() {
+  const mems = await loadMemCount();
+  const list = document.getElementById('mem-list');
+  if (!mems.length) {
+    list.innerHTML = `<div id="mem-empty">
+      No memories yet.<br><br>
+      Click <strong>Extract memories from current conversation</strong> above,
+      or start a new conversation — extraction runs automatically when you switch conversations.
+      <br><br>You can also add facts manually using the field above.
+    </div>`;
+    return;
+  }
+  list.innerHTML = mems.map(m => `
+    <div class="mem-item" id="mem-${esc(m.id)}">
+      <div class="mem-body">
+        <div class="mem-content">${esc(m.content)}</div>
+        <div class="mem-date">${new Date(m.created * 1000).toLocaleDateString()}</div>
+      </div>
+      <button class="mem-del" onclick="deleteMem('${esc(m.id)}')" title="Delete">×</button>
+    </div>`).join('');
+}
+
+async function deleteMem(id) {
+  try {
+    await fetch(`/api/memories/${id}`, { method: 'DELETE' });
+    document.getElementById(`mem-${id}`)?.remove();
+    loadMemCount();
+  } catch (_) {}
+}
+
+async function saveManualMem() {
+  const inp = document.getElementById('mem-input');
+  const content = inp.value.trim();
+  if (!content) return;
+  try {
+    await fetch('/api/memories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    inp.value = '';
+    renderMemList();
+  } catch (_) {}
+}
+
+async function triggerExtract() {
+  const btn = document.getElementById('mem-extract-btn');
+  if (!history.length) { btn.textContent = '✦ Nothing to extract yet'; return; }
+  btn.textContent = '⏳ Extracting…';
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/extract-memories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: history, conv_id: currentConvId }),
+    });
+    const { memories = [] } = await res.json();
+    btn.textContent = `✦ Extracted ${memories.length} fact${memories.length !== 1 ? 's' : ''}`;
+    renderMemList();
+  } catch (_) {
+    btn.textContent = '✦ Extraction failed';
+  }
+  setTimeout(() => {
+    btn.textContent = '✦ Extract memories from current conversation';
+    btn.disabled = false;
+  }, 3000);
+}
+
+// Load memory count on start
+loadMemCount();
+</script>
+</body>
+</html>
