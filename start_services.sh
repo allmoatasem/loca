@@ -26,6 +26,15 @@ notify() {
     osascript -e "display notification \"$1\" with title \"Loca\" sound name \"Funk\""
 }
 
+# Write a status message both to the notification and to a file the
+# loading screen can poll before the proxy is up.
+status() {
+    local msg="$1"
+    local progress="${2:-0}"
+    printf '{"stage":"%s","progress":%d}\n' "$msg" "$progress" > /tmp/loca-startup-status.json
+    notify "$msg"
+}
+
 shutdown() {
     notify "Shutting down Loca..."
     [ -f /tmp/loca-searxng.pid ] && kill "$(cat /tmp/loca-searxng.pid)" 2>/dev/null || true
@@ -40,7 +49,7 @@ bail() {
 }
 
 # ── 1. LM Studio server ──────────────────────────────────────────────────────
-notify "Starting LM Studio..."
+status "Starting LM Studio…" 5
 if [ ! -f "$LMS" ]; then
     bail "LM Studio CLI not found. Install LM Studio from lmstudio.ai."
 fi
@@ -66,10 +75,27 @@ for i in $(seq 1 90); do
     fi
 done
 
-# ── 2. Orchestrator venv (first-run setup) ───────────────────────────────────
+# ── 2. Orchestrator venv ──────────────────────────────────────────────────────
+# Recreate venv if: it doesn't exist, Python binary is broken/wrong path,
+# or requirements.txt is newer than the venv's pip.
+_need_venv=0
 if [ ! -d "$VENV" ]; then
-    notify "First run: setting up orchestrator (30s)..."
+    _need_venv=1
+elif ! "$VENV/bin/python" -c "import sys" 2>/dev/null; then
+    echo "Venv Python broken — recreating..." >> /tmp/loca-proxy.log
+    rm -rf "$VENV"
+    _need_venv=1
+elif [ "$DIR/requirements.txt" -nt "$VENV/bin/pip" ]; then
+    echo "requirements.txt updated — reinstalling dependencies..." >> /tmp/loca-proxy.log
+    _need_venv=2   # only reinstall, don't recreate
+fi
+
+if [ "$_need_venv" -eq 1 ]; then
+    status "Setting up Python environment…" 25
     python3 -m venv "$VENV" || bail "Failed to create Python venv."
+fi
+if [ "$_need_venv" -ge 1 ]; then
+    status "Installing dependencies…" 30
     "$VENV/bin/pip" install -r "$DIR/requirements.txt" -q || bail "Failed to install orchestrator dependencies."
 fi
 
@@ -79,13 +105,13 @@ if [ -z "$PYTHON312" ] || [ ! -f "$PYTHON312" ]; then
 fi
 
 if [ ! -d "$SEARXNG_SRC" ]; then
-    notify "First run: cloning SearXNG..."
+    status "Cloning SearXNG (first run)…" 35
     git clone --depth=1 https://github.com/searxng/searxng "$SEARXNG_SRC" 2>/dev/null \
         || bail "Failed to clone SearXNG. Check internet connection."
 fi
 
 if [ ! -d "$VENV_SEARXNG" ]; then
-    notify "First run: installing SearXNG (2-3 min)..."
+    status "Installing SearXNG (first run, ~2 min)…" 40
     "$PYTHON312" -m venv "$VENV_SEARXNG" || bail "Failed to create SearXNG venv."
     "$VENV_SEARXNG/bin/pip" install -U pip setuptools wheel pyyaml -q \
         || bail "Failed to upgrade pip for SearXNG."
@@ -96,12 +122,12 @@ if [ ! -d "$VENV_SEARXNG" ]; then
 fi
 
 # ── 4. Sync model list from LM Studio → config.yaml ──────────────────────────
-notify "Syncing models..."
+status "Syncing models…" 55
 cd "$DIR"
 "$VENV/bin/python" src/model_sync.py >> /tmp/loca-proxy.log 2>&1 || true
 
 # ── 5. Start orchestrator proxy ───────────────────────────────────────────────
-notify "Starting orchestrator proxy..."
+status "Starting proxy…" 65
 lsof -ti tcp:8000 -sTCP:LISTEN | xargs kill -9 2>/dev/null || true
 cd "$DIR"
 "$VENV/bin/python" -m uvicorn src.proxy:app --host 0.0.0.0 --port 8000 \
@@ -115,7 +141,7 @@ for i in $(seq 1 20); do
 done
 
 # ── 6. Start SearXNG ─────────────────────────────────────────────────────────
-notify "Starting SearXNG..."
+status "Starting SearXNG…" 80
 lsof -ti tcp:8888 -sTCP:LISTEN | xargs kill -9 2>/dev/null || true
 cd "$SEARXNG_SRC"
 SEARXNG_SETTINGS_PATH="$DIR/searxng-settings.yml" \
@@ -131,8 +157,8 @@ for i in $(seq 1 30); do
 done
 
 # ── 7. Signal ready ──────────────────────────────────────────────────────────
+status "Ready" 100
 # Swift app polls /health and loads the UI in WKWebView — no browser needed.
-notify "Loca is ready."
 
 # ── Keep alive + watchdog ─────────────────────────────────────────────────────
 trap shutdown INT TERM EXIT

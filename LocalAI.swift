@@ -149,30 +149,70 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     func showLoading() {
         let html = """
-        <!DOCTYPE html><html><head><style>
-        * { margin:0; padding:0; box-sizing:border-box }
-        body {
-          background:#f5f5f0; color:#1a1a1a;
-          font-family:-apple-system,sans-serif;
-          display:flex; align-items:center; justify-content:center; height:100vh;
+        <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{
+          background:#f5f5f0;color:#1a1a1a;
+          font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif;
+          display:flex;align-items:center;justify-content:center;height:100vh;
         }
-        .wrap { text-align:center }
-        .ring {
-          width:34px; height:34px;
-          border:3px solid #e5e5e0; border-top-color:#5b5bd6;
+        .card{
+          text-align:center;
+          background:#fff;
+          border:1px solid #e5e5e0;
+          border-radius:16px;
+          padding:36px 44px;
+          box-shadow:0 4px 24px rgba(0,0,0,.07);
+          min-width:300px;
+        }
+        .logo{
+          font-size:28px;font-weight:700;letter-spacing:-.5px;
+          color:#1a1a1a;margin-bottom:24px;
+        }
+        .logo span{color:#5b5bd6}
+        .ring{
+          width:32px;height:32px;
+          border:2.5px solid #e5e5e0;border-top-color:#5b5bd6;
           border-radius:50%;
-          animation:spin .75s linear infinite;
-          margin:0 auto 18px;
+          animation:spin .7s linear infinite;
+          margin:0 auto 20px;
         }
-        @keyframes spin { to { transform:rotate(360deg) } }
-        h2 { font-size:16px; font-weight:600; margin-bottom:6px }
-        p  { font-size:13px; color:#8a8a8a }
+        @keyframes spin{to{transform:rotate(360deg)}}
+        .stage{
+          font-size:14px;font-weight:500;color:#1a1a1a;
+          margin-bottom:6px;min-height:20px;
+        }
+        .sub{font-size:12px;color:#8a8a8a;margin-bottom:20px}
+        .bar-track{
+          background:#efefeb;border-radius:4px;height:4px;
+          overflow:hidden;margin-top:4px;
+        }
+        .bar-fill{
+          height:100%;background:#5b5bd6;border-radius:4px;
+          transition:width .5s ease;width:0%;
+        }
+        .log{
+          font-size:11px;color:#b0b0a8;margin-top:16px;
+          font-family:'SF Mono','Menlo',monospace;
+          height:14px;overflow:hidden;
+        }
         </style></head>
-        <body><div class="wrap">
+        <body><div class="card">
+          <div class="logo">Lo<span>ca</span></div>
           <div class="ring"></div>
-          <h2>Starting Loca…</h2>
-          <p>This may take a moment on first launch.</p>
-        </div></body></html>
+          <div class="stage" id="stage">Initialising…</div>
+          <div class="sub">First launch may take a minute or two</div>
+          <div class="bar-track"><div class="bar-fill" id="bar"></div></div>
+          <div class="log" id="log"></div>
+        </div>
+        <script>
+        function update(stage, progress, detail) {
+          document.getElementById('stage').textContent = stage || 'Starting…';
+          document.getElementById('bar').style.width  = (progress || 0) + '%';
+          if (detail) document.getElementById('log').textContent = detail;
+        }
+        </script>
+        </body></html>
         """
         webView.loadHTMLString(html, baseURL: nil)
     }
@@ -180,8 +220,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     // MARK: - Polling
 
     func startPolling() {
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             self?.checkReady()
+            self?.checkStartupStatus()
         }
         // Time out after 8 minutes (first-run setup can be slow)
         Timer.scheduledTimer(withTimeInterval: 480, repeats: false) { [weak self] _ in
@@ -208,6 +249,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                 self?.webView.load(req)
             }
         }.resume()
+    }
+
+    // MARK: - Startup status (reads /tmp/loca-startup-status.json written by start_services.sh)
+
+    func checkStartupStatus() {
+        guard !isReady else { return }
+        let path = "/tmp/loca-startup-status.json"
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let stage = json["stage"] as? String else { return }
+        let progress = json["progress"] as? Int ?? 0
+        let detail   = json["detail"]   as? String ?? ""
+        let escaped  = stage.replacingOccurrences(of: "'", with: "\\'")
+        let detailEsc = detail.replacingOccurrences(of: "'", with: "\\'")
+        DispatchQueue.main.async { [weak self] in
+            self?.webView.evaluateJavaScript(
+                "if(typeof update==='function')update('\(escaped)',\(progress),'\(detailEsc)')",
+                completionHandler: nil
+            )
+        }
     }
 
     // MARK: - Navigation delegate
