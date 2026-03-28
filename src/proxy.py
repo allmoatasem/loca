@@ -22,9 +22,12 @@ import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
+import base64
+import io
+
 import httpx
 import yaml
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, File, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from .model_manager import ModelManager
@@ -90,7 +93,10 @@ async def openai_chat(request: Request) -> Response:
     messages: list[dict] = body.get("messages", [])
     stream: bool = body.get("stream", False)
     has_image = _detect_image(messages)
-    model_hint: str | None = body.get("model")
+    # `mode` drives routing/system-prompt; `model` is the actual LLM to call.
+    # If only `model` is provided (legacy), treat it as both.
+    mode_hint: str | None = body.get("mode") or body.get("model")
+    model_override: str | None = body.get("model_override")
     num_ctx: int | None = body.get("num_ctx")
     research_mode: bool = body.get("research_mode", False)
 
@@ -98,11 +104,17 @@ async def openai_chat(request: Request) -> Response:
 
     if stream:
         return StreamingResponse(
-            _openai_stream_response(_orchestrator, messages, has_image, model_hint, num_ctx, research_mode),
+            _openai_stream_response(
+                _orchestrator, messages, has_image, mode_hint, model_override, num_ctx, research_mode
+            ),
             media_type="text/event-stream",
         )
 
-    response_data = await _orchestrator.handle(messages, has_image=has_image, stream=False, model_hint=model_hint, num_ctx=num_ctx, research_mode=research_mode)
+    response_data = await _orchestrator.handle(
+        messages, has_image=has_image, stream=False,
+        model_hint=mode_hint, model_override=model_override,
+        num_ctx=num_ctx, research_mode=research_mode,
+    )
     # response_data is already an OpenAI-shaped dict from LM Studio — pass it through
     content = ""
     try:
@@ -130,13 +142,18 @@ async def _openai_stream_response(
     messages: list[dict],
     has_image: bool,
     model_hint: str | None = None,
+    model_override: str | None = None,
     num_ctx: int | None = None,
     research_mode: bool = False,
 ) -> AsyncIterator[bytes]:
     output_chars = 0
-    actual_model = model_hint or "local"
+    actual_model = model_override or model_hint or "local"
     try:
-        gen = await orchestrator.handle(messages, has_image=has_image, stream=True, model_hint=model_hint, num_ctx=num_ctx, research_mode=research_mode)
+        gen = await orchestrator.handle(
+            messages, has_image=has_image, stream=True,
+            model_hint=model_hint, model_override=model_override,
+            num_ctx=num_ctx, research_mode=research_mode,
+        )
         async for chunk in gen:
             # Metadata sentinel from orchestrator — grab actual model name
             if isinstance(chunk, dict):
@@ -180,19 +197,82 @@ async def _openai_stream_response(
 
 
 # ---------------------------------------------------------------------------
-# /v1/models — forward to LM Studio (Open WebUI uses this to populate model list)
+# /v1/models — routing aliases (for Open WebUI / legacy clients)
+# /api/lm-models — actual models available in LM Studio (for model picker UI)
 # ---------------------------------------------------------------------------
 
 @app.get("/v1/models")
 async def models() -> JSONResponse:
-    # Always return our friendly model aliases so Open WebUI's dropdown is clean
-    # and model selection maps directly to routing logic.
     models_cfg = _config.get("models", {})
     model_list = [
         {"id": alias, "object": "model", "owned_by": "local"}
         for alias in models_cfg
     ]
     return JSONResponse(content={"object": "list", "data": model_list})
+
+
+@app.get("/api/lm-models")
+async def lm_models() -> JSONResponse:
+    """Return models currently loaded/available in LM Studio."""
+    lmstudio_url = _config.get("proxy", {}).get("lmstudio_base_url", "http://localhost:1234")
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        try:
+            resp = await client.get(f"{lmstudio_url}/v1/models")
+            resp.raise_for_status()
+            return JSONResponse(resp.json())
+        except Exception:
+            return JSONResponse({"object": "list", "data": []})
+
+
+# ---------------------------------------------------------------------------
+# /api/upload — process attached files before including them in a message
+# ---------------------------------------------------------------------------
+
+@app.post("/api/upload")
+async def api_upload(file: UploadFile = File(...)) -> JSONResponse:
+    """
+    Accept a file upload and return a content descriptor:
+      - image/*  → {"type": "image", "data": "data:…;base64,…", "name": …}
+      - .pdf     → {"type": "text",  "content": "<extracted text>",  "name": …}
+      - audio/*  → {"type": "audio", "name": …}   (transcription not yet supported)
+      - video/*  → {"type": "video", "name": …}
+      - other    → {"type": "text",  "content": "<utf-8 text>",  "name": …}
+    """
+    content_type = (file.content_type or "").lower()
+    filename = file.filename or "upload"
+    data = await file.read()
+
+    if content_type.startswith("image/"):
+        b64 = base64.b64encode(data).decode()
+        return JSONResponse({
+            "type": "image",
+            "data": f"data:{content_type};base64,{b64}",
+            "name": filename,
+        })
+
+    if content_type == "application/pdf" or filename.lower().endswith(".pdf"):
+        try:
+            from pypdf import PdfReader  # type: ignore
+            reader = PdfReader(io.BytesIO(data))
+            text = "\n\n".join(
+                page.extract_text() or "" for page in reader.pages
+            ).strip()
+        except Exception as exc:
+            text = f"[Could not extract PDF text: {exc}]"
+        return JSONResponse({"type": "text", "content": text, "name": filename})
+
+    if content_type.startswith("audio/"):
+        return JSONResponse({"type": "audio", "name": filename})
+
+    if content_type.startswith("video/"):
+        return JSONResponse({"type": "video", "name": filename})
+
+    # Fallback: try UTF-8 text
+    try:
+        text = data.decode("utf-8")
+        return JSONResponse({"type": "text", "content": text, "name": filename})
+    except UnicodeDecodeError:
+        return JSONResponse({"type": "binary", "name": filename})
 
 
 # ---------------------------------------------------------------------------

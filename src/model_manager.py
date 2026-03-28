@@ -35,13 +35,15 @@ class ModelManager:
     # Public interface
     # ------------------------------------------------------------------
 
-    async def ensure_loaded(self, model: Model) -> tuple[str, str]:
+    async def ensure_loaded(self, model: Model, model_name_override: str | None = None) -> tuple[str, str]:
         """
         Ensure the model is active and return (lmstudio_name, api_base).
         For specialists, evicts any conflicting specialist from state tracking first.
+        If model_name_override is provided it replaces the config's lmstudio_name
+        (mode routing and system-prompt selection are unchanged).
         """
         cfg = self._model_cfg[model.value]
-        model_name: str = cfg["lmstudio_name"]
+        model_name: str = model_name_override or cfg["lmstudio_name"]
         api_base: str = cfg.get("api_base", self.base_url)
 
         if model == Model.GENERAL:

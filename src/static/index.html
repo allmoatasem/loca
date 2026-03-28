@@ -61,7 +61,7 @@ html, body {
 
 body { display: flex; flex-direction: column; overflow: hidden; }
 
-/* ── Titlebar (draggable) ────────────────────────────────────────────────── */
+/* ── Titlebar (draggable via Swift DraggableWebView, NOT -webkit-app-region) */
 #titlebar {
   height: var(--tb-height);
   min-height: var(--tb-height);
@@ -70,7 +70,6 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   display: flex;
   align-items: center;
   padding: 0 12px 0 76px; /* 76px left = space for traffic lights */
-  -webkit-app-region: drag;
   -webkit-user-select: none;
   user-select: none;
   flex-shrink: 0;
@@ -93,7 +92,6 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   display: flex;
   align-items: center;
   gap: 6px;
-  -webkit-app-region: no-drag;
 }
 
 .tb-btn {
@@ -108,7 +106,6 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   align-items: center;
   gap: 4px;
   transition: background .12s, color .12s;
-  -webkit-app-region: no-drag;
 }
 .tb-btn:hover { background: var(--border-light); color: var(--text); }
 .tb-btn svg  { flex-shrink: 0; }
@@ -169,7 +166,39 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   margin-bottom: 6px;
 }
 
-#model-select {
+/* Segmented mode control */
+#mode-tabs {
+  display: flex;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+.mode-tab {
+  flex: 1;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  padding: 5px 2px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: background .12s, color .12s, box-shadow .12s;
+  white-space: nowrap;
+}
+.mode-tab.active {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+.mode-tab:hover:not(.active) { color: var(--text-dim); }
+
+/* Model dropdown (reused for both mode and model pickers) */
+.model-select {
   width: 100%;
   background: var(--bg);
   color: var(--text);
@@ -184,7 +213,10 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   background-repeat: no-repeat;
   background-position: right 10px center;
 }
-#model-select:focus { border-color: var(--accent); }
+.model-select:focus { border-color: var(--accent); }
+
+/* Keep legacy id selector working */
+#model-select { width: 100%; }
 
 #model-desc {
   font-size: 11px;
@@ -192,6 +224,45 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   margin-top: 5px;
   line-height: 1.4;
 }
+
+/* ── File attachment strip ─────────────────────────────────────────────────── */
+#attach-strip {
+  display: none;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 16px 4px;
+  border-bottom: 1px solid var(--border-light);
+}
+#attach-strip.has-files { display: flex; }
+.attach-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  max-width: 160px;
+}
+.attach-chip img {
+  width: 28px; height: 28px;
+  object-fit: cover;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.attach-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attach-chip .rm-attach {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-muted); font-size: 14px; line-height: 1;
+  padding: 0 0 0 2px; flex-shrink: 0;
+}
+.attach-chip .rm-attach:hover { color: #c0392b; }
 
 /* ── Conversations list ──────────────────────────────────────────────────── */
 #conv-section {
@@ -353,15 +424,16 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   border-radius: var(--radius);
   border-bottom-right-radius: 4px;
   padding: 11px 16px;
-  max-width: 75%;
   font-size: 15px;
   line-height: 1.6;
-  white-space: pre-wrap;
   word-break: break-word;
   box-shadow: var(--shadow-sm);
+  -webkit-user-select: text;
   user-select: text;
   cursor: text;
 }
+.user-bubble p { margin: 0 0 6px; }
+.user-bubble p:last-child { margin-bottom: 0; }
 
 /* Assistant message */
 .asst-row { display: flex; gap: 14px; align-items: flex-start; }
@@ -686,11 +758,12 @@ body.dark #input code { color: #e06c75; }
 #mem-empty { text-align: center; color: var(--text-muted); font-size: 13px; padding: 32px 20px; }
 
 /* ── Selectable text everywhere ──────────────────────────────────────────── */
-#input           { user-select: text; }
-.msg-stats       { user-select: text; }
-.stat-row span   { user-select: text; }
-.stat-val        { user-select: text; }
-.user-bubble     { user-select: text; }
+#input           { -webkit-user-select: text; user-select: text; }
+.asst-content    { -webkit-user-select: text; user-select: text; }
+.msg-stats       { -webkit-user-select: text; user-select: text; }
+.stat-row span   { -webkit-user-select: text; user-select: text; }
+.stat-val        { -webkit-user-select: text; user-select: text; }
+.user-bubble     { -webkit-user-select: text; user-select: text; }
 
 /* User bubble copy wrapper */
 .user-msg-wrap { position: relative; max-width: 75%; }
@@ -769,6 +842,33 @@ body.dark #input code { color: #e06c75; }
   color: var(--text-muted);
   cursor: default;
 }
+
+/* ── Override Prism CSS so app theme controls code-block appearance ────── */
+/* Prism's attribute selectors have higher specificity; !important wins */
+pre[class*="language-"],
+:not(pre) > code[class*="language-"] {
+  background: var(--code-bg) !important;
+  border: 1px solid var(--code-border) !important;
+  border-radius: var(--radius-sm) !important;
+  text-shadow: none !important;
+  box-shadow: none !important;
+}
+code[class*="language-"] {
+  background: transparent !important;
+  border: none !important;
+  text-shadow: none !important;
+  font-size: 13px !important;
+  line-height: 1.55 !important;
+}
+/* Input code blocks — keep consistent with app theme */
+#input pre[class*="language-"],
+#input pre[class*="language-"] code {
+  background: var(--code-bg) !important;
+  border: none !important;
+  color: var(--text) !important;
+}
+/* Streaming cursor inside open code block */
+.streaming-code code::after { content: none; }
 </style>
 </head>
 <body>
@@ -798,14 +898,26 @@ body.dark #input code { color: #e06c75; }
     </div>
 
     <div id="model-section">
-      <label>Model</label>
-      <select id="model-select"></select>
+      <label>Mode</label>
+      <div id="mode-tabs">
+        <button class="mode-tab active" data-mode="general" onclick="selectMode(this)">General</button>
+        <button class="mode-tab"        data-mode="code"    onclick="selectMode(this)">Code</button>
+        <button class="mode-tab"        data-mode="reason"  onclick="selectMode(this)">Reason</button>
+        <button class="mode-tab"        data-mode="write"   onclick="selectMode(this)">Write</button>
+      </div>
       <div id="model-desc"></div>
     </div>
 
     <div id="model-section" style="border-top:none;padding-top:0">
+      <label>Model</label>
+      <select id="model-select" class="model-select">
+        <option value="">Loading…</option>
+      </select>
+    </div>
+
+    <div id="model-section" style="border-top:none;padding-top:0">
       <label>Context window</label>
-      <select id="ctx-select" style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm);padding:7px 28px 7px 10px;font-size:13px;cursor:pointer;outline:none;appearance:none;background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a8a8a' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E\");background-repeat:no-repeat;background-position:right 10px center">
+      <select id="ctx-select" class="model-select">
         <option value="8192">8k</option>
         <option value="16384">16k</option>
         <option value="32768" selected>32k</option>
@@ -854,20 +966,26 @@ body.dark #input code { color: #e06c75; }
 
     <div id="input-area">
       <div id="input-box">
+        <div id="attach-strip"></div>
         <div id="input" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Message input" spellcheck="true"></div>
         <div id="fmt-bar">
-          <button class="fmt-btn" onclick="fmt('bold')"      title="Bold (⌘B)"><b>B</b></button>
-          <button class="fmt-btn" onclick="fmt('italic')"    title="Italic (⌘I)"><i>I</i></button>
+          <button class="fmt-btn" onmousedown="event.preventDefault()" onclick="fmt('bold')"      title="Bold (⌘B)"><b>B</b></button>
+          <button class="fmt-btn" onmousedown="event.preventDefault()" onclick="fmt('italic')"    title="Italic (⌘I)"><i>I</i></button>
           <div class="fmt-sep"></div>
-          <button class="fmt-btn mono" onclick="fmt('code')"      title="Inline code (⌘⇧C)">`&nbsp;`</button>
-          <button class="fmt-btn mono" onclick="fmt('codeblock')" title="Code block (⌘⇧K)">```</button>
+          <button class="fmt-btn mono" onmousedown="event.preventDefault()" onclick="fmt('code')"      title="Inline code (⌘⇧C)">`&nbsp;`</button>
+          <button class="fmt-btn mono" onmousedown="event.preventDefault()" onclick="fmt('codeblock')" title="Code block (⌘⇧K)">```</button>
+          <div class="fmt-sep"></div>
+          <button class="fmt-btn" onclick="document.getElementById('file-input').click()" title="Attach file (image, PDF, audio, video…)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+          </button>
+          <input type="file" id="file-input" multiple accept="image/*,.pdf,audio/*,video/*,.txt,.md,.csv,.json,.yaml,.yml,.xml,.log" style="display:none" onchange="handleFiles(this.files)">
         </div>
         <div id="input-footer">
           <span id="input-hint">Enter to send · Shift+Enter for new line</span>
           <div style="display:flex;align-items:center;gap:8px">
             <button class="tb-btn" id="research-btn" onclick="toggleResearch()"
                     title="Research mode: Playwright browser + SearXNG for deeper search"
-                    style="-webkit-app-region:no-drag;border-radius:6px;font-size:11px;padding:5px 8px">
+                    style="border-radius:6px;font-size:11px;padding:5px 8px">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
               </svg>
@@ -931,12 +1049,15 @@ let currentConvId  = null;
 let currentModel   = null;
 let researchMode   = false;
 
-const MODEL_DESCS = {
+const MODE_DESCS = {
   general: 'Vision · chat · code · analysis',
   reason:  'Planning · trade-offs · math · logic',
   code:    'Code generation · debugging · review',
   write:   'Drafting · editing · summarisation',
 };
+
+// Keep for any old references
+const MODEL_DESCS = MODE_DESCS;
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
 (function initTheme() {
@@ -975,29 +1096,33 @@ function setThemeIcon(dark) {
   }
 }
 
-// ── Models ────────────────────────────────────────────────────────────────────
+// ── Mode selector (segmented control) ────────────────────────────────────────
+let currentMode = 'general';
+
+function selectMode(btn) {
+  document.querySelectorAll('.mode-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  currentMode = btn.dataset.mode;
+  document.getElementById('model-desc').textContent = MODE_DESCS[currentMode] || '';
+}
+
+// ── Model picker (actual LLM from LM Studio) ──────────────────────────────────
 (async () => {
+  const sel = document.getElementById('model-select');
   try {
-    const { data = [] } = await (await fetch('/v1/models')).json();
-    const sel = document.getElementById('model-select');
-    sel.innerHTML = data.map(m =>
-      `<option value="${esc(m.id)}">${esc(m.id)}</option>`
-    ).join('');
-    updateModelDesc();
+    const { data = [] } = await (await fetch('/api/lm-models')).json();
+    if (data.length) {
+      sel.innerHTML = data.map(m => `<option value="${esc(m.id)}">${esc(m.id)}</option>`).join('');
+    } else {
+      sel.innerHTML = '<option value="">No models loaded in LM Studio</option>';
+    }
   } catch (_) {
-    document.getElementById('model-select').innerHTML =
-      ['general','reason','code','write']
-        .map(m => `<option value="${m}">${m}</option>`).join('');
-    updateModelDesc();
+    sel.innerHTML = '<option value="">LM Studio unavailable</option>';
   }
 })();
 
-document.getElementById('model-select').addEventListener('change', updateModelDesc);
-
-function updateModelDesc() {
-  const m = document.getElementById('model-select').value;
-  document.getElementById('model-desc').textContent = MODEL_DESCS[m] || '';
-}
+// initialise mode description
+document.getElementById('model-desc').textContent = MODE_DESCS['general'];
 
 // ── System stats polling ──────────────────────────────────────────────────────
 async function pollSystemStats() {
@@ -1036,6 +1161,15 @@ inputEl.addEventListener('keydown', e => {
     return;
   }
   const mod = e.metaKey || e.ctrlKey;
+  if (mod && (e.key === 'a' || e.key === 'A') && !e.shiftKey) {
+    e.preventDefault();
+    const r = document.createRange();
+    r.selectNodeContents(inputEl);
+    const s = window.getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+    return;
+  }
   if (mod && e.key === 'b') { e.preventDefault(); fmt('bold'); return; }
   if (mod && e.key === 'i') { e.preventDefault(); fmt('italic'); return; }
   if (mod && e.shiftKey && (e.key === 'C' || e.key === 'c')) { e.preventDefault(); fmt('code'); return; }
@@ -1165,28 +1299,102 @@ async function newConversation() {
   document.querySelectorAll('.conv-item.active').forEach(el => el.classList.remove('active'));
 }
 
+// ── File attachments ──────────────────────────────────────────────────────────
+let attachments = []; // [{type, name, data?, content?}]
+
+async function handleFiles(fileList) {
+  const strip = document.getElementById('attach-strip');
+  for (const file of fileList) {
+    const fd = new FormData();
+    fd.append('file', file);
+    let info;
+    try {
+      const r = await fetch('/api/upload', { method: 'POST', body: fd });
+      info = await r.json();
+    } catch (_) {
+      info = { type: 'binary', name: file.name };
+    }
+    attachments.push(info);
+    renderAttachChip(strip, info, attachments.length - 1);
+  }
+  strip.classList.add('has-files');
+  document.getElementById('file-input').value = '';
+}
+
+function renderAttachChip(strip, info, idx) {
+  const chip = document.createElement('div');
+  chip.className = 'attach-chip';
+  chip.dataset.idx = idx;
+  let thumb = '';
+  if (info.type === 'image') thumb = `<img src="${info.data}" alt="">`;
+  else if (info.type === 'audio') thumb = '🎵';
+  else if (info.type === 'video') thumb = '🎬';
+  else thumb = '📄';
+  chip.innerHTML = `${thumb}<span>${esc(info.name)}</span><button class="rm-attach" onclick="removeAttach(${idx})">×</button>`;
+  strip.appendChild(chip);
+}
+
+function removeAttach(idx) {
+  attachments[idx] = null;
+  const strip = document.getElementById('attach-strip');
+  strip.querySelectorAll(`.attach-chip[data-idx="${idx}"]`).forEach(el => el.remove());
+  if (!attachments.some(a => a !== null)) strip.classList.remove('has-files');
+}
+
+function buildUserContent(text) {
+  const live = attachments.filter(Boolean);
+  if (!live.length) return text;
+  const parts = [];
+  // Images go as image_url parts; others prepend as text
+  const textParts = live
+    .filter(a => a.type !== 'image')
+    .map(a => a.type === 'audio'  ? `[Audio file attached: ${a.name}]`
+              : a.type === 'video'  ? `[Video file attached: ${a.name}]`
+              : a.type === 'binary' ? `[File attached: ${a.name}]`
+              : `<attachment name="${a.name}">\n${a.content}\n</attachment>`);
+  const fullText = [...textParts, text].filter(Boolean).join('\n\n');
+  const imgParts = live.filter(a => a.type === 'image');
+  if (!imgParts.length) return fullText;
+  // OpenAI vision format
+  const contentArr = [{ type: 'text', text: fullText }];
+  for (const img of imgParts) {
+    contentArr.push({ type: 'image_url', image_url: { url: img.data } });
+  }
+  return contentArr;
+}
+
 // ── Send ──────────────────────────────────────────────────────────────────────
 async function sendMessage() {
   const text = getInputText();
-  if (!text || streaming) return;
+  const hasAttachments = attachments.some(Boolean);
+  if (!text && !hasAttachments) return;
+  if (streaming) return;
 
-  const model  = document.getElementById('model-select').value;
+  const mode         = currentMode;
+  const modelOverride = document.getElementById('model-select').value || undefined;
   const numCtx = parseInt(document.getElementById('ctx-select').value, 10);
-  currentModel = model;
+  currentModel = modelOverride || mode;
   document.getElementById('empty')?.remove();
 
-  history.push({ role: 'user', content: text });
-  appendUser(text);
+  const userContent = buildUserContent(text);
+  history.push({ role: 'user', content: userContent });
+  appendUser(text, attachments.filter(Boolean));
+
+  // clear attachments
+  attachments = [];
+  const strip = document.getElementById('attach-strip');
+  strip.innerHTML = '';
+  strip.classList.remove('has-files');
 
   inputEl.innerHTML = '';
   setStreaming(true);
 
-  const { bodyEl, statsEl, copyBtn } = appendAssistant(model);
+  const { bodyEl, statsEl, copyBtn } = appendAssistant(currentModel);
   bodyEl.innerHTML = '<div class="dots"><span></span><span></span><span></span></div>';
 
   let full = '';
   let outputTokens = 0;
-  let actualModel  = model;
+  let actualModel  = currentModel;
   const t_start   = performance.now();
   let   t_first   = null;
 
@@ -1194,7 +1402,7 @@ async function sendMessage() {
     const resp = await fetch('/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages: history, stream: true, num_ctx: numCtx, research_mode: researchMode })
+      body: JSON.stringify({ mode, model_override: modelOverride, messages: history, stream: true, num_ctx: numCtx, research_mode: researchMode })
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
@@ -1258,7 +1466,7 @@ async function sendMessage() {
     copyBtn.onclick = () => copyText(full, copyBtn);
 
     // Auto-save conversation
-    saveConv(model);
+    saveConv(actualModel);
 
   } catch (err) {
     bodyEl.innerHTML = `<span style="color:#c0392b">Error: ${esc(err.message)}</span>`;
@@ -1318,15 +1526,38 @@ async function copyText(text, btn) {
 }
 
 // ── DOM helpers ───────────────────────────────────────────────────────────────
-function appendUser(text) {
+function appendUser(text, files = []) {
   const msgs = document.getElementById('messages');
   const wrap = document.createElement('div');
   wrap.className = 'msg-wrap user';
   const inner = document.createElement('div');
   inner.className = 'user-msg-wrap';
+
+  // File previews above the bubble
+  if (files.length) {
+    const prev = document.createElement('div');
+    prev.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;justify-content:flex-end';
+    for (const f of files) {
+      if (f.type === 'image') {
+        const img = document.createElement('img');
+        img.src = f.data;
+        img.alt = f.name;
+        img.style.cssText = 'max-width:120px;max-height:100px;border-radius:8px;object-fit:cover;border:1px solid var(--border)';
+        prev.appendChild(img);
+      } else {
+        const chip = document.createElement('div');
+        chip.className = 'attach-chip';
+        const icon = f.type === 'audio' ? '🎵' : f.type === 'video' ? '🎬' : '📄';
+        chip.innerHTML = `${icon}<span>${esc(f.name)}</span>`;
+        prev.appendChild(chip);
+      }
+    }
+    inner.appendChild(prev);
+  }
+
   const bub = document.createElement('div');
   bub.className = 'user-bubble';
-  bub.innerHTML = renderMd(text);
+  bub.innerHTML = text ? renderMd(text) : '';
   const cpBtn = document.createElement('button');
   cpBtn.className = 'user-copy-btn';
   cpBtn.textContent = 'Copy';
@@ -1369,10 +1600,10 @@ function appendAssistant(model) {
 }
 
 // ── Markdown renderer ─────────────────────────────────────────────────────────
-function renderMd(text) {
-  // 1. Extract fenced code blocks — emit Prism class names
+function renderMd(rawText) {
+  // 1. Extract complete fenced code blocks
   const blocks = [];
-  let s = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+  let s = rawText.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
     const cls = lang ? `language-${esc(lang)}` : 'language-none';
     const highlighted = (lang && typeof Prism !== 'undefined' && Prism.languages[lang])
       ? Prism.highlight(code.trimEnd(), Prism.languages[lang], lang)
@@ -1381,53 +1612,128 @@ function renderMd(text) {
     return `\x00CODE${blocks.length - 1}\x00`;
   });
 
+  // Handle unclosed code block (streaming — closing ``` not yet received)
+  const openFenceIdx = s.indexOf('```');
+  if (openFenceIdx !== -1) {
+    const after = s.slice(openFenceIdx + 3);
+    const langMatch = after.match(/^(\w*)\n?/);
+    const lang = langMatch ? langMatch[1] : '';
+    const code = after.replace(/^\w*\n?/, '');
+    s = s.slice(0, openFenceIdx);
+    const cls = lang ? `language-${esc(lang)}` : 'language-none';
+    const highlighted = (lang && typeof Prism !== 'undefined' && Prism.languages[lang] && code.trim())
+      ? Prism.highlight(code, Prism.languages[lang], lang)
+      : escHtml(code);
+    blocks.push(`<pre class="${cls} streaming-code"><code class="${cls}">${highlighted}▌</code></pre>`);
+    s += `\x00CODE${blocks.length - 1}\x00`;
+  }
+
   // 2. Extract tables (before HTML escaping so | isn't affected)
   const tables = [];
   s = s.replace(/((?:\|.+\|\n?)+)/g, (match) => {
     const rows = match.trim().split('\n').filter(r => r.trim());
-    // Need at least header + separator row
     if (rows.length < 2 || !/^\|[-: |]+\|/.test(rows[1])) return match;
     tables.push(buildTable(rows));
     return `\x00TABLE${tables.length - 1}\x00`;
   });
 
-  // 3. Escape HTML in remaining text
-  s = escHtml(s);
+  // 3. Process lines with a state machine (handles lists correctly)
+  const lines = s.split('\n');
+  const out = [];
+  let listItems = [];
+  let listType = null; // 'ul' or 'ol'
 
-  // 4. Inline formatting
-  s = s
+  const flushList = () => {
+    if (listItems.length) {
+      out.push(`<${listType}>${listItems.join('')}</${listType}>`);
+      listItems = [];
+      listType = null;
+    }
+  };
+
+  for (const line of lines) {
+    // Placeholders are block-level — pass through as-is
+    if (/^\x00(CODE|TABLE)\d+\x00$/.test(line.trim())) {
+      flushList();
+      out.push(line.trim());
+      continue;
+    }
+
+    let m;
+    // Headings
+    if ((m = line.match(/^(#{1,3}) (.+)/))) {
+      flushList();
+      const lvl = m[1].length;
+      out.push(`<h${lvl}>${inlineMd(escHtml(m[2]))}</h${lvl}>`);
+      continue;
+    }
+    // HR
+    if (/^---+$/.test(line.trim())) { flushList(); out.push('<hr>'); continue; }
+    // Blockquote
+    if ((m = line.match(/^> (.+)/))) {
+      flushList();
+      out.push(`<blockquote>${inlineMd(escHtml(m[1]))}</blockquote>`);
+      continue;
+    }
+    // Unordered list item
+    if ((m = line.match(/^[-*] (.+)/))) {
+      if (listType === 'ol') flushList();
+      listType = 'ul';
+      listItems.push(`<li>${inlineMd(escHtml(m[1]))}</li>`);
+      continue;
+    }
+    // Ordered list item
+    if ((m = line.match(/^(\d+)\. (.+)/))) {
+      if (listType === 'ul') flushList();
+      listType = 'ol';
+      listItems.push(`<li>${inlineMd(escHtml(m[2]))}</li>`);
+      continue;
+    }
+    // Empty line — paragraph break
+    if (!line.trim()) {
+      flushList();
+      out.push('');
+      continue;
+    }
+    // Regular text
+    flushList();
+    out.push(inlineMd(escHtml(line)));
+  }
+  flushList();
+
+  // 4. Group consecutive text lines into <p>, leave block elements alone
+  const BLOCK_RE  = /^<(h[1-6]|ul|ol|pre|hr|blockquote|table|div)[\s>]/;
+  const PLACE_RE  = /^\x00(CODE|TABLE)\d+\x00$/;
+  const grouped = [];
+  let textBuf = [];
+
+  const flushPara = () => {
+    if (textBuf.length) {
+      grouped.push(`<p>${textBuf.join('<br>')}</p>`);
+      textBuf = [];
+    }
+  };
+
+  for (const chunk of out) {
+    if (!chunk) { flushPara(); continue; }
+    if (BLOCK_RE.test(chunk) || PLACE_RE.test(chunk)) { flushPara(); grouped.push(chunk); }
+    else { textBuf.push(chunk); }
+  }
+  flushPara();
+
+  // 5. Restore placeholders
+  let result = grouped.join('\n');
+  result = result.replace(/\x00TABLE(\d+)\x00/g, (_, i) => tables[+i]);
+  result = result.replace(/\x00CODE(\d+)\x00/g,  (_, i) => blocks[+i]);
+  return result;
+}
+
+function inlineMd(s) {
+  return s
     .replace(/`([^`\n]+)`/g,    '<code>$1</code>')
     .replace(/\*\*(.+?)\*\*/g,  '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g,      '<em>$1</em>')
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-
-  // 5. Block elements
-  s = s
-    .replace(/^#{3} (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^#{2} (.+)$/gm, '<h2>$1</h2>')
-    .replace(/^# (.+)$/gm,    '<h1>$1</h1>')
-    .replace(/^---$/gm,       '<hr>')
-    .replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>')
-    .replace(/^[-*] (.+)$/gm, '<li>$1</li>')
-    .replace(/^(\d+)\. (.+)$/gm, '<li>$2</li>');
-
-  // Wrap consecutive <li> in <ul>
-  s = s.replace(/(<li>[\s\S]*?<\/li>\n?)+/g, m => `<ul>${m}</ul>`);
-
-  // 6. Paragraphs (skip block-level elements and placeholders)
-  s = s.split(/\n{2,}/).map(p => {
-    p = p.trim();
-    if (!p) return '';
-    if (/^\x00(CODE|TABLE)\d+\x00$/.test(p)) return p;
-    if (/^<(h[1-3]|ul|ol|pre|hr|blockquote|table)/.test(p)) return p;
-    return `<p>${p.replace(/\n/g, '<br>')}</p>`;
-  }).join('\n');
-
-  // 7. Restore tables then code blocks
-  s = s.replace(/\x00TABLE(\d+)\x00/g, (_, i) => tables[+i]);
-  s = s.replace(/\x00CODE(\d+)\x00/g,  (_, i) => blocks[+i]);
-
-  return s;
 }
 
 function buildTable(rows) {
@@ -1460,6 +1766,7 @@ function setStreaming(v) {
   streaming = v;
   document.getElementById('send-btn').disabled = v;
   document.getElementById('model-select').disabled = v;
+  document.querySelectorAll('.mode-tab').forEach(b => b.disabled = v);
   // Keep input editable so user can compose the next message while waiting
   if (!v) document.getElementById('input').focus();
 }
