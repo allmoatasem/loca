@@ -26,22 +26,25 @@ struct SidebarView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
 
-            Picker("Mode", selection: $state.selectedMode) {
-                ForEach(ChatMode.allCases) { mode in
-                    Text(mode.label).tag(mode)
-                }
+            // Capability tabs — only shows capabilities present in loaded models
+            if !state.availableCapabilities.isEmpty {
+                capabilityPicker
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
 
-            if !state.availableModels.isEmpty {
+            // Model list filtered to selected capability
+            let capModels = state.models(for: state.selectedCapability)
+            if !capModels.isEmpty {
                 Picker("Model", selection: $state.selectedModelId) {
-                    Text("Auto").tag(nil as String?)
-                    ForEach(state.availableModels) { m in
-                        Text(m.id).lineLimit(1).tag(m.id as String?)
+                    ForEach(capModels) { m in
+                        Text(shortModelName(m.id)).lineLimit(1).tag(m.id as String?)
                     }
                 }
                 .labelsHidden()
+                .onChange(of: state.selectedCapability) {
+                    if let first = state.models(for: state.selectedCapability).first {
+                        state.selectedModelId = first.id
+                    }
+                }
             }
 
             HStack {
@@ -58,15 +61,55 @@ struct SidebarView: View {
                 .frame(width: 80)
             }
 
-            Toggle("Research", isOn: $state.researchMode)
+            Toggle("Deep Research", isOn: $state.researchMode)
                 .controlSize(.mini)
                 .toggleStyle(.switch)
+                .help("Fetches full page content via Playwright (slower, richer). Basic SearXNG search is always on for factual questions.")
         }
         .padding(12)
     }
 
+    /// Icon+label tabs for each available capability.
+    private var capabilityPicker: some View {
+        HStack(spacing: 0) {
+            ForEach(state.availableCapabilities) { cap in
+                Button {
+                    state.selectedCapability = cap
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: cap.systemIcon).font(.system(size: 10))
+                        Text(cap.label).font(.system(size: 11, weight: .medium))
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 5)
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        state.selectedCapability == cap
+                            ? Color.accentColor.opacity(0.15)
+                            : Color.clear
+                    )
+                    .foregroundColor(
+                        state.selectedCapability == cap ? .accentColor : .secondary
+                    )
+                }
+                .buttonStyle(.plain)
+
+                if cap != state.availableCapabilities.last {
+                    Divider().frame(height: 18)
+                }
+            }
+        }
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25)))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
     private func ctxLabel(_ n: Int) -> String {
         n >= 1024 ? "\(n / 1024)K" : "\(n)"
+    }
+
+    /// Shows only the last path component of a model ID (strips org prefix if any).
+    private func shortModelName(_ id: String) -> String {
+        id.split(separator: "/").last.map(String.init) ?? id
     }
 
     // MARK: - Conversation list
@@ -89,6 +132,13 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .overlay {
+            if state.conversations.isEmpty {
+                Text("No conversations yet")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+        }
     }
 }
 

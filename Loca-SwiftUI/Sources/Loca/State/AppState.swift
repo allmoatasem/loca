@@ -14,11 +14,21 @@ final class AppState: ObservableObject {
     @Published var startupStatus      = StartupStatus(stage: "Initialising…", progress: 0)
     @Published var startupError: String?
 
-    // MARK: - Mode & Model
+    // MARK: - Capability & Model
 
-    @Published var selectedMode: ChatMode = .general
+    @Published var selectedCapability: ModelCapability = .general
     @Published var availableModels: [LMModel] = []
-    @Published var selectedModelId: String?    // nil = use config default for mode
+    @Published var selectedModelId: String?
+
+    /// Capabilities that have at least one loaded model.
+    var availableCapabilities: [ModelCapability] {
+        let found = Set(availableModels.flatMap { $0.capabilities })
+        return ModelCapability.allCases.filter { found.contains($0) }
+    }
+
+    func models(for capability: ModelCapability) -> [LMModel] {
+        availableModels.filter { $0.capabilities.contains(capability) }
+    }
 
     // MARK: - Conversations
 
@@ -64,27 +74,3 @@ final class AppState: ObservableObject {
     func pollSystemStats()     { Task { await _pollSystemStats() } }
 }
 
-// MARK: - ChatMode
-
-enum ChatMode: String, CaseIterable, Identifiable {
-    case general, code, reason, write
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .general: return "General"
-        case .code:    return "Code"
-        case .reason:  return "Reason"
-        case .write:   return "Write"
-        }
-    }
-
-    var description: String {
-        switch self {
-        case .general: return "Vision · chat · code · analysis"
-        case .code:    return "Code generation · debugging · review"
-        case .reason:  return "Planning · trade-offs · math · logic"
-        case .write:   return "Drafting · editing · summarisation"
-        }
-    }
-}

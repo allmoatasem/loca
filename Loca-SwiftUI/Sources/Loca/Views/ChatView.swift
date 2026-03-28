@@ -9,26 +9,42 @@ struct ChatView: View {
     @State private var inputText = ""
     @State private var attachments: [UploadResult] = []
     @State private var isUploading = false
+    @StateObject private var inputActions = ChatInputActions()
 
     var body: some View {
         VStack(spacing: 0) {
             MessagesScrollView()
             Divider()
-            if !attachments.isEmpty {
-                AttachmentBar(attachments: $attachments)
+            if !attachments.isEmpty || isUploading {
+                AttachmentBar(attachments: $attachments, isUploading: isUploading)
                     .padding(.horizontal, 12)
                     .padding(.top, 8)
             }
-            InputBar(text: $inputText, attachments: $attachments, isUploading: $isUploading)
+            InputBar(
+                text: $inputText,
+                attachments: $attachments,
+                isUploading: $isUploading,
+                inputActions: inputActions,
+                onSend: sendIfReady
+            )
         }
         .sheet(isPresented: $state.isMemoryPanelOpen) {
-            MemoryPanel()
-                .environmentObject(state)
+            MemoryPanel().environmentObject(state)
         }
+    }
+
+    private func sendIfReady() {
+        let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !state.isStreaming, !trimmed.isEmpty || !attachments.isEmpty else { return }
+        let t   = inputText
+        let att = attachments
+        inputText   = ""
+        attachments = []
+        state.send(t, attachments: att)
     }
 }
 
-// MARK: - Messages
+// MARK: - Messages scroll view
 
 struct MessagesScrollView: View {
     @EnvironmentObject var state: AppState
@@ -36,12 +52,13 @@ struct MessagesScrollView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                if state.messages.isEmpty {
+                if state.messages.isEmpty && !state.isStreaming {
                     emptyState
                 } else {
                     LazyVStack(alignment: .leading, spacing: 16) {
-                        ForEach(state.messages) { msg in
-                            MessageBubble(message: msg)
+                        ForEach(Array(state.messages.enumerated()), id: \.element.id) { idx, msg in
+                            let isLastStreaming = state.isStreaming && idx == state.messages.count - 1
+                            MessageBubble(message: msg, showTypingIndicator: isLastStreaming)
                                 .id(msg.id)
                         }
                         Color.clear.frame(height: 1).id("bottom")
@@ -50,9 +67,7 @@ struct MessagesScrollView: View {
                 }
             }
             .onChange(of: state.messages.count) {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo("bottom")
-                }
+                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom") }
             }
             .onChange(of: state.streamingText) {
                 proxy.scrollTo("bottom")
@@ -79,6 +94,7 @@ struct MessagesScrollView: View {
 
 struct MessageBubble: View {
     let message: ChatMessage
+    let showTypingIndicator: Bool
 
     private var isUser: Bool { message.role == "user" }
 
@@ -86,12 +102,12 @@ struct MessageBubble: View {
         HStack(alignment: .top, spacing: 8) {
             if isUser {
                 Spacer(minLength: 80)
-                bubbleContent
+                content
                     .background(Color.accentColor.opacity(0.12))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
             } else {
                 avatar
-                bubbleContent
+                content
                     .background(Color(nsColor: .controlBackgroundColor))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                 Spacer(minLength: 80)
@@ -102,27 +118,55 @@ struct MessageBubble: View {
     private var avatar: some View {
         ZStack {
             Circle().fill(Color.accentColor)
-            Text("L")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(.white)
+            Text("L").font(.system(size: 11, weight: .bold)).foregroundColor(.white)
         }
         .frame(width: 26, height: 26)
     }
 
     @ViewBuilder
-    private var bubbleContent: some View {
+    private var content: some View {
+        let plain = message.content.plainText
         if isUser {
-            Text(message.content.plainText)
+            Text(plain)
                 .font(.system(size: 14))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
+        } else if plain.isEmpty {
+            // Streaming has started but no tokens yet — show typing indicator
+            TypingIndicator()
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
         } else {
-            MarkdownView(text: message.content.plainText)
+            MarkdownView(text: plain)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
         }
+    }
+}
+
+// MARK: - Typing indicator (three bouncing dots)
+
+struct TypingIndicator: View {
+    @State private var phase = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            ForEach(0..<3, id: \.self) { i in
+                Circle()
+                    .fill(Color.secondary.opacity(0.6))
+                    .frame(width: 7, height: 7)
+                    .offset(y: phase ? -3 : 0)
+                    .animation(
+                        .easeInOut(duration: 0.4)
+                            .repeatForever(autoreverses: true)
+                            .delay(Double(i) * 0.15),
+                        value: phase
+                    )
+            }
+        }
+        .onAppear { phase = true }
     }
 }
 
@@ -133,8 +177,8 @@ struct MarkdownView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(parse(text).enumerated()), id: \.offset) { _, segment in
-                switch segment {
+            ForEach(Array(parse(text).enumerated()), id: \.offset) { _, seg in
+                switch seg {
                 case .prose(let s):
                     if let attr = try? AttributedString(
                         markdown: s,
@@ -157,10 +201,8 @@ struct MarkdownView: View {
         }
     }
 
-    // Split text into prose and fenced code block segments.
     private enum Segment { case prose(String); case code(String?, String) }
 
-    // NSRegularExpression used instead of a regex literal to avoid backtick parsing issues.
     private static let fenceRE = try! NSRegularExpression(
         pattern: "```([^\\n]*)\\n([\\s\\S]*?)```",
         options: []
@@ -178,20 +220,17 @@ struct MarkdownView: View {
                 }
                 break
             }
-            // Text before the fence
             let beforeEnd = remaining.index(remaining.startIndex, offsetBy: m.range.location)
             let before = String(remaining[..<beforeEnd])
             if !before.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 result.append(.prose(before))
             }
-            // Language tag and code body
             let lang: String? = Range(m.range(at: 1), in: remaining).map {
                 let s = String(remaining[$0]).trimmingCharacters(in: .whitespaces)
                 return s.isEmpty ? nil : s
             } ?? nil
             let code = Range(m.range(at: 2), in: remaining).map { String(remaining[$0]) } ?? ""
             result.append(.code(lang, code))
-            // Advance past the match
             let afterIdx = remaining.index(remaining.startIndex, offsetBy: m.range.location + m.range.length)
             remaining = String(remaining[afterIdx...])
         }
@@ -229,7 +268,6 @@ struct CodeBlock: View {
                 }
                 .background(Color.secondary.opacity(0.06))
             }
-
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(code)
                     .font(.system(size: 12, design: .monospaced))
@@ -239,10 +277,7 @@ struct CodeBlock: View {
             }
         }
         .background(Color(nsColor: .textBackgroundColor))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.secondary.opacity(0.2))
-        )
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2)))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
@@ -254,49 +289,46 @@ struct InputBar: View {
     @Binding var text: String
     @Binding var attachments: [UploadResult]
     @Binding var isUploading: Bool
-    @FocusState private var focused: Bool
+    let inputActions: ChatInputActions
+    let onSend: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             // Formatting toolbar
             HStack(spacing: 2) {
-                FormatButton(icon: "bold", help: "Bold") { wrap("**") }
-                FormatButton(icon: "italic", help: "Italic") { wrap("_") }
-                FormatButton(icon: "chevron.left.forwardslash.chevron.right", help: "Inline code") { wrap("`") }
-                FormatButton(icon: "text.alignleft", help: "Code block") {
-                    text += "\n```\n\n```"
-                }
+                FormatButton(icon: "bold",   help: "Bold (**text**)") { inputActions.wrap("**") }
+                FormatButton(icon: "italic", help: "Italic (_text_)")  { inputActions.wrap("_") }
+                FormatButton(icon: "chevron.left.forwardslash.chevron.right",
+                             help: "Inline code (`text`)")             { inputActions.wrap("`") }
+                FormatButton(icon: "text.alignleft",
+                             help: "Code block (```)")                 { inputActions.codeBlock() }
                 Spacer()
                 if state.isStreaming {
-                    ProgressView()
-                        .scaleEffect(0.6)
-                        .padding(.trailing, 4)
+                    HStack(spacing: 4) {
+                        ProgressView().scaleEffect(0.55)
+                        Text("Generating…")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.trailing, 4)
                 }
             }
             .padding(.horizontal, 12)
             .padding(.top, 8)
 
-            // TextEditor + send controls
+            // Text editor + send controls
             HStack(alignment: .bottom, spacing: 8) {
-                ZStack(alignment: .topLeading) {
-                    if text.isEmpty {
-                        Text("Ask anything…")
-                            .font(.system(size: 14))
-                            .foregroundColor(Color(nsColor: .placeholderTextColor))
-                            .padding(.top, 8)
-                            .padding(.leading, 5)
-                            .allowsHitTesting(false)
-                    }
-                    TextEditor(text: $text)
-                        .font(.system(size: 14))
-                        .frame(minHeight: 36, maxHeight: 120)
-                        .scrollContentBackground(.hidden)
-                        .focused($focused)
-                }
+                ChatTextEditor(
+                    text: $text,
+                    placeholder: "Ask anything…  (Shift+Return for newline)",
+                    onSend: onSend,
+                    actions: inputActions
+                )
+                .frame(minHeight: 38, maxHeight: 120)
 
                 VStack(spacing: 6) {
                     Button(action: pickFile) {
-                        Image(systemName: isUploading ? "arrow.triangle.2.circlepath" : "paperclip")
+                        Image(systemName: "paperclip")
                             .font(.system(size: 15))
                             .foregroundColor(.secondary)
                     }
@@ -304,15 +336,14 @@ struct InputBar: View {
                     .disabled(isUploading)
                     .help("Attach file")
 
-                    Button(action: send) {
+                    Button(action: onSend) {
                         Image(systemName: "arrow.up.circle.fill")
                             .font(.system(size: 26))
-                            .foregroundColor(canSend ? .accentColor : Color.secondary.opacity(0.4))
+                            .foregroundColor(canSend ? .accentColor : Color.secondary.opacity(0.3))
                     }
                     .buttonStyle(.plain)
                     .disabled(!canSend)
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .help("Send (⌘↩)")
+                    .help("Send (Return)")
                 }
                 .padding(.bottom, 4)
             }
@@ -320,7 +351,6 @@ struct InputBar: View {
             .padding(.bottom, 12)
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        .onAppear { focused = true }
     }
 
     private var canSend: Bool {
@@ -328,43 +358,18 @@ struct InputBar: View {
         (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
     }
 
-    private func send() {
-        guard canSend else { return }
-        let t = text
-        let att = attachments
-        text = ""
-        attachments = []
-        state.send(t, attachments: att)
-    }
-
-    /// Wraps selected text in the focused NSTextView with a markdown marker pair,
-    /// or appends the empty pair at the cursor position.
-    private func wrap(_ marker: String) {
-        guard let tv = NSApp.keyWindow?.firstResponder as? NSTextView else {
-            text += "\(marker)\(marker)"
-            return
-        }
-        let sel = tv.selectedRange()
-        if sel.length > 0 {
-            let selected = (tv.string as NSString).substring(with: sel)
-            tv.insertText("\(marker)\(selected)\(marker)", replacementRange: sel)
-        } else {
-            tv.insertText("\(marker)\(marker)", replacementRange: sel)
-            tv.setSelectedRange(NSRange(location: sel.location + marker.count, length: 0))
-        }
-    }
-
     private func pickFile() {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
+        panel.canChooseDirectories    = false
         guard panel.runModal() == .OK else { return }
 
         isUploading = true
         Task {
             for url in panel.urls {
                 guard let data = try? Data(contentsOf: url) else { continue }
-                let mime = mimeType(for: url)
+                let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
+                          ?? "application/octet-stream"
                 if let result = try? await BackendClient.shared.uploadFile(
                     data, filename: url.lastPathComponent, mimeType: mime
                 ) {
@@ -373,10 +378,6 @@ struct InputBar: View {
             }
             await MainActor.run { isUploading = false }
         }
-    }
-
-    private func mimeType(for url: URL) -> String {
-        UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
     }
 }
 
@@ -403,14 +404,23 @@ struct FormatButton: View {
 
 struct AttachmentBar: View {
     @Binding var attachments: [UploadResult]
+    let isUploading: Bool
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 ForEach(Array(attachments.enumerated()), id: \.offset) { idx, att in
-                    AttachmentChip(attachment: att) {
-                        attachments.remove(at: idx)
+                    AttachmentChip(attachment: att) { attachments.remove(at: idx) }
+                }
+                if isUploading {
+                    HStack(spacing: 5) {
+                        ProgressView().scaleEffect(0.6)
+                        Text("Uploading…").font(.system(size: 12)).foregroundColor(.secondary)
                     }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.secondary.opacity(0.1))
+                    .clipShape(Capsule())
                 }
             }
         }
@@ -423,17 +433,10 @@ struct AttachmentChip: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
-            Text(attachment.name)
-                .font(.system(size: 12))
-                .lineLimit(1)
-                .frame(maxWidth: 120)
+            Image(systemName: icon).font(.system(size: 10)).foregroundColor(.secondary)
+            Text(attachment.name).font(.system(size: 12)).lineLimit(1).frame(maxWidth: 120)
             Button(action: onRemove) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(.secondary)
+                Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
         }
@@ -464,21 +467,15 @@ struct MemoryPanel: View {
             List {
                 ForEach(state.memories) { memory in
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(memory.content)
-                            .font(.system(size: 13))
-                            .textSelection(.enabled)
-                        Text(memory.created_at)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        Text(memory.content).font(.system(size: 13)).textSelection(.enabled)
+                        Text(memory.created_at).font(.caption).foregroundColor(.secondary)
                     }
                     .padding(.vertical, 2)
                 }
                 .onDelete { offsets in
                     let ids = offsets.map { state.memories[$0].id }
                     state.memories.remove(atOffsets: offsets)
-                    for id in ids {
-                        Task { try? await BackendClient.shared.deleteMemory(id) }
-                    }
+                    for id in ids { Task { try? await BackendClient.shared.deleteMemory(id) } }
                 }
             }
             .navigationTitle("Memories")

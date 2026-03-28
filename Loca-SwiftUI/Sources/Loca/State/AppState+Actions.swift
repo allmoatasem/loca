@@ -31,11 +31,18 @@ extension AppState {
         Task {
             do {
                 availableModels = try await BackendClient.shared.fetchLMModels()
-                if selectedModelId == nil, let first = availableModels.first {
-                    selectedModelId = first.id
+                // If the current capability has no models, fall back to general
+                if models(for: selectedCapability).isEmpty {
+                    selectedCapability = .general
+                }
+                // Pick a default model if none selected, or current is stale
+                let capModels = models(for: selectedCapability)
+                let ids = availableModels.map(\.id)
+                if selectedModelId == nil || !ids.contains(selectedModelId!) {
+                    selectedModelId = capModels.first?.id ?? availableModels.first?.id
                 }
             } catch {
-                // Non-fatal: model list just stays empty
+                // Non-fatal: model list stays empty
             }
         }
     }
@@ -81,7 +88,7 @@ extension AppState {
             id: activeConversationId,
             title: title,
             messages: messages,
-            model: selectedModelId ?? selectedMode.rawValue
+            model: selectedModelId ?? selectedCapability.modeHint
         )
         do {
             let id = try await BackendClient.shared.saveConversation(req)
@@ -136,7 +143,7 @@ extension AppState {
         actualModel   = nil
 
         let request = ChatRequest(
-            mode:           selectedMode.rawValue,
+            mode:           selectedCapability.modeHint,
             model_override: selectedModelId,
             messages:       messages.dropLast().map { $0 },   // don't send the empty placeholder
             stream:         true,
