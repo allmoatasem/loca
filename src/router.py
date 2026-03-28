@@ -78,12 +78,20 @@ _WRITE_KEYWORDS = [
 _SEARCH_KEYWORDS = [
     r"\bcurrent(ly)?\b", r"\blatest\b", r"\brecent(ly)?\b",
     r"\btoday\b", r"\bright now\b", r"\bthis (year|month|week)\b",
-    r"\bnews\b", r"\bprice\b", r"\bstock\b",
+    r"\bnews\b", r"\bprice[sd]?\b", r"\bstock\b",
     r"\bwho is (the )?(ceo|founder|president|head)\b",
     r"\bwhat (is|are) the (latest|current|new)\b",
     r"\blook up\b", r"\bsearch for\b", r"\bfind information\b",
     r"\bversion \d", r"\brelease(d)?\b", r"\bannounced?\b",
     r"\bbreaking\b",
+    # Events, tickets, venues
+    r"\bticket[s]?\b", r"\bcinema\b", r"\bshowtimes?\b", r"\bscreening\b",
+    r"\bwhere (can|to)\b", r"\bnear(by| me)?\b", r"\bin (london|paris|new york|dubai|tokyo)\b",
+    r"\baddress(es)?\b", r"\bopening hours?\b", r"\bbook(ing)?\b",
+    r"\bavailab(le|ility)\b", r"\bshow(ing|s)?\b",
+    # Real-time / lookup intent
+    r"\bfind\b", r"\bget me\b", r"\btell me (where|when|how much)\b",
+    r"\bhow much (does|is|are)\b", r"\bwhat (time|day|date)\b",
 ]
 
 _IMAGE_EXTENSIONS = re.compile(
