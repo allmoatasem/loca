@@ -34,7 +34,7 @@ actor BackendClient {
     // MARK: - Chat (streaming)
 
     /// Yields raw SSE `data:` line payloads as `String` chunks.
-    func streamChat(_ request: ChatRequest) -> AsyncThrowingStream<String, Error> {
+    nonisolated func streamChat(_ request: ChatRequest) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             Task {
                 do {
