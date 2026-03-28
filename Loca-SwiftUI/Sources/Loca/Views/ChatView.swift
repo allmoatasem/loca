@@ -14,6 +14,9 @@ struct ChatView: View {
     var body: some View {
         VStack(spacing: 0) {
             MessagesScrollView()
+            if let stats = state.lastStats, !state.isStreaming {
+                GenerationStatsBar(stats: stats)
+            }
             Divider()
             if !attachments.isEmpty || isUploading {
                 AttachmentBar(attachments: $attachments, isUploading: isUploading)
@@ -41,6 +44,48 @@ struct ChatView: View {
         inputText   = ""
         attachments = []
         state.send(t, attachments: att)
+    }
+}
+
+// MARK: - Generation stats bar
+
+struct GenerationStatsBar: View {
+    let stats: AppState.GenerationStats
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Spacer()
+            Group {
+                label(stats.model.split(separator: "/").last.map(String.init) ?? stats.model)
+                separator()
+                if stats.ttftMs > 0 {
+                    label(String(format: "TTFT %.0fms", stats.ttftMs))
+                    separator()
+                }
+                if stats.tokensPerSec > 0 {
+                    label(String(format: "%.0f tok/s", stats.tokensPerSec))
+                    separator()
+                }
+                if stats.completionTokens > 0 {
+                    label("\(stats.promptTokens + stats.completionTokens) tokens")
+                }
+            }
+            Spacer()
+        }
+        .padding(.vertical, 4)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func label(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10, design: .monospaced))
+            .foregroundColor(.secondary)
+    }
+
+    private func separator() -> some View {
+        Text("  ·  ")
+            .font(.system(size: 10))
+            .foregroundColor(Color.secondary.opacity(0.4))
     }
 }
 
@@ -93,6 +138,7 @@ struct MessagesScrollView: View {
 // MARK: - Message bubble
 
 struct MessageBubble: View {
+    @EnvironmentObject var state: AppState
     let message: ChatMessage
     let showTypingIndicator: Bool
 
@@ -102,12 +148,16 @@ struct MessageBubble: View {
         HStack(alignment: .top, spacing: 8) {
             if isUser {
                 Spacer(minLength: 80)
-                content
-                    .background(Color.accentColor.opacity(0.12))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                VStack(alignment: .trailing, spacing: 6) {
+                    // File/image attachments shown above the text (like Claude)
+                    attachmentPreviews
+                    bubbleContent
+                        .background(Color.accentColor.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
             } else {
-                avatar
-                content
+                modelAvatar
+                bubbleContent
                     .background(Color(nsColor: .controlBackgroundColor))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                 Spacer(minLength: 80)
@@ -115,17 +165,105 @@ struct MessageBubble: View {
         }
     }
 
-    private var avatar: some View {
+    // MARK: Avatar — initials derived from the model that generated this response
+
+    private var modelAvatar: some View {
         ZStack {
             Circle().fill(Color.accentColor)
-            Text("L").font(.system(size: 11, weight: .bold)).foregroundColor(.white)
+            Text(modelInitials(state.actualModel ?? state.selectedModelId))
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(.white)
         }
         .frame(width: 26, height: 26)
     }
 
+    private func modelInitials(_ id: String?) -> String {
+        guard let id, !id.isEmpty else { return "AI" }
+        let name = String(id.split(separator: "/").last ?? Substring(id))
+        let skip = Set(["instruct", "chat", "it", "gguf", "hf", "v1", "v2", "v3",
+                        "v4", "q4", "q8", "fp16", "awq", "bnb", "gptq"])
+        let parts = name.components(separatedBy: CharacterSet(charactersIn: "-_.:"))
+            .filter { p in
+                !p.isEmpty &&
+                p.first?.isLetter == true &&
+                !skip.contains(p.lowercased()) &&
+                !p.allSatisfy({ $0.isNumber || $0 == "." })
+            }
+        switch parts.count {
+        case 0: return "AI"
+        case 1: return String(parts[0].prefix(2)).uppercased()
+        default: return (String(parts[0].prefix(1)) + String(parts[1].prefix(1))).uppercased()
+        }
+    }
+
+    // MARK: Attachment previews (shown above user bubble)
+
     @ViewBuilder
-    private var content: some View {
-        let plain = message.content.plainText
+    private var attachmentPreviews: some View {
+        switch message.content {
+        case .parts(let parts):
+            let images = parts.compactMap { p -> String? in
+                if case .image(let img) = p { return img.image_url.url }
+                return nil
+            }
+            if !images.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(images, id: \.self) { url in
+                        InlineImageView(dataURL: url)
+                    }
+                }
+            }
+        case .text(let t):
+            // Surface non-image file attachment chips parsed from the prepended XML
+            let chips = parseAttachmentChips(from: t)
+            if !chips.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(chips, id: \.self) { name in
+                        fileChip(name)
+                    }
+                }
+            }
+        }
+    }
+
+    private func parseAttachmentChips(from text: String) -> [String] {
+        // Matches: <attachment name="filename.pdf">
+        let pattern = try? NSRegularExpression(pattern: #"<attachment name="([^"]+)">"#)
+        let ns = text as NSString
+        return pattern?.matches(in: text, range: NSRange(text.startIndex..., in: text))
+            .compactMap { m -> String? in
+                guard let r = Range(m.range(at: 1), in: text) else { return nil }
+                return String(text[r])
+            } ?? []
+    }
+
+    private func fileChip(_ name: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: fileIcon(for: name)).font(.system(size: 10))
+            Text(name).font(.system(size: 11)).lineLimit(1).frame(maxWidth: 140)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.secondary.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func fileIcon(for name: String) -> String {
+        let ext = (name as NSString).pathExtension.lowercased()
+        switch ext {
+        case "pdf": return "doc.richtext"
+        case "txt", "md": return "doc.text"
+        case "mp3", "m4a", "wav": return "waveform"
+        case "mp4", "mov": return "film"
+        default: return "paperclip"
+        }
+    }
+
+    // MARK: Message content
+
+    @ViewBuilder
+    private var bubbleContent: some View {
+        let plain = cleanText(message.content.plainText)
         if isUser {
             Text(plain)
                 .font(.system(size: 14))
@@ -134,7 +272,6 @@ struct MessageBubble: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
         } else if plain.isEmpty {
-            // Streaming has started but no tokens yet — show typing indicator
             TypingIndicator()
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
@@ -144,9 +281,46 @@ struct MessageBubble: View {
                 .padding(.vertical, 8)
         }
     }
+
+    /// Strips the `<attachment>` XML prefix from user messages before display.
+    private func cleanText(_ text: String) -> String {
+        let stripped = text.replacingOccurrences(
+            of: #"<attachment name="[^"]*">[\s\S]*?</attachment>\n?\n?"#,
+            with: "",
+            options: .regularExpression
+        )
+        return stripped.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }
 
-// MARK: - Typing indicator (three bouncing dots)
+// MARK: - Inline image thumbnail
+
+struct InlineImageView: View {
+    let dataURL: String
+
+    var body: some View {
+        if let img = loadImage() {
+            Image(nsImage: img)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 80, height: 80)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    private func loadImage() -> NSImage? {
+        if dataURL.hasPrefix("data:") {
+            guard let comma = dataURL.firstIndex(of: ",") else { return nil }
+            let b64 = String(dataURL[dataURL.index(after: comma)...])
+            guard let data = Data(base64Encoded: b64) else { return nil }
+            return NSImage(data: data)
+        }
+        guard let url = URL(string: dataURL), let data = try? Data(contentsOf: url) else { return nil }
+        return NSImage(data: data)
+    }
+}
+
+// MARK: - Typing indicator
 
 struct TypingIndicator: View {
     @State private var phase = false
@@ -159,8 +333,7 @@ struct TypingIndicator: View {
                     .frame(width: 7, height: 7)
                     .offset(y: phase ? -3 : 0)
                     .animation(
-                        .easeInOut(duration: 0.4)
-                            .repeatForever(autoreverses: true)
+                        .easeInOut(duration: 0.4).repeatForever(autoreverses: true)
                             .delay(Double(i) * 0.15),
                         value: phase
                     )
@@ -184,14 +357,10 @@ struct MarkdownView: View {
                         markdown: s,
                         options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
                     ) {
-                        Text(attr)
-                            .font(.system(size: 14))
-                            .textSelection(.enabled)
+                        Text(attr).font(.system(size: 14)).textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
-                        Text(s)
-                            .font(.system(size: 14))
-                            .textSelection(.enabled)
+                        Text(s).font(.system(size: 14)).textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 case .code(let lang, let code):
@@ -204,14 +373,12 @@ struct MarkdownView: View {
     private enum Segment { case prose(String); case code(String?, String) }
 
     private static let fenceRE = try! NSRegularExpression(
-        pattern: "```([^\\n]*)\\n([\\s\\S]*?)```",
-        options: []
+        pattern: "```([^\\n]*)\\n([\\s\\S]*?)```", options: []
     )
 
     private func parse(_ input: String) -> [Segment] {
         var result: [Segment] = []
         var remaining = input
-
         while !remaining.isEmpty {
             let nsRange = NSRange(remaining.startIndex..., in: remaining)
             guard let m = Self.fenceRE.firstMatch(in: remaining, range: nsRange) else {
@@ -251,20 +418,15 @@ struct CodeBlock: View {
                     Text(lang)
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundColor(.secondary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
                     Spacer()
                     Button {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(code, forType: .string)
                     } label: {
-                        Image(systemName: "doc.on.doc")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
+                        Image(systemName: "doc.on.doc").font(.system(size: 11)).foregroundColor(.secondary)
                     }
-                    .buttonStyle(.plain)
-                    .help("Copy")
-                    .padding(.trailing, 8)
+                    .buttonStyle(.plain).help("Copy").padding(.trailing, 8)
                 }
                 .background(Color.secondary.opacity(0.06))
             }
@@ -294,9 +456,8 @@ struct InputBar: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Formatting toolbar
             HStack(spacing: 2) {
-                FormatButton(icon: "bold",   help: "Bold (**text**)") { inputActions.wrap("**") }
+                FormatButton(icon: "bold",   help: "Bold (**text**)")  { inputActions.wrap("**") }
                 FormatButton(icon: "italic", help: "Italic (_text_)")  { inputActions.wrap("_") }
                 FormatButton(icon: "chevron.left.forwardslash.chevron.right",
                              help: "Inline code (`text`)")             { inputActions.wrap("`") }
@@ -306,17 +467,13 @@ struct InputBar: View {
                 if state.isStreaming {
                     HStack(spacing: 4) {
                         ProgressView().scaleEffect(0.55)
-                        Text("Generating…")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
+                        Text("Generating…").font(.system(size: 11)).foregroundColor(.secondary)
                     }
                     .padding(.trailing, 4)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
+            .padding(.horizontal, 12).padding(.top, 8)
 
-            // Text editor + send controls
             HStack(alignment: .bottom, spacing: 8) {
                 ChatTextEditor(
                     text: $text,
@@ -329,26 +486,20 @@ struct InputBar: View {
                 VStack(spacing: 6) {
                     Button(action: pickFile) {
                         Image(systemName: "paperclip")
-                            .font(.system(size: 15))
-                            .foregroundColor(.secondary)
+                            .font(.system(size: 15)).foregroundColor(.secondary)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(isUploading)
-                    .help("Attach file")
+                    .buttonStyle(.plain).disabled(isUploading).help("Attach file")
 
                     Button(action: onSend) {
                         Image(systemName: "arrow.up.circle.fill")
                             .font(.system(size: 26))
                             .foregroundColor(canSend ? .accentColor : Color.secondary.opacity(0.3))
                     }
-                    .buttonStyle(.plain)
-                    .disabled(!canSend)
-                    .help("Send (Return)")
+                    .buttonStyle(.plain).disabled(!canSend).help("Send (Return)")
                 }
                 .padding(.bottom, 4)
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 12)
+            .padding(.horizontal, 12).padding(.bottom, 12)
         }
         .background(Color(nsColor: .windowBackgroundColor))
     }
@@ -363,7 +514,6 @@ struct InputBar: View {
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories    = false
         guard panel.runModal() == .OK else { return }
-
         isUploading = true
         Task {
             for url in panel.urls {
@@ -387,16 +537,12 @@ struct FormatButton: View {
     let icon: String
     let help: String
     let action: () -> Void
-
     var body: some View {
         Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
+            Image(systemName: icon).font(.system(size: 12)).foregroundColor(.secondary)
                 .frame(width: 26, height: 22)
         }
-        .buttonStyle(.plain)
-        .help(help)
+        .buttonStyle(.plain).help(help)
     }
 }
 
@@ -405,7 +551,6 @@ struct FormatButton: View {
 struct AttachmentBar: View {
     @Binding var attachments: [UploadResult]
     let isUploading: Bool
-
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
@@ -417,10 +562,8 @@ struct AttachmentBar: View {
                         ProgressView().scaleEffect(0.6)
                         Text("Uploading…").font(.system(size: 12)).foregroundColor(.secondary)
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.secondary.opacity(0.1))
-                    .clipShape(Capsule())
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(Color.secondary.opacity(0.1)).clipShape(Capsule())
                 }
             }
         }
@@ -430,22 +573,17 @@ struct AttachmentBar: View {
 struct AttachmentChip: View {
     let attachment: UploadResult
     let onRemove: () -> Void
-
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: icon).font(.system(size: 10)).foregroundColor(.secondary)
             Text(attachment.name).font(.system(size: 12)).lineLimit(1).frame(maxWidth: 120)
             Button(action: onRemove) {
                 Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundColor(.secondary)
-            }
-            .buttonStyle(.plain)
+            }.buttonStyle(.plain)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Color.secondary.opacity(0.1))
-        .clipShape(Capsule())
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(Color.secondary.opacity(0.1)).clipShape(Capsule())
     }
-
     private var icon: String {
         switch attachment.type {
         case "image": return "photo"
@@ -465,10 +603,15 @@ struct MemoryPanel: View {
     var body: some View {
         NavigationStack {
             List {
+                if let err = state.memoryExtractionError {
+                    Text("Extraction failed: \(err)")
+                        .font(.caption).foregroundColor(.red)
+                }
                 ForEach(state.memories) { memory in
                     VStack(alignment: .leading, spacing: 4) {
                         Text(memory.content).font(.system(size: 13)).textSelection(.enabled)
-                        Text(memory.created_at).font(.caption).foregroundColor(.secondary)
+                        Text(memory.createdDate, style: .relative)
+                            .font(.caption).foregroundColor(.secondary)
                     }
                     .padding(.vertical, 2)
                 }
@@ -478,11 +621,19 @@ struct MemoryPanel: View {
                     for id in ids { Task { try? await BackendClient.shared.deleteMemory(id) } }
                 }
             }
-            .navigationTitle("Memories")
+            .navigationTitle("Memories (\(state.memories.count))")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    Button("Extract from chat") { state.extractMemories() }
-                        .disabled(state.messages.isEmpty)
+                    Button {
+                        state.extractMemories()
+                    } label: {
+                        if state.isExtractingMemories {
+                            ProgressView().scaleEffect(0.7)
+                        } else {
+                            Text("Extract from chat")
+                        }
+                    }
+                    .disabled(state.messages.isEmpty || state.isExtractingMemories)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { state.isMemoryPanelOpen = false }

@@ -61,7 +61,7 @@ struct SidebarView: View {
                     .foregroundColor(.secondary)
                 Spacer()
                 Picker("", selection: $state.contextWindow) {
-                    ForEach([4096, 8192, 16384, 32768, 65536, 131072], id: \.self) { n in
+                    ForEach([4096, 8192, 16384, 32768, 65536, 131072, 262144], id: \.self) { n in
                         Text(ctxLabel(n)).tag(n)
                     }
                 }
@@ -141,10 +141,15 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .overlay {
-            if state.conversations.isEmpty {
-                Text("No conversations yet")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
+            if state.conversations.isEmpty && state.isBackendReady {
+                VStack(spacing: 6) {
+                    Text("No conversations yet")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                    Button("Reload") { state.reloadConversations() }
+                        .font(.system(size: 11))
+                        .buttonStyle(.link)
+                }
             }
         }
     }
@@ -160,26 +165,14 @@ struct ConversationRow: View {
             Text(conv.title)
                 .font(.system(size: 13))
                 .lineLimit(1)
-            Text(relativeDate(conv.updated_at))
+            Text(relativeDate(conv.updatedDate))
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
         }
         .padding(.vertical, 2)
     }
 
-    private func relativeDate(_ str: String) -> String {
-        let withFractional: ISO8601DateFormatter = {
-            let f = ISO8601DateFormatter()
-            f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            return f
-        }()
-        let plain: ISO8601DateFormatter = {
-            let f = ISO8601DateFormatter()
-            f.formatOptions = [.withInternetDateTime]
-            return f
-        }()
-        let date = withFractional.date(from: str) ?? plain.date(from: str)
-        guard let date else { return str }
+    private func relativeDate(_ date: Date) -> String {
         let rf = RelativeDateTimeFormatter()
         rf.unitsStyle = .short
         return rf.localizedString(for: date, relativeTo: Date())

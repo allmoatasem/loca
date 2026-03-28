@@ -106,6 +106,15 @@ _SEARCH_KEYWORDS = [
     r"\bhave you heard\b",
     r"\bis it true\b",
     r"\bfact(s)? about\b",
+    # Sports and current events
+    r"\bthis season\b", r"\blast season\b",
+    r"\bstanding(s)?\b", r"\bleague table\b",
+    r"\bhow (is|are|was|were) .{2,40} (doing|performing|playing|ranked)\b",
+    r"\b(match|game|fixture)s?\b",
+    r"\b(score|result)s?\b",
+    r"\bwho (won|lost|scored|played)\b",
+    r"\bleague\b", r"\btournament\b", r"\bchampionship\b",
+    r"\bplayoff(s)?\b", r"\btransfer(s)?\b", r"\binjur(y|ies|ed)\b",
 ]
 
 _IMAGE_EXTENSIONS = re.compile(

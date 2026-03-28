@@ -152,7 +152,9 @@ extension AppState {
         )
 
         var full = ""
-        var tStart = Date()
+        let tStart = Date()
+        var firstTokenTime: Date?
+        var lastUsage: UsageStats?
 
         do {
             for try await raw in BackendClient.shared.streamChat(request) {
@@ -160,8 +162,10 @@ extension AppState {
                       let chunk = try? JSONDecoder().decode(SSEChunk.self, from: data) else { continue }
 
                 if let model = chunk.model, actualModel == nil { actualModel = model }
+                if let u = chunk.usage { lastUsage = u }
 
                 if let delta = chunk.choices?.first?.delta.content {
+                    if firstTokenTime == nil { firstTokenTime = Date() }
                     full += delta
                     streamingText = full
                     messages[assistantIdx] = ChatMessage(role: "assistant", content: .text(full))
@@ -175,6 +179,16 @@ extension AppState {
         streamingText = ""
         isStreaming   = false
 
+        let totalMs = Date().timeIntervalSince(tStart) * 1000
+        let ttftMs  = firstTokenTime.map { $0.timeIntervalSince(tStart) * 1000 } ?? 0
+        lastStats = GenerationStats(
+            model: actualModel ?? selectedCapability.modeHint,
+            promptTokens:     lastUsage?.prompt_tokens     ?? 0,
+            completionTokens: lastUsage?.completion_tokens ?? 0,
+            ttftMs:   ttftMs,
+            totalMs:  totalMs
+        )
+
         // Save conversation after each turn
         await _saveCurrentConversation()
     }
@@ -186,11 +200,19 @@ extension AppState {
     }
 
     func _extractMemories() async {
+        guard !messages.isEmpty else { return }
+        isExtractingMemories = true
+        memoryExtractionError = nil
+        defer { isExtractingMemories = false }
         let msgs = messages.map { ["role": $0.role, "content": $0.content.plainText] }
         do {
             let extracted = try await BackendClient.shared.extractMemories(messages: msgs, convId: activeConversationId)
-            memories.append(contentsOf: extracted)
-        } catch {}
+            // Deduplicate by id before appending
+            let existing = Set(memories.map(\.id))
+            memories.append(contentsOf: extracted.filter { !existing.contains($0.id) })
+        } catch {
+            memoryExtractionError = error.localizedDescription
+        }
     }
 
     // MARK: - System stats

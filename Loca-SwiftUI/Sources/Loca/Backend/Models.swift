@@ -196,7 +196,9 @@ struct ConversationMeta: Decodable, Identifiable {
     let id: String
     let title: String
     let model: String
-    let updated_at: String
+    let updated: Double   // Unix timestamp (matches store column name)
+
+    var updatedDate: Date { Date(timeIntervalSince1970: updated) }
 }
 
 struct ConversationDetail: Decodable {
@@ -225,7 +227,10 @@ struct SaveConversationResponse: Decodable {
 struct Memory: Decodable, Identifiable {
     let id: String
     let content: String
-    let created_at: String
+    let created: Double   // Unix timestamp (matches store column name)
+    let conv_id: String?
+
+    var createdDate: Date { Date(timeIntervalSince1970: created) }
 }
 
 struct MemoryListResponse: Decodable {

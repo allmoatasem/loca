@@ -39,13 +39,30 @@ final class AppState: ObservableObject {
     // MARK: - Streaming
 
     @Published var isStreaming    = false
-    @Published var streamingText  = ""   // partial assistant reply being built
-    @Published var actualModel: String?  // model name reported by the backend
+    @Published var streamingText  = ""
+    @Published var actualModel: String?
+
+    // MARK: - Generation stats
+
+    struct GenerationStats {
+        let model: String
+        let promptTokens: Int
+        let completionTokens: Int
+        let ttftMs: Double
+        let totalMs: Double
+        var tokensPerSec: Double {
+            guard completionTokens > 0, totalMs > 1 else { return 0 }
+            return Double(completionTokens) / (totalMs / 1000)
+        }
+    }
+    @Published var lastStats: GenerationStats?
 
     // MARK: - Memories
 
     @Published var memories: [Memory] = []
-    @Published var isMemoryPanelOpen  = false
+    @Published var isMemoryPanelOpen       = false
+    @Published var isExtractingMemories    = false
+    @Published var memoryExtractionError: String?
 
     // MARK: - Research mode
 
@@ -69,8 +86,9 @@ final class AppState: ObservableObject {
     func loadConversation(_ id: String) { Task { await _loadConversation(id) } }
     func deleteConversation(_ id: String) { Task { await _deleteConversation(id) } }
     func send(_ text: String, attachments: [UploadResult] = []) { Task { await _send(text, attachments: attachments) } }
-    func loadMemories()        { Task { await _loadMemories() } }
-    func extractMemories()     { Task { await _extractMemories() } }
-    func pollSystemStats()     { Task { await _pollSystemStats() } }
+    func loadMemories()         { Task { await _loadMemories() } }
+    func extractMemories()      { Task { await _extractMemories() } }
+    func pollSystemStats()      { Task { await _pollSystemStats() } }
+    func reloadConversations()  { Task { await _loadConversationList() } }
 }
 
