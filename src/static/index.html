@@ -166,7 +166,39 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   margin-bottom: 6px;
 }
 
-#model-select {
+/* Segmented mode control */
+#mode-tabs {
+  display: flex;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+.mode-tab {
+  flex: 1;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  padding: 5px 2px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: background .12s, color .12s, box-shadow .12s;
+  white-space: nowrap;
+}
+.mode-tab.active {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+.mode-tab:hover:not(.active) { color: var(--text-dim); }
+
+/* Model dropdown (reused for both mode and model pickers) */
+.model-select {
   width: 100%;
   background: var(--bg);
   color: var(--text);
@@ -181,7 +213,10 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   background-repeat: no-repeat;
   background-position: right 10px center;
 }
-#model-select:focus { border-color: var(--accent); }
+.model-select:focus { border-color: var(--accent); }
+
+/* Keep legacy id selector working */
+#model-select { width: 100%; }
 
 #model-desc {
   font-size: 11px;
@@ -189,6 +224,45 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   margin-top: 5px;
   line-height: 1.4;
 }
+
+/* ── File attachment strip ─────────────────────────────────────────────────── */
+#attach-strip {
+  display: none;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 16px 4px;
+  border-bottom: 1px solid var(--border-light);
+}
+#attach-strip.has-files { display: flex; }
+.attach-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  max-width: 160px;
+}
+.attach-chip img {
+  width: 28px; height: 28px;
+  object-fit: cover;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.attach-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attach-chip .rm-attach {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-muted); font-size: 14px; line-height: 1;
+  padding: 0 0 0 2px; flex-shrink: 0;
+}
+.attach-chip .rm-attach:hover { color: #c0392b; }
 
 /* ── Conversations list ──────────────────────────────────────────────────── */
 #conv-section {
@@ -823,14 +897,26 @@ code[class*="language-"] {
     </div>
 
     <div id="model-section">
-      <label>Model</label>
-      <select id="model-select"></select>
+      <label>Mode</label>
+      <div id="mode-tabs">
+        <button class="mode-tab active" data-mode="general" onclick="selectMode(this)">General</button>
+        <button class="mode-tab"        data-mode="code"    onclick="selectMode(this)">Code</button>
+        <button class="mode-tab"        data-mode="reason"  onclick="selectMode(this)">Reason</button>
+        <button class="mode-tab"        data-mode="write"   onclick="selectMode(this)">Write</button>
+      </div>
       <div id="model-desc"></div>
     </div>
 
     <div id="model-section" style="border-top:none;padding-top:0">
+      <label>Model</label>
+      <select id="model-select" class="model-select">
+        <option value="">Loading…</option>
+      </select>
+    </div>
+
+    <div id="model-section" style="border-top:none;padding-top:0">
       <label>Context window</label>
-      <select id="ctx-select" style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm);padding:7px 28px 7px 10px;font-size:13px;cursor:pointer;outline:none;appearance:none;background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a8a8a' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E\");background-repeat:no-repeat;background-position:right 10px center">
+      <select id="ctx-select" class="model-select">
         <option value="8192">8k</option>
         <option value="16384">16k</option>
         <option value="32768" selected>32k</option>
@@ -879,6 +965,7 @@ code[class*="language-"] {
 
     <div id="input-area">
       <div id="input-box">
+        <div id="attach-strip"></div>
         <div id="input" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Message input" spellcheck="true"></div>
         <div id="fmt-bar">
           <button class="fmt-btn" onclick="fmt('bold')"      title="Bold (⌘B)"><b>B</b></button>
@@ -886,6 +973,11 @@ code[class*="language-"] {
           <div class="fmt-sep"></div>
           <button class="fmt-btn mono" onclick="fmt('code')"      title="Inline code (⌘⇧C)">`&nbsp;`</button>
           <button class="fmt-btn mono" onclick="fmt('codeblock')" title="Code block (⌘⇧K)">```</button>
+          <div class="fmt-sep"></div>
+          <button class="fmt-btn" onclick="document.getElementById('file-input').click()" title="Attach file (image, PDF, audio, video…)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+          </button>
+          <input type="file" id="file-input" multiple accept="image/*,.pdf,audio/*,video/*,.txt,.md,.csv,.json,.yaml,.yml,.xml,.log" style="display:none" onchange="handleFiles(this.files)">
         </div>
         <div id="input-footer">
           <span id="input-hint">Enter to send · Shift+Enter for new line</span>
@@ -956,12 +1048,15 @@ let currentConvId  = null;
 let currentModel   = null;
 let researchMode   = false;
 
-const MODEL_DESCS = {
+const MODE_DESCS = {
   general: 'Vision · chat · code · analysis',
   reason:  'Planning · trade-offs · math · logic',
   code:    'Code generation · debugging · review',
   write:   'Drafting · editing · summarisation',
 };
+
+// Keep for any old references
+const MODEL_DESCS = MODE_DESCS;
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
 (function initTheme() {
@@ -1000,29 +1095,33 @@ function setThemeIcon(dark) {
   }
 }
 
-// ── Models ────────────────────────────────────────────────────────────────────
+// ── Mode selector (segmented control) ────────────────────────────────────────
+let currentMode = 'general';
+
+function selectMode(btn) {
+  document.querySelectorAll('.mode-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  currentMode = btn.dataset.mode;
+  document.getElementById('model-desc').textContent = MODE_DESCS[currentMode] || '';
+}
+
+// ── Model picker (actual LLM from LM Studio) ──────────────────────────────────
 (async () => {
+  const sel = document.getElementById('model-select');
   try {
-    const { data = [] } = await (await fetch('/v1/models')).json();
-    const sel = document.getElementById('model-select');
-    sel.innerHTML = data.map(m =>
-      `<option value="${esc(m.id)}">${esc(m.id)}</option>`
-    ).join('');
-    updateModelDesc();
+    const { data = [] } = await (await fetch('/api/lm-models')).json();
+    if (data.length) {
+      sel.innerHTML = data.map(m => `<option value="${esc(m.id)}">${esc(m.id)}</option>`).join('');
+    } else {
+      sel.innerHTML = '<option value="">No models loaded in LM Studio</option>';
+    }
   } catch (_) {
-    document.getElementById('model-select').innerHTML =
-      ['general','reason','code','write']
-        .map(m => `<option value="${m}">${m}</option>`).join('');
-    updateModelDesc();
+    sel.innerHTML = '<option value="">LM Studio unavailable</option>';
   }
 })();
 
-document.getElementById('model-select').addEventListener('change', updateModelDesc);
-
-function updateModelDesc() {
-  const m = document.getElementById('model-select').value;
-  document.getElementById('model-desc').textContent = MODEL_DESCS[m] || '';
-}
+// initialise mode description
+document.getElementById('model-desc').textContent = MODE_DESCS['general'];
 
 // ── System stats polling ──────────────────────────────────────────────────────
 async function pollSystemStats() {
@@ -1190,18 +1289,92 @@ async function newConversation() {
   document.querySelectorAll('.conv-item.active').forEach(el => el.classList.remove('active'));
 }
 
+// ── File attachments ──────────────────────────────────────────────────────────
+let attachments = []; // [{type, name, data?, content?}]
+
+async function handleFiles(fileList) {
+  const strip = document.getElementById('attach-strip');
+  for (const file of fileList) {
+    const fd = new FormData();
+    fd.append('file', file);
+    let info;
+    try {
+      const r = await fetch('/api/upload', { method: 'POST', body: fd });
+      info = await r.json();
+    } catch (_) {
+      info = { type: 'binary', name: file.name };
+    }
+    attachments.push(info);
+    renderAttachChip(strip, info, attachments.length - 1);
+  }
+  strip.classList.add('has-files');
+  document.getElementById('file-input').value = '';
+}
+
+function renderAttachChip(strip, info, idx) {
+  const chip = document.createElement('div');
+  chip.className = 'attach-chip';
+  chip.dataset.idx = idx;
+  let thumb = '';
+  if (info.type === 'image') thumb = `<img src="${info.data}" alt="">`;
+  else if (info.type === 'audio') thumb = '🎵';
+  else if (info.type === 'video') thumb = '🎬';
+  else thumb = '📄';
+  chip.innerHTML = `${thumb}<span>${esc(info.name)}</span><button class="rm-attach" onclick="removeAttach(${idx})">×</button>`;
+  strip.appendChild(chip);
+}
+
+function removeAttach(idx) {
+  attachments[idx] = null;
+  const strip = document.getElementById('attach-strip');
+  strip.querySelectorAll(`.attach-chip[data-idx="${idx}"]`).forEach(el => el.remove());
+  if (!attachments.some(a => a !== null)) strip.classList.remove('has-files');
+}
+
+function buildUserContent(text) {
+  const live = attachments.filter(Boolean);
+  if (!live.length) return text;
+  const parts = [];
+  // Images go as image_url parts; others prepend as text
+  const textParts = live
+    .filter(a => a.type !== 'image')
+    .map(a => a.type === 'audio'  ? `[Audio file attached: ${a.name}]`
+              : a.type === 'video'  ? `[Video file attached: ${a.name}]`
+              : a.type === 'binary' ? `[File attached: ${a.name}]`
+              : `<attachment name="${a.name}">\n${a.content}\n</attachment>`);
+  const fullText = [...textParts, text].filter(Boolean).join('\n\n');
+  const imgParts = live.filter(a => a.type === 'image');
+  if (!imgParts.length) return fullText;
+  // OpenAI vision format
+  const contentArr = [{ type: 'text', text: fullText }];
+  for (const img of imgParts) {
+    contentArr.push({ type: 'image_url', image_url: { url: img.data } });
+  }
+  return contentArr;
+}
+
 // ── Send ──────────────────────────────────────────────────────────────────────
 async function sendMessage() {
   const text = getInputText();
-  if (!text || streaming) return;
+  const hasAttachments = attachments.some(Boolean);
+  if (!text && !hasAttachments) return;
+  if (streaming) return;
 
-  const model  = document.getElementById('model-select').value;
+  const mode         = currentMode;
+  const modelOverride = document.getElementById('model-select').value || undefined;
   const numCtx = parseInt(document.getElementById('ctx-select').value, 10);
-  currentModel = model;
+  currentModel = modelOverride || mode;
   document.getElementById('empty')?.remove();
 
-  history.push({ role: 'user', content: text });
-  appendUser(text);
+  const userContent = buildUserContent(text);
+  history.push({ role: 'user', content: userContent });
+  appendUser(text, attachments.filter(Boolean));
+
+  // clear attachments
+  attachments = [];
+  const strip = document.getElementById('attach-strip');
+  strip.innerHTML = '';
+  strip.classList.remove('has-files');
 
   inputEl.innerHTML = '';
   setStreaming(true);
@@ -1219,7 +1392,7 @@ async function sendMessage() {
     const resp = await fetch('/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages: history, stream: true, num_ctx: numCtx, research_mode: researchMode })
+      body: JSON.stringify({ mode, model_override: modelOverride, messages: history, stream: true, num_ctx: numCtx, research_mode: researchMode })
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
@@ -1343,15 +1516,38 @@ async function copyText(text, btn) {
 }
 
 // ── DOM helpers ───────────────────────────────────────────────────────────────
-function appendUser(text) {
+function appendUser(text, files = []) {
   const msgs = document.getElementById('messages');
   const wrap = document.createElement('div');
   wrap.className = 'msg-wrap user';
   const inner = document.createElement('div');
   inner.className = 'user-msg-wrap';
+
+  // File previews above the bubble
+  if (files.length) {
+    const prev = document.createElement('div');
+    prev.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;justify-content:flex-end';
+    for (const f of files) {
+      if (f.type === 'image') {
+        const img = document.createElement('img');
+        img.src = f.data;
+        img.alt = f.name;
+        img.style.cssText = 'max-width:120px;max-height:100px;border-radius:8px;object-fit:cover;border:1px solid var(--border)';
+        prev.appendChild(img);
+      } else {
+        const chip = document.createElement('div');
+        chip.className = 'attach-chip';
+        const icon = f.type === 'audio' ? '🎵' : f.type === 'video' ? '🎬' : '📄';
+        chip.innerHTML = `${icon}<span>${esc(f.name)}</span>`;
+        prev.appendChild(chip);
+      }
+    }
+    inner.appendChild(prev);
+  }
+
   const bub = document.createElement('div');
   bub.className = 'user-bubble';
-  bub.innerHTML = renderMd(text);
+  bub.innerHTML = text ? renderMd(text) : '';
   const cpBtn = document.createElement('button');
   cpBtn.className = 'user-copy-btn';
   cpBtn.textContent = 'Copy';
@@ -1560,6 +1756,7 @@ function setStreaming(v) {
   streaming = v;
   document.getElementById('send-btn').disabled = v;
   document.getElementById('model-select').disabled = v;
+  document.querySelectorAll('.mode-tab').forEach(b => b.disabled = v);
   // Keep input editable so user can compose the next message while waiting
   if (!v) document.getElementById('input').focus();
 }

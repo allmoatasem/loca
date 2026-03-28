@@ -56,14 +56,18 @@ class Orchestrator:
         has_image: bool = False,
         stream: bool = False,
         model_hint: str | None = None,
+        model_override: str | None = None,
         num_ctx: int | None = None,
         research_mode: bool = False,
     ) -> dict | AsyncIterator[str]:
         user_message = _last_user_content(messages)
         result: RouteResult = route(user_message, has_image=has_image, model_hint=model_hint)
-        logger.info(f"Route: {result.model.value} | {result.reason} | search={result.search_triggered}")
+        logger.info(
+            f"Route: {result.model.value} | {result.reason} | search={result.search_triggered}"
+            + (f" | override={model_override}" if model_override else "")
+        )
 
-        model_name, api_base = await self.mm.ensure_loaded(result.model)
+        model_name, api_base = await self.mm.ensure_loaded(result.model, model_name_override=model_override)
         system_prompt = _load_system_prompt(result.model)
         mem_ctx = get_memories_context()
         if mem_ctx:
