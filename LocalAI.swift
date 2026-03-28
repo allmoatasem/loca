@@ -1,6 +1,30 @@
 import Cocoa
 import WebKit
 
+/// WKWebView subclass: intercepts mouseDown in the top drag-bar region so
+/// the user can drag the window regardless of what CSS says.
+class DraggableWebView: WKWebView {
+    private let dragBarHeight: CGFloat = 38
+    override func mouseDown(with event: NSEvent) {
+        let loc = convert(event.locationInWindow, from: nil)
+        // AppKit origin is bottom-left; top of view = bounds.height
+        guard loc.y > bounds.height - dragBarHeight, let win = window else {
+            super.mouseDown(with: event)
+            return
+        }
+        // Manual window drag via nextEvent loop
+        var prevLocation = event.locationInWindow
+        while let e = win.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            if e.type == .leftMouseUp { break }
+            var frame = win.frame
+            frame.origin.x += e.locationInWindow.x - prevLocation.x
+            frame.origin.y += e.locationInWindow.y - prevLocation.y
+            win.setFrameOrigin(frame.origin)
+            prevLocation = e.locationInWindow
+        }
+    }
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var window: NSWindow!
     var webView: WKWebView!
@@ -10,12 +34,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     // MARK: - Launch
 
+    func log(_ msg: String) {
+        let line = "\(Date()): \(msg)\n"
+        if let data = line.data(using: .utf8) {
+            let url = URL(fileURLWithPath: "/tmp/loca-swift.log")
+            if let fh = try? FileHandle(forWritingTo: url) {
+                fh.seekToEndOfFile(); fh.write(data); try? fh.close()
+            } else {
+                try? data.write(to: url)
+            }
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        log("applicationDidFinishLaunching")
         buildMenu()
         buildWindow()
+        log("window built")
         launchBackend()
+        log("backend launched")
         showLoading()
         startPolling()
+        log("polling started")
     }
 
     // MARK: - Menu
@@ -49,7 +89,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     func buildWindow() {
         let config = WKWebViewConfiguration()
-        webView = WKWebView(frame: .zero, configuration: config)
+        // Use a non-persistent (in-memory) data store so there is no on-disk
+        // cache to go stale between deployments.
+        config.websiteDataStore = WKWebsiteDataStore.nonPersistent()
+        webView = DraggableWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
         webView.setValue(false, forKey: "drawsBackground")
 
@@ -62,6 +105,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         window.title = "Loca"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
+        window.isMovableByWindowBackground = true
         window.contentView = webView
         window.center()
         window.setFrameAutosaveName("LocaMain")
@@ -158,7 +202,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                 guard self?.isReady == false else { return }
                 self?.isReady = true
                 self?.pollTimer?.invalidate()
-                self?.webView.load(URLRequest(url: URL(string: "http://localhost:8000/")!))
+                self?.log("health check passed — loading UI")
+                var req = URLRequest(url: URL(string: "http://localhost:8000/")!)
+                req.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+                self?.webView.load(req)
             }
         }.resume()
     }
@@ -198,6 +245,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     // MARK: - Lifecycle
 
     func applicationWillTerminate(_ notification: Notification) {
+        log("applicationWillTerminate")
         pollTimer?.invalidate()
         backendProcess?.terminate()
         backendProcess?.waitUntilExit()

@@ -1,7 +1,13 @@
 #!/bin/bash
 
-# Resolve DIR relative to this script — works wherever the repo is cloned
-DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
+# Resolve project DIR — prefer explicit path written by build_app.sh,
+# fall back to relative path (works when running directly from the dev bundle).
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$SCRIPT_DIR/project_path.txt" ]; then
+    DIR="$(cat "$SCRIPT_DIR/project_path.txt")"
+else
+    DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+fi
 LMS="$HOME/.lmstudio/bin/lms"
 VENV="$DIR/.venv"
 VENV_SEARXNG="$DIR/.venv-searxng"
@@ -96,7 +102,7 @@ cd "$DIR"
 
 # ── 5. Start orchestrator proxy ───────────────────────────────────────────────
 notify "Starting orchestrator proxy..."
-lsof -ti tcp:8000 | xargs kill -9 2>/dev/null || true
+lsof -ti tcp:8000 -sTCP:LISTEN | xargs kill -9 2>/dev/null || true
 cd "$DIR"
 "$VENV/bin/python" -m uvicorn src.proxy:app --host 0.0.0.0 --port 8000 \
     > /tmp/loca-proxy.log 2>&1 &
@@ -110,7 +116,7 @@ done
 
 # ── 6. Start SearXNG ─────────────────────────────────────────────────────────
 notify "Starting SearXNG..."
-lsof -ti tcp:8888 | xargs kill -9 2>/dev/null || true
+lsof -ti tcp:8888 -sTCP:LISTEN | xargs kill -9 2>/dev/null || true
 cd "$SEARXNG_SRC"
 SEARXNG_SETTINGS_PATH="$DIR/searxng-settings.yml" \
 "$VENV_SEARXNG/bin/python" searx/webapp.py \

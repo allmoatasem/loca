@@ -45,7 +45,21 @@ mkdir -p "$RESOURCES"
 cp "$DIR/start_services.sh" "$RESOURCES/start_services.sh"
 chmod +x "$RESOURCES/start_services.sh"
 
-# Ad-hoc code-sign the binary — required on Apple Silicon
-codesign --sign - --force "$OUT"
+# Ad-hoc code-sign the whole bundle — required on Apple Silicon
+# Must sign after all Resources files are in place
+codesign --sign - --force --deep "$DIR/Loca.app"
+
+# Sync to ~/Applications so the dock icon stays current
+DEST="$HOME/Applications/Loca.app"
+if [ -d "$DEST" ]; then
+    cp "$OUT" "$DEST/Contents/MacOS/LocalAI"
+    chmod +x "$DEST/Contents/MacOS/LocalAI"
+    mkdir -p "$DEST/Contents/Resources"
+    cp "$DIR/start_services.sh" "$DEST/Contents/Resources/start_services.sh"
+    chmod +x "$DEST/Contents/Resources/start_services.sh"
+    echo "$DIR" > "$DEST/Contents/Resources/project_path.txt"
+    codesign --sign - --force --deep "$DEST"
+    echo "Also updated ~/Applications/Loca.app"
+fi
 
 echo "Done — open Loca.app to launch."
