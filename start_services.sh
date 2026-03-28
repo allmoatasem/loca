@@ -76,25 +76,23 @@ for i in $(seq 1 90); do
 done
 
 # ── 2. Orchestrator venv ──────────────────────────────────────────────────────
-# Recreate venv if: it doesn't exist, Python binary is broken/wrong path,
-# or requirements.txt is newer than the venv's pip.
-_need_venv=0
-if [ ! -d "$VENV" ]; then
-    _need_venv=1
-elif ! "$VENV/bin/python" -c "import sys" 2>/dev/null; then
-    echo "Venv Python broken — recreating..." >> /tmp/loca-proxy.log
-    rm -rf "$VENV"
-    _need_venv=1
-elif [ "$DIR/requirements.txt" -nt "$VENV/bin/pip" ]; then
-    echo "requirements.txt updated — reinstalling dependencies..." >> /tmp/loca-proxy.log
-    _need_venv=2   # only reinstall, don't recreate
+# Recreate venv if: doesn't exist, python/pip broken, or requirements.txt changed.
+_venv_ok=0
+if [ -d "$VENV" ] \
+   && "$VENV/bin/python" -c "import sys" 2>/dev/null \
+   && "$VENV/bin/pip" --version > /dev/null 2>&1; then
+    _venv_ok=1
 fi
 
-if [ "$_need_venv" -eq 1 ]; then
+if [ "$_venv_ok" -eq 0 ]; then
+    echo "Venv missing or broken — recreating..." >> /tmp/loca-proxy.log
     status "Setting up Python environment…" 25
+    rm -rf "$VENV"
     python3 -m venv "$VENV" || bail "Failed to create Python venv."
-fi
-if [ "$_need_venv" -ge 1 ]; then
+    status "Installing dependencies…" 30
+    "$VENV/bin/pip" install -r "$DIR/requirements.txt" -q || bail "Failed to install orchestrator dependencies."
+elif [ "$DIR/requirements.txt" -nt "$VENV/bin/pip" ]; then
+    echo "requirements.txt updated — reinstalling..." >> /tmp/loca-proxy.log
     status "Installing dependencies…" 30
     "$VENV/bin/pip" install -r "$DIR/requirements.txt" -q || bail "Failed to install orchestrator dependencies."
 fi
