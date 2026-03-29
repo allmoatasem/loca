@@ -15,7 +15,7 @@ struct ChatView: View {
         VStack(spacing: 0) {
             MessagesScrollView()
             if let stats = state.lastStats, !state.isStreaming {
-                GenerationStatsBar(stats: stats)
+                GenerationStatsBar(stats: stats, contextWindow: state.contextWindow)
             }
             Divider()
             if !attachments.isEmpty || isUploading {
@@ -51,6 +51,7 @@ struct ChatView: View {
 
 struct GenerationStatsBar: View {
     let stats: AppState.GenerationStats
+    let contextWindow: Int
 
     var body: some View {
         HStack(spacing: 0) {
@@ -59,15 +60,17 @@ struct GenerationStatsBar: View {
                 label(stats.model.split(separator: "/").last.map(String.init) ?? stats.model)
                 separator()
                 if stats.ttftMs > 0 {
-                    label(String(format: "TTFT %.0fms", stats.ttftMs))
+                    label(String(format: "TTFT %.1fs", stats.ttftMs / 1000))
                     separator()
                 }
                 if stats.tokensPerSec > 0 {
                     label(String(format: "%.0f tok/s", stats.tokensPerSec))
                     separator()
                 }
-                if stats.completionTokens > 0 {
-                    label("\(stats.promptTokens + stats.completionTokens) tokens")
+                let totalTok = stats.promptTokens + stats.completionTokens
+                if totalTok > 0 {
+                    let pct = contextWindow > 0 ? Int(Double(totalTok) / Double(contextWindow) * 100) : 0
+                    label("\(totalTok) / \(contextWindow / 1024)K (\(pct)%)")
                 }
             }
             Spacer()
@@ -229,7 +232,6 @@ struct MessageBubble: View {
     private func parseAttachmentChips(from text: String) -> [String] {
         // Matches: <attachment name="filename.pdf">
         let pattern = try? NSRegularExpression(pattern: #"<attachment name="([^"]+)">"#)
-        let ns = text as NSString
         return pattern?.matches(in: text, range: NSRange(text.startIndex..., in: text))
             .compactMap { m -> String? in
                 guard let r = Range(m.range(at: 1), in: text) else { return nil }
@@ -353,16 +355,7 @@ struct MarkdownView: View {
             ForEach(Array(parse(text).enumerated()), id: \.offset) { _, seg in
                 switch seg {
                 case .prose(let s):
-                    if let attr = try? AttributedString(
-                        markdown: s,
-                        options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-                    ) {
-                        Text(attr).font(.system(size: 14)).textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } else {
-                        Text(s).font(.system(size: 14)).textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                    ProseView(text: s)
                 case .code(let lang, let code):
                     CodeBlock(language: lang, code: code)
                 }
@@ -402,6 +395,109 @@ struct MarkdownView: View {
             remaining = String(remaining[afterIdx...])
         }
         return result.isEmpty ? [.prose(input)] : result
+    }
+}
+
+// MARK: - Prose renderer (headers, bullets, numbered lists, paragraphs)
+
+struct ProseView: View {
+    let text: String
+
+    private enum LineGroup {
+        case header(Int, String)
+        case bullet(String)
+        case numbered(Int, String)
+        case paragraph(String)
+        case hrule
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach(Array(lineGroups(text).enumerated()), id: \.offset) { _, group in
+                renderGroup(group)
+            }
+        }
+    }
+
+    private func lineGroups(_ input: String) -> [LineGroup] {
+        var groups: [LineGroup] = []
+        var paragraphLines: [String] = []
+        let numberedRE = try? NSRegularExpression(pattern: #"^(\d+)\.\s+(.+)"#)
+
+        func flush() {
+            let joined = paragraphLines.joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !joined.isEmpty { groups.append(.paragraph(joined)) }
+            paragraphLines = []
+        }
+
+        for line in input.components(separatedBy: "\n") {
+            if line.hasPrefix("### ") {
+                flush(); groups.append(.header(3, String(line.dropFirst(4))))
+            } else if line.hasPrefix("## ") {
+                flush(); groups.append(.header(2, String(line.dropFirst(3))))
+            } else if line.hasPrefix("# ") {
+                flush(); groups.append(.header(1, String(line.dropFirst(2))))
+            } else if line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ") {
+                flush(); groups.append(.bullet(String(line.dropFirst(2))))
+            } else if let m = numberedRE?.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+                      let nr = Range(m.range(at: 1), in: line),
+                      let cr = Range(m.range(at: 2), in: line),
+                      let n = Int(line[nr]) {
+                flush(); groups.append(.numbered(n, String(line[cr])))
+            } else if line == "---" || line == "***" || line == "___" {
+                flush(); groups.append(.hrule)
+            } else if line.trimmingCharacters(in: .whitespaces).isEmpty {
+                flush()
+            } else {
+                paragraphLines.append(line)
+            }
+        }
+        flush()
+        return groups
+    }
+
+    @ViewBuilder
+    private func renderGroup(_ group: LineGroup) -> some View {
+        switch group {
+        case .header(let level, let s):
+            Text(inline(s))
+                .font(level == 1 ? .system(size: 20, weight: .bold)
+                    : level == 2 ? .system(size: 17, weight: .semibold)
+                    : .system(size: 15, weight: .semibold))
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+                .padding(.top, level < 3 ? 4 : 2)
+        case .bullet(let s):
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("•").font(.system(size: 14)).foregroundColor(.secondary)
+                    .padding(.leading, 4)
+                Text(inline(s)).font(.system(size: 14))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+        case .numbered(let n, let s):
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("\(n).").font(.system(size: 14)).foregroundColor(.secondary)
+                    .padding(.leading, 4)
+                Text(inline(s)).font(.system(size: 14))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+        case .paragraph(let s):
+            Text(inline(s)).font(.system(size: 14))
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        case .hrule:
+            Divider().padding(.vertical, 4)
+        }
+    }
+
+    private func inline(_ s: String) -> AttributedString {
+        (try? AttributedString(
+            markdown: s,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )) ?? AttributedString(s)
     }
 }
 
