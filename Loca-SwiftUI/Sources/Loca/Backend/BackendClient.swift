@@ -34,7 +34,7 @@ actor BackendClient {
     // MARK: - Chat (streaming)
 
     /// Yields raw SSE `data:` line payloads as `String` chunks.
-    func streamChat(_ request: ChatRequest) -> AsyncThrowingStream<String, Error> {
+    nonisolated func streamChat(_ request: ChatRequest) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             Task {
                 do {
@@ -86,6 +86,25 @@ actor BackendClient {
 
     func deleteConversation(_ id: String) async throws {
         _ = try await delete("/api/conversations/\(id)")
+    }
+
+    func patchConversation(_ id: String, starred: Bool? = nil, folder: String?? = nil) async throws {
+        var body: [String: Any] = [:]
+        if let s = starred { body["starred"] = s }
+        if let f = folder {
+            if let name = f { body["folder"] = name } else { body["folder"] = NSNull() }
+        }
+        guard !body.isEmpty else { return }
+        _ = try await patchRaw("/api/conversations/\(id)", body: body)
+    }
+
+    func searchConversations(_ query: String) async throws -> [ConversationMeta] {
+        var comps = URLComponents(url: base, resolvingAgainstBaseURL: false)!
+        comps.path = "/api/search/conversations"
+        comps.queryItems = [URLQueryItem(name: "q", value: query)]
+        guard let url = comps.url else { return [] }
+        let (data, _) = try await session.data(from: url)
+        return try JSONDecoder().decode(ConversationListResponse.self, from: data).conversations
     }
 
     // MARK: - Memories
@@ -173,6 +192,14 @@ actor BackendClient {
     private func delete(_ path: String) async throws -> (Data, URLResponse) {
         var req = URLRequest(url: base.appendingPathComponent(String(path.dropFirst())))
         req.httpMethod = "DELETE"
+        return try await session.data(for: req)
+    }
+
+    private func patchRaw(_ path: String, body: [String: Any]) async throws -> (Data, URLResponse) {
+        var req = URLRequest(url: base.appendingPathComponent(String(path.dropFirst())))
+        req.httpMethod = "PATCH"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
         return try await session.data(for: req)
     }
 }

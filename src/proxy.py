@@ -34,6 +34,7 @@ from .model_manager import ModelManager
 from .orchestrator import Orchestrator
 from .store import (
     list_conversations, get_conversation, save_conversation, delete_conversation,
+    patch_conversation, search_conversations,
     list_memories, add_memory, delete_memory,
 )
 from .memory_extractor import extract_memories
@@ -148,6 +149,8 @@ async def _openai_stream_response(
 ) -> AsyncIterator[bytes]:
     output_chars = 0
     actual_model = model_override or model_hint or "local"
+    search_triggered = False
+    memory_injected = False
     try:
         gen = await orchestrator.handle(
             messages, has_image=has_image, stream=True,
@@ -155,10 +158,12 @@ async def _openai_stream_response(
             num_ctx=num_ctx, research_mode=research_mode,
         )
         async for chunk in gen:
-            # Metadata sentinel from orchestrator — grab actual model name
+            # Metadata sentinel from orchestrator
             if isinstance(chunk, dict):
                 if "__model__" in chunk:
                     actual_model = chunk["__model__"]
+                    search_triggered = bool(chunk.get("__search__", False))
+                    memory_injected = bool(chunk.get("__memory__", False))
                 continue
             output_chars += len(chunk)
             delta = {"role": "assistant", "content": chunk}
@@ -190,6 +195,8 @@ async def _openai_stream_response(
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": prompt_tokens + completion_tokens,
+            "search_triggered": search_triggered,
+            "memory_injected": memory_injected,
         },
     })
     yield f"data: {usage_payload}\n\n".encode()
@@ -360,6 +367,25 @@ async def api_save_conversation(request: Request) -> JSONResponse:
         model=body.get("model", ""),
     )
     return JSONResponse({"id": cid})
+
+
+@app.get("/api/search/conversations")
+async def api_search_conversations(q: str = "") -> JSONResponse:
+    if not q.strip():
+        return JSONResponse({"conversations": []})
+    return JSONResponse({"conversations": search_conversations(q)})
+
+
+@app.patch("/api/conversations/{conv_id}")
+async def api_patch_conversation(conv_id: str, request: Request) -> JSONResponse:
+    body = await request.json()
+    kwargs: dict = {}
+    if "starred" in body:
+        kwargs["starred"] = bool(body["starred"])
+    if "folder" in body:
+        kwargs["folder"] = body.get("folder")  # None clears folder
+    patch_conversation(conv_id, **kwargs)
+    return JSONResponse({"ok": True})
 
 
 @app.delete("/api/conversations/{conv_id}")

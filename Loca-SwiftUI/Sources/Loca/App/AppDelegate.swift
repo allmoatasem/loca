@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Backend
 
+    @MainActor
     private func launchBackend() {
         guard let scriptURL = Bundle.main.url(forResource: "start_services", withExtension: "sh")
                            ?? locateStartScript() else {

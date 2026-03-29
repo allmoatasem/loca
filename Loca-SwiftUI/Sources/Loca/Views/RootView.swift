@@ -16,7 +16,14 @@ struct RootView: View {
             }
         }
         .frame(minWidth: 900, minHeight: 620)
-        .onAppear { state.startHealthPolling() }
+        .onAppear {
+            state.startHealthPolling()
+            NSApp.appearance = NSAppearance(named: state.isDarkMode ? .darkAqua : .aqua)
+        }
+        .onChange(of: state.isDarkMode) {
+            NSApp.appearance = NSAppearance(named: state.isDarkMode ? .darkAqua : .aqua)
+            UserDefaults.standard.set(state.isDarkMode, forKey: "isDarkMode")
+        }
     }
 }
 
@@ -116,24 +123,3 @@ struct MainLayout: View {
     }
 }
 
-// MARK: - Placeholders (each gets its own file when implementing)
-
-/// TODO: implement in SidebarView.swift
-struct SidebarView: View {
-    @EnvironmentObject var state: AppState
-    var body: some View {
-        Text("Sidebar — coming next session")
-            .foregroundColor(.secondary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-/// TODO: implement in ChatView.swift
-struct ChatView: View {
-    @EnvironmentObject var state: AppState
-    var body: some View {
-        Text("Chat — coming next session")
-            .foregroundColor(.secondary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}

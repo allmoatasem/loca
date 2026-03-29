@@ -14,11 +14,21 @@ final class AppState: ObservableObject {
     @Published var startupStatus      = StartupStatus(stage: "Initialising…", progress: 0)
     @Published var startupError: String?
 
-    // MARK: - Mode & Model
+    // MARK: - Capability & Model
 
-    @Published var selectedMode: ChatMode = .general
+    @Published var selectedCapability: ModelCapability = .general
     @Published var availableModels: [LMModel] = []
-    @Published var selectedModelId: String?    // nil = use config default for mode
+    @Published var selectedModelId: String?
+
+    /// Capabilities that have at least one loaded model.
+    var availableCapabilities: [ModelCapability] {
+        let found = Set(availableModels.flatMap { $0.capabilities })
+        return ModelCapability.allCases.filter { found.contains($0) }
+    }
+
+    func models(for capability: ModelCapability) -> [LMModel] {
+        availableModels.filter { $0.capabilities.contains(capability) }
+    }
 
     // MARK: - Conversations
 
@@ -29,13 +39,32 @@ final class AppState: ObservableObject {
     // MARK: - Streaming
 
     @Published var isStreaming    = false
-    @Published var streamingText  = ""   // partial assistant reply being built
-    @Published var actualModel: String?  // model name reported by the backend
+    @Published var streamingText  = ""
+    @Published var actualModel: String?
+
+    // MARK: - Generation stats
+
+    struct GenerationStats {
+        let model: String
+        let promptTokens: Int
+        let completionTokens: Int
+        let ttftMs: Double
+        let totalMs: Double
+        let searchTriggered: Bool
+        let memoryInjected: Bool
+        var tokensPerSec: Double {
+            guard completionTokens > 0, totalMs > 1 else { return 0 }
+            return Double(completionTokens) / (totalMs / 1000)
+        }
+    }
+    @Published var lastStats: GenerationStats?
 
     // MARK: - Memories
 
     @Published var memories: [Memory] = []
-    @Published var isMemoryPanelOpen  = false
+    @Published var isMemoryPanelOpen       = false
+    @Published var isExtractingMemories    = false
+    @Published var memoryExtractionError: String?
 
     // MARK: - Research mode
 
@@ -48,8 +77,13 @@ final class AppState: ObservableObject {
 
     // MARK: - Settings
 
-    @Published var contextWindow: Int = 32768
-    @Published var isDarkMode: Bool   = false
+    @Published var contextWindow: Int  = 32768
+    @Published var isDarkMode: Bool    = UserDefaults.standard.bool(forKey: "isDarkMode")
+
+    // MARK: - Conversation search
+
+    @Published var conversationQuery   = ""
+    @Published var conversationResults: [ConversationMeta] = []
 
     // MARK: - Actions (implementations provided in AppState+Actions.swift)
 
@@ -59,32 +93,12 @@ final class AppState: ObservableObject {
     func loadConversation(_ id: String) { Task { await _loadConversation(id) } }
     func deleteConversation(_ id: String) { Task { await _deleteConversation(id) } }
     func send(_ text: String, attachments: [UploadResult] = []) { Task { await _send(text, attachments: attachments) } }
-    func loadMemories()        { Task { await _loadMemories() } }
-    func extractMemories()     { Task { await _extractMemories() } }
-    func pollSystemStats()     { Task { await _pollSystemStats() } }
+    func loadMemories()         { Task { await _loadMemories() } }
+    func extractMemories()      { Task { await _extractMemories() } }
+    func pollSystemStats()      { Task { await _pollSystemStats() } }
+    func reloadConversations()  { Task { await _loadConversationList() } }
+    func toggleStar(_ id: String)                          { Task { await _toggleStar(id) } }
+    func setConversationFolder(_ id: String, folder: String?) { Task { await _setFolder(id, folder: folder) } }
+    func searchConversations()                             { Task { await _searchConversations() } }
 }
 
-// MARK: - ChatMode
-
-enum ChatMode: String, CaseIterable, Identifiable {
-    case general, code, reason, write
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .general: return "General"
-        case .code:    return "Code"
-        case .reason:  return "Reason"
-        case .write:   return "Write"
-        }
-    }
-
-    var description: String {
-        switch self {
-        case .general: return "Vision · chat · code · analysis"
-        case .code:    return "Code generation · debugging · review"
-        case .reason:  return "Planning · trade-offs · math · logic"
-        case .write:   return "Drafting · editing · summarisation"
-        }
-    }
-}

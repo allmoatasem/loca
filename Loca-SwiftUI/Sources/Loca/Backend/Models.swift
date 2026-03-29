@@ -89,12 +89,103 @@ struct UsageStats: Decodable {
     let prompt_tokens: Int
     let completion_tokens: Int
     let total_tokens: Int
+    let search_triggered: Bool?
+    let memory_injected: Bool?
+}
+
+// MARK: - Model capability
+
+enum ModelCapability: String, CaseIterable, Identifiable, Comparable {
+    case general  = "general"
+    case code     = "code"
+    case thinking = "thinking"
+    case vision   = "vision"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .general:  return "General"
+        case .code:     return "Code"
+        case .thinking: return "Thinking"
+        case .vision:   return "Vision"
+        }
+    }
+
+    var systemIcon: String {
+        switch self {
+        case .general:  return "bubble.left.and.bubble.right"
+        case .code:     return "chevron.left.forwardslash.chevron.right"
+        case .thinking: return "brain.head.profile"
+        case .vision:   return "eye"
+        }
+    }
+
+    /// Mode string sent to the backend (maps to a system prompt).
+    var modeHint: String {
+        switch self {
+        case .general:  return "general"
+        case .code:     return "code"
+        case .thinking: return "thinking"
+        case .vision:   return "vision"
+        }
+    }
+
+    static func < (lhs: ModelCapability, rhs: ModelCapability) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
 }
 
 // MARK: - Models
 
 struct LMModel: Decodable, Identifiable {
     let id: String
+
+    /// Infers capabilities from the model's ID / name.
+    /// If your model is misclassified, check the exact ID shown in LM Studio — the
+    /// detection is based on substrings of that ID.
+    var capabilities: Set<ModelCapability> {
+        let lower = id.lowercased()
+        var caps: Set<ModelCapability> = []
+
+        // Vision models — explicit name terms + any "-vl" component
+        let visionTerms = [
+            "llava", "moondream", "bakllava", "minicpm-v", "idefics", "cogvlm",
+            "internvl", "qwen-vl", "qwen2-vl", "qwen2.5-vl", "qwen3-vl",
+            "blip", "pixtral", "phi-vision", "phi3-vision", "phi3.5-vision",
+            "gemini-vision", "paligemma", "idefics", "florence",
+        ]
+        // Also match any model with "vl" as a standalone component: -vl, -vl-, vl-
+        let hasVLComponent = lower.hasPrefix("vl-") || lower.contains("-vl-")
+            || lower.hasSuffix("-vl") || lower.hasSuffix(".vl")
+        if visionTerms.contains(where: { lower.contains($0) }) || hasVLComponent {
+            caps.insert(.vision)
+        }
+
+        // Thinking / reasoning models
+        let thinkTerms = [
+            "qwq", "deepseek-r1", "r1-distill", "thinking",
+            "skywork-o1", "marco-o1", "nemotron",
+        ]
+        let hasR1Component = lower.contains("-r1-") || lower.hasSuffix("-r1")
+            || lower.contains(":r1") // some GGUF tags use colon separators
+        if thinkTerms.contains(where: { lower.contains($0) }) || hasR1Component {
+            caps.insert(.thinking)
+        }
+
+        // Code-specialist models
+        let codeTerms = [
+            "coder", "codellama", "code-llama", "starcoder", "deepseek-coder",
+            "codestral", "codegemma", "codeqwen", "wizardcoder", "phind-code",
+            "magicoder", "qwen2.5-coder", "qwen3-coder",
+        ]
+        if codeTerms.contains(where: { lower.contains($0) }) {
+            caps.insert(.code)
+        }
+
+        // Fallback to general
+        return caps.isEmpty ? [.general] : caps
+    }
 }
 
 struct ModelListResponse: Decodable {
@@ -107,7 +198,24 @@ struct ConversationMeta: Decodable, Identifiable {
     let id: String
     let title: String
     let model: String
-    let updated_at: String
+    let updated: Double   // Unix timestamp (matches store column name)
+    let starred: Bool
+    let folder: String?
+
+    var updatedDate: Date { Date(timeIntervalSince1970: updated) }
+
+    private enum CodingKeys: String, CodingKey { case id, title, model, updated, starred, folder }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id      = try c.decode(String.self, forKey: .id)
+        title   = try c.decode(String.self, forKey: .title)
+        model   = try c.decode(String.self, forKey: .model)
+        updated = try c.decode(Double.self, forKey: .updated)
+        // SQLite returns INTEGER 0/1 for booleans
+        starred = ((try? c.decode(Int.self, forKey: .starred)) ?? 0) != 0
+        folder  = try? c.decode(String.self, forKey: .folder)
+    }
 }
 
 struct ConversationDetail: Decodable {
@@ -136,7 +244,10 @@ struct SaveConversationResponse: Decodable {
 struct Memory: Decodable, Identifiable {
     let id: String
     let content: String
-    let created_at: String
+    let created: Double   // Unix timestamp (matches store column name)
+    let conv_id: String?
+
+    var createdDate: Date { Date(timeIntervalSince1970: created) }
 }
 
 struct MemoryListResponse: Decodable {

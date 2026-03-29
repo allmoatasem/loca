@@ -31,11 +31,18 @@ extension AppState {
         Task {
             do {
                 availableModels = try await BackendClient.shared.fetchLMModels()
-                if selectedModelId == nil, let first = availableModels.first {
-                    selectedModelId = first.id
+                // If the current capability has no models, fall back to general
+                if models(for: selectedCapability).isEmpty {
+                    selectedCapability = .general
+                }
+                // Pick a default model if none selected, or current is stale
+                let capModels = models(for: selectedCapability)
+                let ids = availableModels.map(\.id)
+                if selectedModelId == nil || !ids.contains(selectedModelId!) {
+                    selectedModelId = capModels.first?.id ?? availableModels.first?.id
                 }
             } catch {
-                // Non-fatal: model list just stays empty
+                // Non-fatal: model list stays empty
             }
         }
     }
@@ -81,7 +88,7 @@ extension AppState {
             id: activeConversationId,
             title: title,
             messages: messages,
-            model: selectedModelId ?? selectedMode.rawValue
+            model: selectedModelId ?? selectedCapability.modeHint
         )
         do {
             let id = try await BackendClient.shared.saveConversation(req)
@@ -136,7 +143,7 @@ extension AppState {
         actualModel   = nil
 
         let request = ChatRequest(
-            mode:           selectedMode.rawValue,
+            mode:           selectedCapability.modeHint,
             model_override: selectedModelId,
             messages:       messages.dropLast().map { $0 },   // don't send the empty placeholder
             stream:         true,
@@ -145,7 +152,9 @@ extension AppState {
         )
 
         var full = ""
-        var tStart = Date()
+        let tStart = Date()
+        var firstTokenTime: Date?
+        var lastUsage: UsageStats?
 
         do {
             for try await raw in BackendClient.shared.streamChat(request) {
@@ -153,8 +162,10 @@ extension AppState {
                       let chunk = try? JSONDecoder().decode(SSEChunk.self, from: data) else { continue }
 
                 if let model = chunk.model, actualModel == nil { actualModel = model }
+                if let u = chunk.usage { lastUsage = u }
 
                 if let delta = chunk.choices?.first?.delta.content {
+                    if firstTokenTime == nil { firstTokenTime = Date() }
                     full += delta
                     streamingText = full
                     messages[assistantIdx] = ChatMessage(role: "assistant", content: .text(full))
@@ -168,6 +179,18 @@ extension AppState {
         streamingText = ""
         isStreaming   = false
 
+        let totalMs = Date().timeIntervalSince(tStart) * 1000
+        let ttftMs  = firstTokenTime.map { $0.timeIntervalSince(tStart) * 1000 } ?? 0
+        lastStats = GenerationStats(
+            model:            actualModel ?? selectedCapability.modeHint,
+            promptTokens:     lastUsage?.prompt_tokens     ?? 0,
+            completionTokens: lastUsage?.completion_tokens ?? 0,
+            ttftMs:           ttftMs,
+            totalMs:          totalMs,
+            searchTriggered:  lastUsage?.search_triggered  ?? false,
+            memoryInjected:   lastUsage?.memory_injected   ?? false
+        )
+
         // Save conversation after each turn
         await _saveCurrentConversation()
     }
@@ -179,11 +202,47 @@ extension AppState {
     }
 
     func _extractMemories() async {
+        guard !messages.isEmpty else { return }
+        isExtractingMemories = true
+        memoryExtractionError = nil
+        defer { isExtractingMemories = false }
         let msgs = messages.map { ["role": $0.role, "content": $0.content.plainText] }
         do {
             let extracted = try await BackendClient.shared.extractMemories(messages: msgs, convId: activeConversationId)
-            memories.append(contentsOf: extracted)
+            // Deduplicate by id before appending
+            let existing = Set(memories.map(\.id))
+            memories.append(contentsOf: extracted.filter { !existing.contains($0.id) })
+        } catch {
+            memoryExtractionError = error.localizedDescription
+        }
+    }
+
+    // MARK: - Conversation star / folder / search
+
+    func _toggleStar(_ id: String) async {
+        guard let idx = conversations.firstIndex(where: { $0.id == id }) else { return }
+        let newVal = !conversations[idx].starred
+        do {
+            try await BackendClient.shared.patchConversation(id, starred: newVal)
+            await _loadConversationList()
         } catch {}
+    }
+
+    func _setFolder(_ id: String, folder: String?) async {
+        do {
+            try await BackendClient.shared.patchConversation(id, folder: .some(folder))
+            await _loadConversationList()
+        } catch {}
+    }
+
+    func _searchConversations() async {
+        let q = conversationQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { conversationResults = []; return }
+        do {
+            conversationResults = try await BackendClient.shared.searchConversations(q)
+        } catch {
+            conversationResults = []
+        }
     }
 
     // MARK: - System stats

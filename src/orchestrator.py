@@ -82,7 +82,11 @@ class Orchestrator:
         full_messages = _prepend_system(augmented_messages, system_prompt)
 
         if stream:
-            return self._stream_with_tools(model_name, api_base, full_messages, result, num_ctx=num_ctx, research_mode=research_mode)
+            return self._stream_with_tools(
+                model_name, api_base, full_messages, result,
+                num_ctx=num_ctx, research_mode=research_mode,
+                memory_injected=bool(mem_ctx),
+            )
 
         return await self._call_with_tools(model_name, api_base, full_messages, result, num_ctx=num_ctx)
 
@@ -131,12 +135,17 @@ class Orchestrator:
         route_result: RouteResult,
         num_ctx: int | None = None,
         research_mode: bool = False,
+        memory_injected: bool = False,
     ) -> AsyncIterator[str | dict]:
         """Streaming: collects full response (for tool-call simplicity), yields in chunks.
         Yields a metadata dict first so the proxy can forward the actual model name."""
         response = await self._call_with_tools(model_name, api_base, messages, route_result, num_ctx=num_ctx)
         actual_model = response.get("model", model_name)
-        yield {"__model__": actual_model}
+        yield {
+            "__model__": actual_model,
+            "__search__": route_result.search_triggered,
+            "__memory__": memory_injected,
+        }
         content = _extract_content(response)
         chunk_size = 50
         for i in range(0, len(content), chunk_size):

@@ -92,6 +92,29 @@ _SEARCH_KEYWORDS = [
     # Real-time / lookup intent
     r"\bfind\b", r"\bget me\b", r"\btell me (where|when|how much)\b",
     r"\bhow much (does|is|are)\b", r"\bwhat (time|day|date)\b",
+    # General factual questions (likely need current or specific info)
+    r"\bwho (is|was|are|were|made|built|founded|created|invented|runs?|leads?|owns?|won)\b",
+    r"\bwhen (did|was|is|will|does|can)\b",
+    r"\bwhere (is|are|was|were|can|do)\b",
+    r"\bhow (many|much|long|far|old|tall|big|often|frequently|fast)\b",
+    r"\bwhat (is|are|was|were|does|do|happened)\b",
+    r"\bwhy (is|are|did|does|was|were)\b",
+    r"\btell me about\b",
+    r"\bexplain (what|how|why|the)\b",
+    r"\bwhat('s| is) (a|an|the )\b",
+    r"\bdo you know\b",
+    r"\bhave you heard\b",
+    r"\bis it true\b",
+    r"\bfact(s)? about\b",
+    # Sports and current events
+    r"\bthis season\b", r"\blast season\b",
+    r"\bstanding(s)?\b", r"\bleague table\b",
+    r"\bhow (is|are|was|were) .{2,40} (doing|performing|playing|ranked)\b",
+    r"\b(match|game|fixture)s?\b",
+    r"\b(score|result)s?\b",
+    r"\bwho (won|lost|scored|played)\b",
+    r"\bleague\b", r"\btournament\b", r"\bchampionship\b",
+    r"\bplayoff(s)?\b", r"\btransfer(s)?\b", r"\binjur(y|ies|ed)\b",
 ]
 
 _IMAGE_EXTENSIONS = re.compile(
@@ -160,8 +183,10 @@ def _parse_web_command(message: str) -> tuple[str | None, str]:
 _MODEL_HINT_MAP = {
     "general": Model.GENERAL,
     "reason": Model.REASON,
+    "thinking": Model.REASON,   # capability alias
     "code": Model.CODE,
     "write": Model.WRITE,
+    "vision": Model.GENERAL,    # vision models use general system prompt
 }
 
 
