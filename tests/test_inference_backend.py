@@ -4,18 +4,17 @@ Tests for InferenceBackend.
 Run with: pytest tests/test_inference_backend.py -v
 """
 
-import sys
 import os
 import platform
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import asyncio
-import pytest
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.inference_backend import InferenceBackend, InferenceBackendError
+import pytest
 
+from src.inference_backend import InferenceBackend, InferenceBackendError
 
 BASE_CONFIG = {
     "inference": {

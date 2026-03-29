@@ -4,19 +4,20 @@ Tests for memory_extractor — three-pass extraction.
 Run with: pytest tests/test_memory_extractor.py -v
 """
 
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import pytest
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from src.memory_extractor import (
-    extract_memories,
+    _format_conversation,
     _has_tool_results,
     _has_user_correction,
-    _format_conversation,
+    extract_memories,
 )
 
 
@@ -76,7 +77,6 @@ async def test_extracts_user_facts():
     ]
 
     user_fact_response = '["Prefers Python", "Building app called Loca on macOS"]'
-    empty_response = "[]"
 
     call_count = 0
     async def fake_post(url, **kwargs):

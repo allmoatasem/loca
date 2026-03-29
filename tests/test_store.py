@@ -4,14 +4,14 @@ Tests for the SQLite store.
 Run with: pytest tests/test_store.py -v
 """
 
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import pytest
-import tempfile
-from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 import src.store as store_module
 
@@ -151,7 +151,7 @@ def test_update_memory():
 
 
 def test_invalid_type_defaults_to_user_fact():
-    mid = store_module.add_memory("x", type="nonsense")
+    store_module.add_memory("x", type="nonsense")
     mems = store_module.list_memories()
     assert mems[0]["type"] == "user_fact"
 

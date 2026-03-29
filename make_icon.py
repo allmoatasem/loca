@@ -5,6 +5,7 @@ Run: python3 make_icon.py
 import math
 import os
 import subprocess
+
 from PIL import Image, ImageDraw
 
 SIZE = 1024
