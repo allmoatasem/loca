@@ -4,13 +4,12 @@ Tests for the router module.
 Run with: pytest tests/test_router.py -v
 """
 
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import pytest
 from src.router import Model, route
-
 
 # ---------------------------------------------------------------------------
 # Default routing

@@ -4,17 +4,17 @@ Tests for ModelManager.
 Run with: pytest tests/test_model_manager.py -v
 """
 
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-import shutil
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.inference_backend import InferenceBackend, InferenceBackendError
-from src.model_manager import ModelManager, ModelInfo
+from src.model_manager import ModelManager
 
 
 def make_config(models_dir: str) -> dict:
