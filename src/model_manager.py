@@ -146,21 +146,19 @@ class ModelManager:
         model_name_override: str | None = None,
     ) -> tuple[str, str]:
         """
-        Compatibility shim for orchestrator — returns (model_name, api_base).
-        If the backend is running, returns its current model and api_base.
-        If not running, tries to start the active_model from config.
-        If model_name_override is given and matches a local model, loads it.
+        Returns (model_path, api_base) for use in API calls.
+        model_path is the full filesystem path — required by mlx_lm as the 'model' field.
         """
         # If override specified and different from current, switch
         if model_name_override and model_name_override != self.backend.current_model():
             local = self.get_model(model_name_override)
             if local:
                 await self.backend.restart(local.path)
-                return local.name, self.backend.api_base()
+                return local.path, self.backend.api_base()
             # Override doesn't match a local model — log and continue with current
 
         if self.backend.is_running():
-            return self.backend.current_model() or "local", self.backend.api_base()
+            return self.backend.current_model_path() or "local", self.backend.api_base()
 
         # Not running — try active_model from config
         active_rel = self.config.get("inference", {}).get("active_model")
@@ -169,14 +167,14 @@ class ModelManager:
             if active_path.exists():
                 logger.info(f"Auto-starting backend with: {active_path}")
                 await self.backend.start(str(active_path))
-                return self.backend.current_model() or "local", self.backend.api_base()
+                return self.backend.current_model_path() or "local", self.backend.api_base()
 
         # Fall back to first available local model
         local_models = self.list_local()
         if local_models:
             logger.info(f"Auto-starting backend with first available model: {local_models[0].name}")
             await self.backend.start(local_models[0].path)
-            return self.backend.current_model() or "local", self.backend.api_base()
+            return self.backend.current_model_path() or "local", self.backend.api_base()
 
         raise InferenceBackendError(
             "No model is loaded and no models found in models_dir. "

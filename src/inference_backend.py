@@ -42,7 +42,8 @@ class InferenceBackend:
         self.llama_server_bin: str = inf.get("llama_server", "llama-server")
 
         self._proc: asyncio.subprocess.Process | None = None
-        self._current_model: str | None = None
+        self._current_model: str | None = None        # display name (basename)
+        self._current_model_path: str | None = None   # full path — used as "model" field in API calls
         self._current_backend: Backend | None = None
         self._stderr_lines: list[str] = []   # rolling buffer for error reporting
         self._load_lock = asyncio.Lock()      # prevents concurrent start() calls
@@ -78,6 +79,7 @@ class InferenceBackend:
             env=env,
         )
         self._current_model = Path(model_path).name
+        self._current_model_path = model_path
         self._current_backend = backend
 
         # Stream server stderr in background so logs aren't silently swallowed
@@ -103,6 +105,7 @@ class InferenceBackend:
             await self._proc.wait()
         self._proc = None
         self._current_model = None
+        self._current_model_path = None
         self._current_backend = None
         logger.info("Inference backend stopped")
 
@@ -126,12 +129,20 @@ class InferenceBackend:
         return self._proc is not None and self._proc.returncode is None
 
     def current_model(self) -> str | None:
+        """Display name (basename). Used for UI and is_loaded checks."""
         # Clear stale state if the process has exited
         if self._proc is not None and self._proc.returncode is not None:
             self._current_model = None
+            self._current_model_path = None
             self._current_backend = None
             self._proc = None
         return self._current_model
+
+    def current_model_path(self) -> str | None:
+        """Full filesystem path. Must be used as the 'model' field in mlx_lm API requests."""
+        if self._proc is not None and self._proc.returncode is not None:
+            self._current_model_path = None
+        return self._current_model_path
 
     def current_backend(self) -> Backend | None:
         return self._current_backend
