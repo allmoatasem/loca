@@ -537,7 +537,7 @@ async def api_delete_memory(mem_id: str) -> JSONResponse:
 @app.get("/api/hardware")
 async def api_hardware() -> JSONResponse:
     """Return a hardware profile for the current machine."""
-    from .hardware_profiler import get_hardware_profile
+    from .hardware_profiler import _llmfit_bin, get_hardware_profile
     profile = get_hardware_profile()
     return JSONResponse({
         "platform": profile.platform,
@@ -548,18 +548,33 @@ async def api_hardware() -> JSONResponse:
         "has_apple_silicon": profile.has_apple_silicon,
         "has_nvidia_gpu": profile.has_nvidia_gpu,
         "supports_mlx": profile.supports_mlx,
+        "llmfit_available": bool(_llmfit_bin()),
     })
+
+
+@app.post("/api/hardware/install-llmfit")
+async def api_install_llmfit() -> JSONResponse:
+    """Download and install llmfit binary for this platform."""
+    import asyncio
+
+    from .hardware_profiler import ensure_llmfit
+    loop = asyncio.get_event_loop()
+    path = await loop.run_in_executor(None, ensure_llmfit)
+    if path:
+        return JSONResponse({"ok": True, "path": path})
+    return JSONResponse({"ok": False, "error": "Download failed — check logs"}, status_code=500)
 
 
 @app.get("/api/recommended-models")
 async def api_recommended_models() -> JSONResponse:
-    """Return a list of curated model recommendations for this machine."""
-    from .hardware_profiler import get_hardware_profile, get_recommendations
+    """Return model recommendations from llmfit (or built-in fallback catalog)."""
+    from .hardware_profiler import _llmfit_bin, get_hardware_profile, get_recommendations
     profile = get_hardware_profile()
     recs = get_recommendations(profile)
     return JSONResponse({
         "total_ram_gb": profile.total_ram_gb,
         "has_apple_silicon": profile.has_apple_silicon,
+        "llmfit_available": bool(_llmfit_bin()),
         "recommendations": [
             {
                 "name": r.name,
@@ -574,6 +589,48 @@ async def api_recommended_models() -> JSONResponse:
             for r in recs
         ],
     })
+
+
+@app.get("/api/hf-search")
+async def api_hf_search(q: str = "", format: str = "gguf", limit: int = 8) -> JSONResponse:
+    """Search Hugging Face Hub for models matching query, filtered by format tag."""
+    if not q.strip():
+        return JSONResponse({"models": []})
+    import asyncio
+
+    import httpx as _httpx
+
+    tag = "gguf" if format == "gguf" else "mlx"
+    url = "https://huggingface.co/api/models"
+    params = {
+        "search": q,
+        "filter": tag,
+        "limit": str(limit),
+        "sort": "downloads",
+        "direction": "-1",
+    }
+    try:
+        loop = asyncio.get_event_loop()
+
+        def _fetch() -> list[dict]:
+            resp = _httpx.get(url, params=params, timeout=8)
+            resp.raise_for_status()
+            return resp.json()
+
+        results = await loop.run_in_executor(None, _fetch)
+        models = [
+            {
+                "repo_id": m.get("modelId") or m.get("id", ""),
+                "downloads": m.get("downloads", 0),
+                "likes": m.get("likes", 0),
+            }
+            for m in results
+            if isinstance(m, dict)
+        ]
+        return JSONResponse({"models": models})
+    except Exception as e:
+        logger.warning(f"HF search failed: {e}")
+        return JSONResponse({"models": [], "error": str(e)})
 
 
 @app.post("/api/extract-memories")

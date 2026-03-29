@@ -117,6 +117,14 @@ class ModelManager:
                 return m
         return None
 
+    async def get_model_name(self, _model: Model) -> str:
+        """Return the currently loaded model name (ignores routing — one model at a time)."""
+        return self.backend.current_model() or ""
+
+    async def get_model_api_base(self, _model: Model) -> str:
+        """Return the inference backend API base URL."""
+        return self.backend.api_base()
+
     # ------------------------------------------------------------------
     # Load / switch
     # ------------------------------------------------------------------
@@ -218,7 +226,6 @@ class ModelManager:
                         repo_id=repo_id,
                         filename=filename,
                         local_dir=str(target_dir),
-                        resume_download=True,
                     )
 
                 # Yield indeterminate progress while downloading in background
@@ -243,7 +250,6 @@ class ModelManager:
                     return snapshot_download(
                         repo_id=repo_id,
                         local_dir=str(dest),
-                        resume_download=True,
                     )
 
                 task = loop.run_in_executor(None, _snapshot)

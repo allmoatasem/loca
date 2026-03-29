@@ -60,18 +60,82 @@ extension AppState {
         }
     }
 
+    // MARK: - Downloads
+
+    func _startDownload(repoId: String, filename: String?, format: String) {
+        Task {
+            do {
+                let dlId = try await BackendClient.shared.startDownload(
+                    repoId: repoId, filename: filename, format: format
+                )
+                activeDownload = ActiveDownload(
+                    repoId: repoId, filename: filename, format: format,
+                    downloadId: dlId, percent: -1
+                )
+                await _pollDownload(dlId)
+            } catch {
+                activeDownload?.error = error.localizedDescription
+            }
+        }
+    }
+
+    func _pollDownload(_ dlId: String) async {
+        guard let url = URL(string: "http://localhost:8000/api/models/download/\(dlId)/progress") else { return }
+        do {
+            let (bytes, _) = try await URLSession.shared.bytes(from: url)
+            var buffer = ""
+            for try await byte in bytes {
+                buffer += String(bytes: [byte], encoding: .utf8) ?? ""
+                while let nl = buffer.firstIndex(of: "\n") {
+                    let line = String(buffer[..<nl])
+                    buffer = String(buffer[buffer.index(after: nl)...])
+                    if line.hasPrefix("data: "),
+                       let data = String(line.dropFirst(6)).data(using: .utf8),
+                       let p = try? JSONDecoder().decode(DownloadProgress.self, from: data) {
+                        activeDownload?.percent = p.percent
+                        if let err = p.error { activeDownload?.error = err; return }
+                        if p.done {
+                            activeDownload?.done = true
+                            activeDownload?.percent = 100
+                            await _loadLocalModels()
+                            return
+                        }
+                    }
+                }
+            }
+        } catch {
+            activeDownload?.error = error.localizedDescription
+        }
+    }
+
     // MARK: - Hardware & recommendations
 
     func _loadRecommendations() async {
         isLoadingRecommendations = true
         do {
+            let hw = try await BackendClient.shared.fetchHardwareProfile()
+            hardwareProfile = hw
+            llmfitAvailable = hw.llmfit_available
             let resp = try await BackendClient.shared.fetchRecommendedModels()
-            hardwareProfile  = try? await BackendClient.shared.fetchHardwareProfile()
             recommendedModels = resp.recommendations
         } catch {
             // Non-fatal
         }
         isLoadingRecommendations = false
+    }
+
+    func _installLlmfit() async {
+        isInstallingLlmfit = true
+        do {
+            let ok = try await BackendClient.shared.installLlmfit()
+            if ok {
+                llmfitAvailable = true
+                await _loadRecommendations()
+            }
+        } catch {
+            // Non-fatal
+        }
+        isInstallingLlmfit = false
     }
 
     // MARK: - Models (capability routing, uses local model names)

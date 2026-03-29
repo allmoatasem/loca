@@ -190,6 +190,7 @@ struct HardwareProfile: Decodable {
     let has_apple_silicon: Bool
     let has_nvidia_gpu: Bool
     let supports_mlx: Bool
+    let llmfit_available: Bool
 }
 
 struct ModelRecommendation: Decodable, Identifiable {
@@ -214,6 +215,7 @@ struct ModelRecommendation: Decodable, Identifiable {
 struct RecommendedModelsResponse: Decodable {
     let total_ram_gb: Double
     let has_apple_silicon: Bool
+    let llmfit_available: Bool
     let recommendations: [ModelRecommendation]
 }
 

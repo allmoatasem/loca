@@ -69,7 +69,8 @@ def list_conversations(limit: int = 200) -> list[dict]:
 
 def patch_conversation(conv_id: str, *, starred=_MISSING, folder=_MISSING) -> None:
     """Update starred/folder. Use _MISSING (default) to skip a field, None to clear folder."""
-    parts, vals = [], []
+    parts: list[str] = []
+    vals: list[object] = []
     if starred is not _MISSING:
         parts.append("starred = ?")
         vals.append(1 if starred else 0)

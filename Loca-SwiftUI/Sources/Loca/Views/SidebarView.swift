@@ -402,20 +402,18 @@ struct SidebarFooter: View {
                     .font(.system(size: 16))
                     .foregroundColor(.secondary)
                     .frame(width: 28, height: 28)
+                    .help("Toggle dark/light theme. Preference is saved locally.")
             }
             .buttonStyle(.plain)
-            .contentShape(Rectangle())
-            .help("Toggle dark/light theme. Preference is saved locally.")
 
             Button { state.isMemoryPanelOpen = true } label: {
                 Image(systemName: "brain")
                     .font(.system(size: 16))
                     .foregroundColor(.secondary)
                     .frame(width: 28, height: 28)
+                    .help("Memories — facts extracted from your conversations and injected into every new chat. Click to view and manage them.")
             }
             .buttonStyle(.plain)
-            .contentShape(Rectangle())
-            .help("Memories — facts extracted from your conversations and injected into every new chat. Click to view and manage them.")
         }
     }
 }

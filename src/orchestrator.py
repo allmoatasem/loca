@@ -15,7 +15,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Literal, overload
 
 import httpx
 
@@ -50,6 +50,13 @@ class Orchestrator:
     # Public entrypoint
     # ------------------------------------------------------------------
 
+    @overload
+    async def handle(self, messages: list[dict], *, has_image: bool = ..., stream: Literal[True], model_hint: str | None = ..., model_override: str | None = ..., num_ctx: int | None = ..., research_mode: bool = ...) -> AsyncIterator[str | dict]: ...
+    @overload
+    async def handle(self, messages: list[dict], *, has_image: bool = ..., stream: Literal[False], model_hint: str | None = ..., model_override: str | None = ..., num_ctx: int | None = ..., research_mode: bool = ...) -> dict: ...
+    @overload
+    async def handle(self, messages: list[dict], *, has_image: bool = ..., stream: bool = ..., model_hint: str | None = ..., model_override: str | None = ..., num_ctx: int | None = ..., research_mode: bool = ...) -> dict | AsyncIterator[str | dict]: ...
+
     async def handle(
         self,
         messages: list[dict],
@@ -59,7 +66,7 @@ class Orchestrator:
         model_override: str | None = None,
         num_ctx: int | None = None,
         research_mode: bool = False,
-    ) -> dict | AsyncIterator[str]:
+    ) -> dict | AsyncIterator[str | dict]:
         user_message = _last_user_content(messages)
         result: RouteResult = route(user_message, has_image=has_image, model_hint=model_hint)
         logger.info(
@@ -136,7 +143,7 @@ class Orchestrator:
         num_ctx: int | None = None,
         research_mode: bool = False,
         memory_injected: bool = False,
-    ) -> AsyncIterator[str | dict]:
+    ) -> AsyncIterator[str | dict[str, Any]]:
         """Streaming: collects full response (for tool-call simplicity), yields in chunks.
         Yields a metadata dict first so the proxy can forward the actual model name."""
         response = await self._call_with_tools(model_name, api_base, messages, route_result, num_ctx=num_ctx)

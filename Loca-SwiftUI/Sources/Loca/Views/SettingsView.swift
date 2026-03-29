@@ -8,13 +8,22 @@ struct SettingsView: View {
     @State private var downloadRepoId     = ""
     @State private var downloadFilename   = ""
     @State private var downloadFormat     = "gguf"
-    @State private var isDownloading      = false
-    @State private var downloadProgress: Double = 0   // -1 = indeterminate, 0–100
-    @State private var downloadError: String?
-    @State private var downloadId: String?
-    @State private var downloadDone       = false
     @State private var modelToDelete: LocalModel?
     @State private var showDeleteConfirm  = false
+    @State private var hfSuggestions: [HFSuggestion] = []
+    @State private var hfSearchTask: Task<Void, Never>?
+    @State private var showSuggestions    = false
+
+    struct HFSuggestion: Identifiable {
+        let id = UUID()
+        let repo_id: String
+        let downloads: Int
+    }
+
+    private var isDownloading: Bool { state.activeDownload != nil && state.activeDownload?.done == false && state.activeDownload?.error == nil }
+    private var downloadProgress: Double { state.activeDownload?.percent ?? 0 }
+    private var downloadDone: Bool { state.activeDownload?.done == true }
+    private var downloadError: String? { state.activeDownload?.error }
 
     private let formats = ["gguf", "mlx"]
     private let ctxOptions = [4096, 8192, 16384, 32768, 65536, 131072]
@@ -168,13 +177,38 @@ struct SettingsView: View {
             }
 
             if let hw = state.hardwareProfile {
-                Text("\(hw.cpu_name)  ·  \(String(format: "%.0f GB RAM", hw.total_ram_gb))\(hw.has_apple_silicon ? "  ·  Apple Silicon" : hw.has_nvidia_gpu ? "  ·  NVIDIA GPU" : "")")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+                HStack(spacing: 6) {
+                    Text("\(hw.cpu_name)  ·  \(String(format: "%.0f GB RAM", hw.total_ram_gb))\(hw.has_apple_silicon ? "  ·  Apple Silicon" : hw.has_nvidia_gpu ? "  ·  NVIDIA GPU" : "")")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    if hw.llmfit_available {
+                        Label("llmfit", systemImage: "checkmark.circle.fill")
+                            .font(.system(size: 10))
+                            .foregroundColor(.green)
+                            .help("llmfit is installed — recommendations are hardware-optimised")
+                    } else {
+                        Button {
+                            state.installLlmfit()
+                        } label: {
+                            if state.isInstallingLlmfit {
+                                Label("Installing…", systemImage: "arrow.down.circle")
+                                    .font(.system(size: 10))
+                            } else {
+                                Label("Install llmfit", systemImage: "arrow.down.circle")
+                                    .font(.system(size: 10))
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                        .disabled(state.isInstallingLlmfit)
+                        .help("Install llmfit for smarter, hardware-aware model recommendations")
+                    }
+                }
             }
 
             if state.recommendedModels.isEmpty && !state.isLoadingRecommendations {
-                Text("No recommendations available — backend may not be running yet.")
+                Text("No recommendations yet — tap ↺ to detect your hardware.")
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
             } else {
@@ -188,47 +222,72 @@ struct SettingsView: View {
     }
 
     private func recommendationRow(_ rec: ModelRecommendation) -> some View {
-        let alreadyDownloaded = state.localModels.contains(where: {
-            $0.name == rec.filename ?? rec.repo_id.split(separator: "/").last.map(String.init) ?? rec.name
-        })
+        let alreadyDownloaded = state.localModels.contains(where: { $0.name == (rec.filename ?? rec.name) })
+        let isThisDownloading = state.activeDownload?.repoId == rec.repo_id
+            && state.activeDownload?.done == false
+            && state.activeDownload?.error == nil
+        let thisPercent = isThisDownloading ? (state.activeDownload?.percent ?? -1) : 0
 
-        return HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(rec.name)
-                        .font(.system(size: 12))
-                        .lineLimit(1)
-                    Text(rec.formatLabel)
-                        .font(.system(size: 10))
-                        .padding(.horizontal, 5).padding(.vertical, 2)
-                        .background(rec.format == "mlx" ? Color.purple.opacity(0.12) : Color.blue.opacity(0.1))
-                        .foregroundColor(rec.format == "mlx" ? .purple : .blue)
-                        .clipShape(Capsule())
-                    Text(rec.sizeLabel)
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                }
-                Text(rec.why)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .lineLimit(2)
-            }
-            Spacer()
-            if alreadyDownloaded {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(.green)
-                    .font(.system(size: 14))
-                    .help("Already downloaded")
-            } else {
-                Button {
-                    prefillDownload(rec)
-                } label: {
-                    Label("Get", systemImage: "arrow.down.circle")
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(rec.name)
+                            .font(.system(size: 12))
+                            .lineLimit(1)
+                        Text(rec.formatLabel)
+                            .font(.system(size: 10))
+                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            .background(rec.format == "mlx" ? Color.purple.opacity(0.12) : Color.blue.opacity(0.1))
+                            .foregroundColor(rec.format == "mlx" ? .purple : .blue)
+                            .clipShape(Capsule())
+                        Text(rec.sizeLabel)
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                    Text(rec.why)
                         .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.mini)
-                .help("Pre-fill the download form for this model")
+                Spacer()
+                if alreadyDownloaded {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                        .font(.system(size: 14))
+                        .help("Already downloaded")
+                } else if isThisDownloading {
+                    ProgressView().scaleEffect(0.6)
+                } else {
+                    Button {
+                        prefillDownload(rec)
+                    } label: {
+                        Label("Get", systemImage: "arrow.down.circle")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .disabled(isDownloading)
+                    .help("Download this model")
+                }
+            }
+            if isThisDownloading {
+                if thisPercent < 0 {
+                    ProgressView()
+                        .progressViewStyle(.linear)
+                        .frame(height: 3)
+                } else {
+                    ProgressView(value: thisPercent, total: 100)
+                        .progressViewStyle(.linear)
+                        .frame(height: 3)
+                        .overlay(
+                            Text(String(format: "%.0f%%", thisPercent))
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                                .offset(x: 0, y: 8),
+                            alignment: .trailing
+                        )
+                }
             }
         }
         .padding(.horizontal, 10)
@@ -241,7 +300,8 @@ struct SettingsView: View {
         downloadRepoId   = rec.repo_id
         downloadFilename = rec.filename ?? ""
         downloadFormat   = rec.format
-        // Scroll is not programmatic here; user can see the pre-filled fields below
+        // Also start the download immediately
+        state.startModelDownload(repoId: rec.repo_id, filename: rec.filename, format: rec.format)
     }
 
     // MARK: - Download section
@@ -271,6 +331,38 @@ struct SettingsView: View {
                                   text: $downloadRepoId)
                             .textFieldStyle(.roundedBorder)
                             .font(.system(size: 12))
+                            .onChange(of: downloadRepoId) { fetchHFSuggestions(downloadRepoId) }
+                        if showSuggestions {
+                            VStack(alignment: .leading, spacing: 0) {
+                                ForEach(hfSuggestions) { s in
+                                    Button {
+                                        downloadRepoId = s.repo_id
+                                        showSuggestions = false
+                                        hfSuggestions = []
+                                    } label: {
+                                        HStack {
+                                            Text(s.repo_id)
+                                                .font(.system(size: 11))
+                                                .lineLimit(1)
+                                            Spacer()
+                                            Text("\(s.downloads / 1000)K↓")
+                                                .font(.system(size: 10))
+                                                .foregroundColor(.secondary)
+                                        }
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 5)
+                                        .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .background(Color(nsColor: .controlBackgroundColor))
+                                    Divider()
+                                }
+                            }
+                            .background(Color(nsColor: .windowBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
+                            .shadow(radius: 4)
+                        }
                     }
                 }
 
@@ -357,73 +449,38 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - HF Autocomplete
+
+    private func fetchHFSuggestions(_ query: String) {
+        hfSearchTask?.cancel()
+        guard query.count >= 2 else { hfSuggestions = []; showSuggestions = false; return }
+        hfSearchTask = Task {
+            try? await Task.sleep(nanoseconds: 400_000_000) // 400ms debounce
+            guard !Task.isCancelled else { return }
+            guard let url = URL(string: "http://localhost:8000/api/hf-search?q=\(query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query)&format=\(downloadFormat)&limit=8") else { return }
+            do {
+                let (data, _) = try await URLSession.shared.data(from: url)
+                struct Resp: Decodable { struct M: Decodable { let repo_id: String; let downloads: Int }; let models: [M] }
+                let resp = try JSONDecoder().decode(Resp.self, from: data)
+                await MainActor.run {
+                    hfSuggestions = resp.models.map { HFSuggestion(repo_id: $0.repo_id, downloads: $0.downloads) }
+                    showSuggestions = !hfSuggestions.isEmpty
+                }
+            } catch {}
+        }
+    }
+
     // MARK: - Download action
 
     private func startDownload() {
         let repoId   = downloadRepoId.trimmingCharacters(in: .whitespaces)
         let filename = downloadFilename.trimmingCharacters(in: .whitespaces)
         guard !repoId.isEmpty else { return }
-
-        isDownloading   = true
-        downloadProgress = -1
-        downloadError   = nil
-        downloadDone    = false
-
-        Task {
-            do {
-                let dlId = try await BackendClient.shared.startDownload(
-                    repoId: repoId,
-                    filename: filename.isEmpty ? nil : filename,
-                    format: downloadFormat
-                )
-                downloadId = dlId
-                await pollDownloadProgress(dlId)
-            } catch {
-                downloadError = error.localizedDescription
-                isDownloading = false
-            }
-        }
-    }
-
-    private func pollDownloadProgress(_ dlId: String) async {
-        // Poll /api/models/download/{id}/progress via SSE
-        guard let url = URL(string: "http://localhost:8000/api/models/download/\(dlId)/progress") else { return }
-
-        do {
-            let (bytes, _) = try await URLSession.shared.bytes(from: url)
-            var buffer = ""
-            for try await byte in bytes {
-                buffer += String(bytes: [byte], encoding: .utf8) ?? ""
-                while let nl = buffer.firstIndex(of: "\n") {
-                    let line = String(buffer[..<nl])
-                    buffer = String(buffer[buffer.index(after: nl)...])
-                    if line.hasPrefix("data: ") {
-                        let payload = String(line.dropFirst(6)).trimmingCharacters(in: .whitespaces)
-                        if let data = payload.data(using: .utf8),
-                           let progress = try? JSONDecoder().decode(DownloadProgress.self, from: data) {
-                            await MainActor.run {
-                                downloadProgress = progress.percent
-                                if let err = progress.error {
-                                    downloadError = err
-                                    isDownloading = false
-                                }
-                                if progress.done {
-                                    downloadDone  = true
-                                    isDownloading = false
-                                    downloadProgress = 100
-                                    state.reloadLocalModels()
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } catch {
-            await MainActor.run {
-                downloadError = error.localizedDescription
-                isDownloading = false
-            }
-        }
+        state.startModelDownload(
+            repoId: repoId,
+            filename: filename.isEmpty ? nil : filename,
+            format: downloadFormat
+        )
     }
 
     private func ctxLabel(_ n: Int) -> String { n >= 1024 ? "\(n / 1024)K" : "\(n)" }

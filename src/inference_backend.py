@@ -42,6 +42,7 @@ class InferenceBackend:
         self._proc: asyncio.subprocess.Process | None = None
         self._current_model: str | None = None
         self._current_backend: Backend | None = None
+        self._stderr_lines: list[str] = []   # rolling buffer for error reporting
 
     # ------------------------------------------------------------------
     # Public API
@@ -57,6 +58,7 @@ class InferenceBackend:
         args = self._build_args(backend, model_path, ctx)
 
         logger.info(f"Starting {backend} backend: {' '.join(args)}")
+        self._stderr_lines = []
         self._proc = await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
@@ -168,8 +170,9 @@ class InferenceBackend:
         return self._build_llama_args(model_path, ctx_size)
 
     def _build_mlx_args(self, model_path: str, ctx_size: int) -> list[str]:
+        # "python3 -m mlx_lm server" (space, not dot) is the non-deprecated invocation
         return [
-            sys.executable, "-m", "mlx_lm.server",
+            sys.executable, "-m", "mlx_lm", "server",
             "--model", model_path,
             "--port", str(self.port),
             "--max-tokens", str(ctx_size),
@@ -207,8 +210,14 @@ class InferenceBackend:
         interval = 1.0
         while asyncio.get_event_loop().time() < deadline:
             if self._proc and self._proc.returncode is not None:
+                tail = "\n".join(self._stderr_lines[-20:])
+                hint = ""
+                if "weight_scale_inv" in tail:
+                    hint = " (FP8 models are not yet supported by mlx_lm — use a 4-bit or 8-bit MLX model instead)"
+                elif "not found" in tail.lower() or "no such file" in tail.lower():
+                    hint = " (model file not found — check the path)"
                 raise InferenceBackendError(
-                    f"Inference server exited unexpectedly with code {self._proc.returncode}"
+                    f"Inference server exited with code {self._proc.returncode}{hint}\n{tail}".strip()
                 )
             if await self.health_check():
                 return
@@ -222,7 +231,7 @@ class InferenceBackend:
     # ------------------------------------------------------------------
 
     async def _log_stderr(self) -> None:
-        """Stream server stderr to our logger so it's not silently dropped."""
+        """Stream server stderr to our logger and keep a rolling buffer for error messages."""
         if not self._proc or not self._proc.stderr:
             return
         try:
@@ -230,6 +239,11 @@ class InferenceBackend:
                 line = await self._proc.stderr.readline()
                 if not line:
                     break
-                logger.debug(f"[inference] {line.decode(errors='replace').rstrip()}")
+                decoded = line.decode(errors="replace").rstrip()
+                logger.debug(f"[inference] {decoded}")
+                self._stderr_lines.append(decoded)
+                # Keep only last 40 lines to bound memory use
+                if len(self._stderr_lines) > 40:
+                    self._stderr_lines = self._stderr_lines[-40:]
         except Exception:
             pass

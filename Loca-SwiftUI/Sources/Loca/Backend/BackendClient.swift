@@ -71,6 +71,14 @@ actor BackendClient {
         return try JSONDecoder().decode(RecommendedModelsResponse.self, from: data)
     }
 
+    func installLlmfit() async throws -> Bool {
+        struct Resp: Decodable { let ok: Bool }
+        struct Empty: Encodable {}
+        let (data, resp) = try await post("/api/hardware/install-llmfit", body: Empty())
+        if let http = resp as? HTTPURLResponse, http.statusCode != 200 { return false }
+        return (try? JSONDecoder().decode(Resp.self, from: data))?.ok ?? false
+    }
+
     // MARK: - Models (legacy)
 
     func fetchLMModels() async throws -> [LMModel] {
