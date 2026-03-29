@@ -215,6 +215,34 @@ extension AppState {
         }
     }
 
+    // MARK: - Conversation star / folder / search
+
+    func _toggleStar(_ id: String) async {
+        guard let idx = conversations.firstIndex(where: { $0.id == id }) else { return }
+        let newVal = !conversations[idx].starred
+        do {
+            try await BackendClient.shared.patchConversation(id, starred: newVal)
+            await _loadConversationList()
+        } catch {}
+    }
+
+    func _setFolder(_ id: String, folder: String?) async {
+        do {
+            try await BackendClient.shared.patchConversation(id, folder: .some(folder))
+            await _loadConversationList()
+        } catch {}
+    }
+
+    func _searchConversations() async {
+        let q = conversationQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { conversationResults = []; return }
+        do {
+            conversationResults = try await BackendClient.shared.searchConversations(q)
+        } catch {
+            conversationResults = []
+        }
+    }
+
     // MARK: - System stats
 
     private func _scheduleStatsPoll() {

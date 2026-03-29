@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct SidebarView: View {
     @EnvironmentObject var state: AppState
@@ -26,12 +27,10 @@ struct SidebarView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
 
-            // Capability tabs — only shows capabilities present in loaded models
             if !state.availableCapabilities.isEmpty {
                 capabilityPicker
             }
 
-            // Model list filtered to selected capability
             let capModels = state.models(for: state.selectedCapability)
             if !capModels.isEmpty {
                 Picker("Model", selection: $state.selectedModelId) {
@@ -40,7 +39,6 @@ struct SidebarView: View {
                     }
                 }
                 .labelsHidden()
-                // Show raw ID on hover so misclassified models are easy to diagnose
                 .help(capModels.first(where: { $0.id == state.selectedModelId })?.id ?? "")
                 .onChange(of: state.selectedCapability) {
                     if let first = state.models(for: state.selectedCapability).first {
@@ -48,7 +46,6 @@ struct SidebarView: View {
                     }
                 }
             } else if !state.availableModels.isEmpty {
-                // No models match the capability — show a hint
                 Text("No \(state.selectedCapability.label.lowercased()) models loaded in LM Studio")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
@@ -56,9 +53,7 @@ struct SidebarView: View {
             }
 
             HStack {
-                Text("Context")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                Text("Context").font(.caption).foregroundColor(.secondary)
                 Spacer()
                 Picker("", selection: $state.contextWindow) {
                     ForEach([4096, 8192, 16384, 32768, 65536, 131072, 262144], id: \.self) { n in
@@ -72,85 +67,156 @@ struct SidebarView: View {
             Toggle("Deep Research", isOn: $state.researchMode)
                 .controlSize(.mini)
                 .toggleStyle(.switch)
-                .help("Fetches full page content via Playwright (slower, richer). Basic SearXNG search is always on for factual questions.")
+                .help("Playwright deep fetch. Basic SearXNG search is always on for factual questions.")
         }
         .padding(12)
     }
 
-    /// Icon+label tabs for each available capability.
     private var capabilityPicker: some View {
         HStack(spacing: 0) {
             ForEach(state.availableCapabilities) { cap in
-                Button {
-                    state.selectedCapability = cap
-                } label: {
+                Button { state.selectedCapability = cap } label: {
                     HStack(spacing: 4) {
                         Image(systemName: cap.systemIcon).font(.system(size: 10))
                         Text(cap.label).font(.system(size: 11, weight: .medium))
                     }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, 6).padding(.vertical, 5)
                     .frame(maxWidth: .infinity)
-                    .background(
-                        state.selectedCapability == cap
-                            ? Color.accentColor.opacity(0.15)
-                            : Color.clear
-                    )
-                    .foregroundColor(
-                        state.selectedCapability == cap ? .accentColor : .secondary
-                    )
+                    .background(state.selectedCapability == cap ? Color.accentColor.opacity(0.15) : Color.clear)
+                    .foregroundColor(state.selectedCapability == cap ? .accentColor : .secondary)
                 }
                 .buttonStyle(.plain)
-
-                if cap != state.availableCapabilities.last {
-                    Divider().frame(height: 18)
-                }
+                if cap != state.availableCapabilities.last { Divider().frame(height: 18) }
             }
         }
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25)))
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
-    private func ctxLabel(_ n: Int) -> String {
-        n >= 1024 ? "\(n / 1024)K" : "\(n)"
-    }
-
-    /// Shows only the last path component of a model ID (strips org prefix if any).
-    private func shortModelName(_ id: String) -> String {
-        id.split(separator: "/").last.map(String.init) ?? id
-    }
+    private func ctxLabel(_ n: Int) -> String { n >= 1024 ? "\(n / 1024)K" : "\(n)" }
+    private func shortModelName(_ id: String) -> String { id.split(separator: "/").last.map(String.init) ?? id }
 
     // MARK: - Conversation list
 
     private var conversationList: some View {
-        List(
+        VStack(spacing: 0) {
+            convSearchBar
+            Divider()
+            convListBody
+        }
+    }
+
+    private var convSearchBar: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .foregroundColor(.secondary).font(.system(size: 11))
+            TextField("Search conversations…", text: $state.conversationQuery)
+                .font(.system(size: 12)).textFieldStyle(.plain)
+                .onSubmit { state.searchConversations() }
+                .onChange(of: state.conversationQuery) {
+                    if state.conversationQuery.isEmpty { state.conversationResults = [] }
+                    else { state.searchConversations() }
+                }
+            if !state.conversationQuery.isEmpty {
+                Button {
+                    state.conversationQuery = ""
+                    state.conversationResults = []
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.secondary).font(.system(size: 11))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private var convListBody: some View {
+        let displayConvs = state.conversationQuery.isEmpty
+            ? state.conversations
+            : state.conversationResults
+        return convList(displayConvs)
+    }
+
+    private func convList(_ convs: [ConversationMeta]) -> some View {
+        let folders = Array(Set(convs.compactMap { ($0.folder?.isEmpty == false) ? $0.folder : nil })).sorted()
+        let unfoldered = convs.filter { $0.folder == nil || $0.folder!.isEmpty }
+
+        return List(
             selection: Binding(
                 get: { state.activeConversationId },
                 set: { if let id = $0 { state.loadConversation(id) } }
             )
         ) {
-            ForEach(state.conversations) { conv in
-                ConversationRow(conv: conv)
-                    .tag(conv.id)
-                    .contextMenu {
-                        Button("Delete", role: .destructive) {
-                            state.deleteConversation(conv.id)
+            if !folders.isEmpty {
+                ForEach(folders, id: \.self) { folder in
+                    Section(folder) {
+                        ForEach(convs.filter { $0.folder == folder }) { conv in
+                            conversationRow(conv)
                         }
                     }
+                }
+                if !unfoldered.isEmpty {
+                    Section("Other") {
+                        ForEach(unfoldered) { conv in conversationRow(conv) }
+                    }
+                }
+            } else {
+                ForEach(convs) { conv in conversationRow(conv) }
             }
         }
         .listStyle(.sidebar)
         .overlay {
-            if state.conversations.isEmpty && state.isBackendReady {
-                VStack(spacing: 6) {
-                    Text("No conversations yet")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                    Button("Reload") { state.reloadConversations() }
-                        .font(.system(size: 11))
-                        .buttonStyle(.link)
-                }
+            if convs.isEmpty && state.isBackendReady {
+                emptyListOverlay
             }
+        }
+    }
+
+    private var emptyListOverlay: some View {
+        VStack(spacing: 6) {
+            if !state.conversationQuery.isEmpty {
+                Text("No results for \"\(state.conversationQuery)\"")
+                    .font(.system(size: 12)).foregroundColor(.secondary)
+            } else {
+                Text("No conversations yet")
+                    .font(.system(size: 12)).foregroundColor(.secondary)
+                Button("Reload") { state.reloadConversations() }
+                    .font(.system(size: 11)).buttonStyle(.link)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func conversationRow(_ conv: ConversationMeta) -> some View {
+        ConversationRow(conv: conv)
+            .tag(conv.id)
+            .contextMenu {
+                Button(conv.starred ? "Unstar" : "Star") { state.toggleStar(conv.id) }
+                Button("Set Folder…") { promptFolder(for: conv) }
+                if conv.folder != nil {
+                    Button("Remove from Folder") { state.setConversationFolder(conv.id, folder: nil) }
+                }
+                Divider()
+                Button("Delete", role: .destructive) { state.deleteConversation(conv.id) }
+            }
+    }
+
+    private func promptFolder(for conv: ConversationMeta) {
+        let alert = NSAlert()
+        alert.messageText = "Set Folder"
+        alert.informativeText = "Enter a folder name (leave empty to remove from folder):"
+        let tf = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        tf.stringValue = conv.folder ?? ""
+        tf.placeholderString = "Folder name…"
+        alert.accessoryView = tf
+        alert.addButton(withTitle: "Set")
+        alert.addButton(withTitle: "Cancel")
+        tf.becomeFirstResponder()
+        if alert.runModal() == .alertFirstButtonReturn {
+            let folder = tf.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            state.setConversationFolder(conv.id, folder: folder.isEmpty ? nil : folder)
         }
     }
 }
@@ -158,17 +224,39 @@ struct SidebarView: View {
 // MARK: - Conversation row
 
 struct ConversationRow: View {
+    @EnvironmentObject var state: AppState
     let conv: ConversationMeta
+    @State private var isHovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(conv.title)
-                .font(.system(size: 13))
-                .lineLimit(1)
-            Text(relativeDate(conv.updatedDate))
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
+        HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(conv.title).font(.system(size: 13)).lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(relativeDate(conv.updatedDate))
+                        .font(.system(size: 11)).foregroundColor(.secondary)
+                    if let folder = conv.folder, !folder.isEmpty {
+                        Text(folder)
+                            .font(.system(size: 9))
+                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            .background(Color.accentColor.opacity(0.1))
+                            .foregroundColor(.accentColor)
+                            .clipShape(Capsule())
+                    }
+                }
+            }
+            Spacer()
+            Button { state.toggleStar(conv.id) } label: {
+                Image(systemName: conv.starred ? "star.fill" : "star")
+                    .font(.system(size: 11))
+                    .foregroundColor(conv.starred ? .yellow : Color.secondary.opacity(0.4))
+            }
+            .buttonStyle(.plain)
+            .opacity(conv.starred || isHovered ? 1 : 0)
+            .animation(.easeInOut(duration: 0.12), value: isHovered)
         }
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
         .padding(.vertical, 2)
     }
 
@@ -199,10 +287,16 @@ struct SidebarFooter: View {
             }
             Spacer()
             Button {
-                state.isMemoryPanelOpen = true
+                state.isDarkMode.toggle()
             } label: {
-                Image(systemName: "brain")
+                Image(systemName: state.isDarkMode ? "sun.max" : "moon")
                     .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help(state.isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode")
+
+            Button { state.isMemoryPanelOpen = true } label: {
+                Image(systemName: "brain").foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
             .help("Memories")

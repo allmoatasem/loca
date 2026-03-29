@@ -75,8 +75,13 @@ final class AppState: ObservableObject {
 
     // MARK: - Settings
 
-    @Published var contextWindow: Int = 32768
-    @Published var isDarkMode: Bool   = false
+    @Published var contextWindow: Int  = 32768
+    @Published var isDarkMode: Bool    = UserDefaults.standard.bool(forKey: "isDarkMode")
+
+    // MARK: - Conversation search
+
+    @Published var conversationQuery   = ""
+    @Published var conversationResults: [ConversationMeta] = []
 
     // MARK: - Actions (implementations provided in AppState+Actions.swift)
 
@@ -90,5 +95,8 @@ final class AppState: ObservableObject {
     func extractMemories()      { Task { await _extractMemories() } }
     func pollSystemStats()      { Task { await _pollSystemStats() } }
     func reloadConversations()  { Task { await _loadConversationList() } }
+    func toggleStar(_ id: String)                          { Task { await _toggleStar(id) } }
+    func setConversationFolder(_ id: String, folder: String?) { Task { await _setFolder(id, folder: folder) } }
+    func searchConversations()                             { Task { await _searchConversations() } }
 }
 

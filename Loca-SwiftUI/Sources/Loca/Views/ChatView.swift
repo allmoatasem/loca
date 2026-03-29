@@ -10,10 +10,17 @@ struct ChatView: View {
     @State private var attachments: [UploadResult] = []
     @State private var isUploading = false
     @StateObject private var inputActions = ChatInputActions()
+    @State private var chatSearch = ""
+    @State private var showChatSearch = false
 
     var body: some View {
         VStack(spacing: 0) {
-            MessagesScrollView()
+            if showChatSearch {
+                ChatSearchBar(query: $chatSearch) {
+                    showChatSearch = false; chatSearch = ""
+                }
+            }
+            MessagesScrollView(searchQuery: showChatSearch ? chatSearch : "")
             if let stats = state.lastStats, !state.isStreaming {
                 GenerationStatsBar(stats: stats, contextWindow: state.contextWindow)
             }
@@ -34,6 +41,19 @@ struct ChatView: View {
         .sheet(isPresented: $state.isMemoryPanelOpen) {
             MemoryPanel().environmentObject(state)
         }
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    showChatSearch.toggle()
+                    if !showChatSearch { chatSearch = "" }
+                } label: {
+                    Image(systemName: showChatSearch ? "magnifyingglass.circle.fill" : "magnifyingglass")
+                        .foregroundColor(showChatSearch ? .accentColor : .secondary)
+                }
+                .help("Search in conversation (⌘F)")
+                .keyboardShortcut("f")
+            }
+        }
     }
 
     private func sendIfReady() {
@@ -53,42 +73,67 @@ struct GenerationStatsBar: View {
     let stats: AppState.GenerationStats
     let contextWindow: Int
 
+    private var statsText: String {
+        let modelName = stats.model.split(separator: "/").last.map(String.init) ?? stats.model
+        var parts = [modelName]
+        if stats.ttftMs > 0 { parts.append(String(format: "TTFT %.1fs", stats.ttftMs / 1000)) }
+        if stats.tokensPerSec > 0 { parts.append(String(format: "%.0f tok/s", stats.tokensPerSec)) }
+        if stats.totalMs > 0 { parts.append(String(format: "%.1fs total", stats.totalMs / 1000)) }
+        let totalTok = stats.promptTokens + stats.completionTokens
+        if totalTok > 0 {
+            let pct = contextWindow > 0 ? Int(Double(totalTok) / Double(contextWindow) * 100) : 0
+            parts.append("\(totalTok) / \(contextWindow / 1024)K (\(pct)%)")
+        }
+        return parts.joined(separator: "  ·  ")
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             Spacer()
-            Group {
-                label(stats.model.split(separator: "/").last.map(String.init) ?? stats.model)
-                separator()
-                if stats.ttftMs > 0 {
-                    label(String(format: "TTFT %.1fs", stats.ttftMs / 1000))
-                    separator()
-                }
-                if stats.tokensPerSec > 0 {
-                    label(String(format: "%.0f tok/s", stats.tokensPerSec))
-                    separator()
-                }
-                let totalTok = stats.promptTokens + stats.completionTokens
-                if totalTok > 0 {
-                    let pct = contextWindow > 0 ? Int(Double(totalTok) / Double(contextWindow) * 100) : 0
-                    label("\(totalTok) / \(contextWindow / 1024)K (\(pct)%)")
-                }
-            }
+            Text(statsText)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(.secondary)
             Spacer()
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(statsText, forType: .string)
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 10))
+                    .foregroundColor(Color.secondary.opacity(0.5))
+            }
+            .buttonStyle(.plain)
+            .help("Copy stats")
+            .padding(.trailing, 8)
         }
         .padding(.vertical, 4)
         .background(Color(nsColor: .windowBackgroundColor))
     }
+}
 
-    private func label(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 10, design: .monospaced))
-            .foregroundColor(.secondary)
-    }
+// MARK: - Chat search bar
 
-    private func separator() -> some View {
-        Text("  ·  ")
-            .font(.system(size: 10))
-            .foregroundColor(Color.secondary.opacity(0.4))
+struct ChatSearchBar: View {
+    @Binding var query: String
+    let onClose: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundColor(.secondary).font(.system(size: 11))
+            TextField("Search in conversation…", text: $query)
+                .font(.system(size: 13)).textFieldStyle(.plain)
+            if !query.isEmpty {
+                Button(action: onClose) {
+                    Image(systemName: "xmark").font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 7)
+        .background(Color(nsColor: .controlBackgroundColor))
+        Divider()
     }
 }
 
@@ -96,16 +141,24 @@ struct GenerationStatsBar: View {
 
 struct MessagesScrollView: View {
     @EnvironmentObject var state: AppState
+    let searchQuery: String
+
+    private var displayed: [ChatMessage] {
+        guard !searchQuery.isEmpty else { return state.messages }
+        return state.messages.filter {
+            $0.content.plainText.localizedCaseInsensitiveContains(searchQuery)
+        }
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                if state.messages.isEmpty && !state.isStreaming {
+                if displayed.isEmpty && !state.isStreaming {
                     emptyState
                 } else {
                     LazyVStack(alignment: .leading, spacing: 16) {
-                        ForEach(Array(state.messages.enumerated()), id: \.element.id) { idx, msg in
-                            let isLastStreaming = state.isStreaming && idx == state.messages.count - 1
+                        ForEach(Array(displayed.enumerated()), id: \.element.id) { idx, msg in
+                            let isLastStreaming = state.isStreaming && searchQuery.isEmpty && idx == displayed.count - 1
                             MessageBubble(message: msg, showTypingIndicator: isLastStreaming)
                                 .id(msg.id)
                         }
@@ -144,6 +197,7 @@ struct MessageBubble: View {
     @EnvironmentObject var state: AppState
     let message: ChatMessage
     let showTypingIndicator: Bool
+    @State private var isHovered = false
 
     private var isUser: Bool { message.role == "user" }
 
@@ -152,19 +206,41 @@ struct MessageBubble: View {
             if isUser {
                 Spacer(minLength: 80)
                 VStack(alignment: .trailing, spacing: 6) {
-                    // File/image attachments shown above the text (like Claude)
                     attachmentPreviews
                     bubbleContent
                         .background(Color.accentColor.opacity(0.12))
                         .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .overlay(alignment: .topLeading) { copyButton(isUser: true) }
                 }
             } else {
                 modelAvatar
                 bubbleContent
                     .background(Color(nsColor: .controlBackgroundColor))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(alignment: .topTrailing) { copyButton(isUser: false) }
                 Spacer(minLength: 80)
             }
+        }
+        .onHover { isHovered = $0 }
+    }
+
+    @ViewBuilder
+    private func copyButton(isUser: Bool) -> some View {
+        if isHovered {
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(message.content.plainText, forType: .string)
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.secondary)
+                    .padding(5)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 5))
+            }
+            .buttonStyle(.plain)
+            .padding(isUser ? .leading : .trailing, -28)
+            .padding(.top, 4)
+            .transition(.opacity.combined(with: .scale(scale: 0.8)))
         }
     }
 
@@ -461,7 +537,8 @@ struct ProseView: View {
     private func renderGroup(_ group: LineGroup) -> some View {
         switch group {
         case .header(let level, let s):
-            Text(inline(s))
+            let sz: CGFloat = level == 1 ? 20 : level == 2 ? 17 : 15
+            Text(inline(s, baseSize: sz))
                 .font(level == 1 ? .system(size: 20, weight: .bold)
                     : level == 2 ? .system(size: 17, weight: .semibold)
                     : .system(size: 15, weight: .semibold))
@@ -472,32 +549,46 @@ struct ProseView: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("•").font(.system(size: 14)).foregroundColor(.secondary)
                     .padding(.leading, 4)
-                Text(inline(s)).font(.system(size: 14))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
+                Text(inline(s)).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             }
         case .numbered(let n, let s):
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("\(n).").font(.system(size: 14)).foregroundColor(.secondary)
                     .padding(.leading, 4)
-                Text(inline(s)).font(.system(size: 14))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
+                Text(inline(s)).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             }
         case .paragraph(let s):
-            Text(inline(s)).font(.system(size: 14))
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
+            Text(inline(s)).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
         case .hrule:
             Divider().padding(.vertical, 4)
         }
     }
 
-    private func inline(_ s: String) -> AttributedString {
-        (try? AttributedString(
-            markdown: s,
-            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        )) ?? AttributedString(s)
+    /// Parses inline markdown and applies explicit font attributes so SwiftUI Text
+    /// renders bold, italic and inline code correctly regardless of the view's
+    /// .font() modifier.
+    private func inline(_ raw: String, baseSize: CGFloat = 14) -> AttributedString {
+        guard var attr = try? AttributedString(
+            markdown: raw,
+            options: .init(interpretedSyntax: .inlineOnly)
+        ) else { return AttributedString(raw) }
+
+        for run in attr.runs {
+            guard let intent = run.inlinePresentationIntent else { continue }
+            if intent.contains(.code) {
+                attr[run.range].font = .system(size: max(baseSize - 1, 11), design: .monospaced)
+                attr[run.range].foregroundColor = Color.accentColor.opacity(0.9)
+            } else if intent.contains(.stronglyEmphasized) && intent.contains(.emphasized) {
+                attr[run.range].font = .system(size: baseSize, weight: .bold).italic()
+            } else if intent.contains(.stronglyEmphasized) {
+                attr[run.range].font = .system(size: baseSize, weight: .bold)
+            } else if intent.contains(.emphasized) {
+                attr[run.range].font = .system(size: baseSize).italic()
+            } else {
+                attr[run.range].font = .system(size: baseSize)
+            }
+        }
+        return attr
     }
 }
 

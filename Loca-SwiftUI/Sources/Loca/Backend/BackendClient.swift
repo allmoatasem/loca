@@ -88,6 +88,22 @@ actor BackendClient {
         _ = try await delete("/api/conversations/\(id)")
     }
 
+    func patchConversation(_ id: String, starred: Bool? = nil, folder: String?? = nil) async throws {
+        var body: [String: Any] = [:]
+        if let s = starred { body["starred"] = s }
+        if let f = folder {
+            if let name = f { body["folder"] = name } else { body["folder"] = NSNull() }
+        }
+        guard !body.isEmpty else { return }
+        _ = try await patchRaw("/api/conversations/\(id)", body: body)
+    }
+
+    func searchConversations(_ query: String) async throws -> [ConversationMeta] {
+        let enc = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let (data, _) = try await get("/api/search/conversations?q=\(enc)")
+        return try JSONDecoder().decode(ConversationListResponse.self, from: data).conversations
+    }
+
     // MARK: - Memories
 
     func listMemories() async throws -> [Memory] {
@@ -173,6 +189,14 @@ actor BackendClient {
     private func delete(_ path: String) async throws -> (Data, URLResponse) {
         var req = URLRequest(url: base.appendingPathComponent(String(path.dropFirst())))
         req.httpMethod = "DELETE"
+        return try await session.data(for: req)
+    }
+
+    private func patchRaw(_ path: String, body: [String: Any]) async throws -> (Data, URLResponse) {
+        var req = URLRequest(url: base.appendingPathComponent(String(path.dropFirst())))
+        req.httpMethod = "PATCH"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
         return try await session.data(for: req)
     }
 }

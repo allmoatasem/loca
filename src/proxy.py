@@ -34,6 +34,7 @@ from .model_manager import ModelManager
 from .orchestrator import Orchestrator
 from .store import (
     list_conversations, get_conversation, save_conversation, delete_conversation,
+    patch_conversation, search_conversations,
     list_memories, add_memory, delete_memory,
 )
 from .memory_extractor import extract_memories
@@ -360,6 +361,25 @@ async def api_save_conversation(request: Request) -> JSONResponse:
         model=body.get("model", ""),
     )
     return JSONResponse({"id": cid})
+
+
+@app.get("/api/search/conversations")
+async def api_search_conversations(q: str = "") -> JSONResponse:
+    if not q.strip():
+        return JSONResponse({"conversations": []})
+    return JSONResponse({"conversations": search_conversations(q)})
+
+
+@app.patch("/api/conversations/{conv_id}")
+async def api_patch_conversation(conv_id: str, request: Request) -> JSONResponse:
+    body = await request.json()
+    kwargs: dict = {}
+    if "starred" in body:
+        kwargs["starred"] = bool(body["starred"])
+    if "folder" in body:
+        kwargs["folder"] = body.get("folder")  # None clears folder
+    patch_conversation(conv_id, **kwargs)
+    return JSONResponse({"ok": True})
 
 
 @app.delete("/api/conversations/{conv_id}")

@@ -197,8 +197,23 @@ struct ConversationMeta: Decodable, Identifiable {
     let title: String
     let model: String
     let updated: Double   // Unix timestamp (matches store column name)
+    let starred: Bool
+    let folder: String?
 
     var updatedDate: Date { Date(timeIntervalSince1970: updated) }
+
+    private enum CodingKeys: String, CodingKey { case id, title, model, updated, starred, folder }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id      = try c.decode(String.self, forKey: .id)
+        title   = try c.decode(String.self, forKey: .title)
+        model   = try c.decode(String.self, forKey: .model)
+        updated = try c.decode(Double.self, forKey: .updated)
+        // SQLite returns INTEGER 0/1 for booleans
+        starred = ((try? c.decode(Int.self, forKey: .starred)) ?? 0) != 0
+        folder  = try? c.decode(String.self, forKey: .folder)
+    }
 }
 
 struct ConversationDetail: Decodable {

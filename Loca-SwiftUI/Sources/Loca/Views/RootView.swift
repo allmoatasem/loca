@@ -16,7 +16,14 @@ struct RootView: View {
             }
         }
         .frame(minWidth: 900, minHeight: 620)
-        .onAppear { state.startHealthPolling() }
+        .onAppear {
+            state.startHealthPolling()
+            NSApp.appearance = NSAppearance(named: state.isDarkMode ? .darkAqua : .aqua)
+        }
+        .onChange(of: state.isDarkMode) {
+            NSApp.appearance = NSAppearance(named: state.isDarkMode ? .darkAqua : .aqua)
+            UserDefaults.standard.set(state.isDarkMode, forKey: "isDarkMode")
+        }
     }
 }
 

@@ -30,7 +30,9 @@ def _migrate(c: sqlite3.Connection) -> None:
         created  REAL NOT NULL,
         updated  REAL NOT NULL,
         model    TEXT DEFAULT '',
-        messages TEXT NOT NULL DEFAULT '[]'
+        messages TEXT NOT NULL DEFAULT '[]',
+        starred  INTEGER NOT NULL DEFAULT 0,
+        folder   TEXT
     );
     CREATE TABLE IF NOT EXISTS memories (
         id      TEXT PRIMARY KEY,
@@ -39,16 +41,52 @@ def _migrate(c: sqlite3.Connection) -> None:
         conv_id TEXT
     );
     """)
+    # Idempotent additions for existing databases
+    for col, defn in [("starred", "INTEGER NOT NULL DEFAULT 0"), ("folder", "TEXT")]:
+        existing = {r[1] for r in c.execute("PRAGMA table_info(conversations)")}
+        if col not in existing:
+            c.execute(f"ALTER TABLE conversations ADD COLUMN {col} {defn}")
     c.commit()
 
 
 # ── Conversations ─────────────────────────────────────────────────────────────
 
-def list_conversations(limit: int = 100) -> list[dict]:
+_MISSING = object()
+
+
+def list_conversations(limit: int = 200) -> list[dict]:
     with _conn() as c:
         return [dict(r) for r in c.execute(
-            "SELECT id, title, created, updated, model FROM conversations "
-            "ORDER BY updated DESC LIMIT ?", (limit,)
+            "SELECT id, title, created, updated, model, starred, folder "
+            "FROM conversations ORDER BY starred DESC, updated DESC LIMIT ?", (limit,)
+        )]
+
+
+def patch_conversation(conv_id: str, *, starred=_MISSING, folder=_MISSING) -> None:
+    """Update starred/folder. Use _MISSING (default) to skip a field, None to clear folder."""
+    parts, vals = [], []
+    if starred is not _MISSING:
+        parts.append("starred = ?")
+        vals.append(1 if starred else 0)
+    if folder is not _MISSING:
+        parts.append("folder = ?")
+        vals.append(folder)
+    if not parts:
+        return
+    vals.append(conv_id)
+    with _conn() as c:
+        c.execute(f"UPDATE conversations SET {', '.join(parts)} WHERE id = ?", vals)
+        c.commit()
+
+
+def search_conversations(query: str, limit: int = 50) -> list[dict]:
+    like = f"%{query}%"
+    with _conn() as c:
+        return [dict(r) for r in c.execute(
+            "SELECT id, title, created, updated, model, starred, folder "
+            "FROM conversations WHERE title LIKE ? OR messages LIKE ? "
+            "ORDER BY starred DESC, updated DESC LIMIT ?",
+            (like, like, limit),
         )]
 
 
