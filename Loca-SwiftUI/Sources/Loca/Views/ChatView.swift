@@ -73,41 +73,87 @@ struct GenerationStatsBar: View {
     let stats: AppState.GenerationStats
     let contextWindow: Int
 
-    private var statsText: String {
-        let modelName = stats.model.split(separator: "/").last.map(String.init) ?? stats.model
-        var parts = [modelName]
+    private var totalTok: Int { stats.promptTokens + stats.completionTokens }
+    private var usagePct: Int {
+        guard contextWindow > 0 else { return 0 }
+        return Int(Double(totalTok) / Double(contextWindow) * 100)
+    }
+    private var truncated: Bool { usagePct >= 95 }
+
+    private var plainText: String {
+        let model = stats.model.split(separator: "/").last.map(String.init) ?? stats.model
+        var parts = [model]
         if stats.ttftMs > 0 { parts.append(String(format: "TTFT %.1fs", stats.ttftMs / 1000)) }
         if stats.tokensPerSec > 0 { parts.append(String(format: "%.0f tok/s", stats.tokensPerSec)) }
-        if stats.totalMs > 0 { parts.append(String(format: "%.1fs total", stats.totalMs / 1000)) }
-        let totalTok = stats.promptTokens + stats.completionTokens
+        if stats.totalMs > 0 { parts.append(String(format: "%.1fs", stats.totalMs / 1000)) }
         if totalTok > 0 {
-            let pct = contextWindow > 0 ? Int(Double(totalTok) / Double(contextWindow) * 100) : 0
-            parts.append("\(totalTok) / \(contextWindow / 1024)K (\(pct)%)")
+            parts.append("P:\(stats.promptTokens) + C:\(stats.completionTokens)")
+            parts.append("\(totalTok) / \(contextWindow / 1024)K (\(usagePct)%)")
         }
+        if stats.searchTriggered { parts.append("Search") }
+        if stats.memoryInjected { parts.append("Memory") }
+        if truncated { parts.append("⚠ truncated") }
         return parts.joined(separator: "  ·  ")
     }
 
     var body: some View {
         HStack(spacing: 0) {
             Spacer()
-            Text(statsText)
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundColor(.secondary)
+            HStack(spacing: 6) {
+                let model = stats.model.split(separator: "/").last.map(String.init) ?? stats.model
+                mono(model)
+                if stats.ttftMs > 0 { dot(); mono(String(format: "TTFT %.1fs", stats.ttftMs / 1000)) }
+                if stats.tokensPerSec > 0 { dot(); mono(String(format: "%.0f tok/s", stats.tokensPerSec)) }
+                if stats.totalMs > 0 { dot(); mono(String(format: "%.1fs total", stats.totalMs / 1000)) }
+                if totalTok > 0 {
+                    dot()
+                    mono("P:\(stats.promptTokens) + C:\(stats.completionTokens)")
+                    dot()
+                    mono("\(totalTok)/\(contextWindow/1024)K (\(usagePct)%)")
+                        .foregroundColor(usagePct > 80 ? .orange : .secondary)
+                }
+                if stats.searchTriggered {
+                    dot()
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(.accentColor)
+                        .help("Web search was triggered")
+                }
+                if stats.memoryInjected {
+                    dot()
+                    Image(systemName: "brain")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(.purple)
+                        .help("Memories were injected")
+                }
+                if truncated {
+                    dot()
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 9))
+                        .foregroundColor(.orange)
+                        .help("Context window may be truncated (≥95% used)")
+                }
+            }
             Spacer()
             Button {
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(statsText, forType: .string)
+                NSPasteboard.general.setString(plainText, forType: .string)
             } label: {
                 Image(systemName: "doc.on.doc")
                     .font(.system(size: 10))
                     .foregroundColor(Color.secondary.opacity(0.5))
             }
-            .buttonStyle(.plain)
-            .help("Copy stats")
-            .padding(.trailing, 8)
+            .buttonStyle(.plain).help("Copy stats").padding(.trailing, 8)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 5)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func mono(_ s: String) -> some View {
+        Text(s).font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
+    }
+    private func dot() -> some View {
+        Text("·").font(.system(size: 10)).foregroundColor(Color.secondary.opacity(0.35))
     }
 }
 
@@ -116,24 +162,29 @@ struct GenerationStatsBar: View {
 struct ChatSearchBar: View {
     @Binding var query: String
     let onClose: () -> Void
+    @FocusState private var focused: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundColor(.secondary).font(.system(size: 11))
-            TextField("Search in conversation…", text: $query)
-                .font(.system(size: 13)).textFieldStyle(.plain)
-            if !query.isEmpty {
-                Button(action: onClose) {
-                    Image(systemName: "xmark").font(.system(size: 10, weight: .medium))
-                        .foregroundColor(.secondary)
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary).font(.system(size: 11))
+                TextField("Search in conversation…", text: $query)
+                    .font(.system(size: 13)).textFieldStyle(.plain)
+                    .focused($focused)
+                if !query.isEmpty {
+                    Button(action: onClose) {
+                        Image(systemName: "xmark").font(.system(size: 10, weight: .medium))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .background(Color(nsColor: .controlBackgroundColor))
+            Divider()
         }
-        .padding(.horizontal, 12).padding(.vertical, 7)
-        .background(Color(nsColor: .controlBackgroundColor))
-        Divider()
+        .onAppear { focused = true }
     }
 }
 
@@ -159,7 +210,7 @@ struct MessagesScrollView: View {
                     LazyVStack(alignment: .leading, spacing: 16) {
                         ForEach(Array(displayed.enumerated()), id: \.element.id) { idx, msg in
                             let isLastStreaming = state.isStreaming && searchQuery.isEmpty && idx == displayed.count - 1
-                            MessageBubble(message: msg, showTypingIndicator: isLastStreaming)
+                            MessageBubble(message: msg, showTypingIndicator: isLastStreaming, highlight: searchQuery)
                                 .id(msg.id)
                         }
                         Color.clear.frame(height: 1).id("bottom")
@@ -197,6 +248,7 @@ struct MessageBubble: View {
     @EnvironmentObject var state: AppState
     let message: ChatMessage
     let showTypingIndicator: Bool
+    var highlight: String = ""
     @State private var isHovered = false
 
     private var isUser: Bool { message.role == "user" }
@@ -343,7 +395,7 @@ struct MessageBubble: View {
     private var bubbleContent: some View {
         let plain = cleanText(message.content.plainText)
         if isUser {
-            Text(plain)
+            Text(highlighted(plain))
                 .font(.system(size: 14))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
@@ -354,10 +406,25 @@ struct MessageBubble: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
         } else {
-            MarkdownView(text: plain)
+            MarkdownView(text: plain, highlight: highlight)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
         }
+    }
+
+    /// Returns an AttributedString with matching ranges highlighted.
+    private func highlighted(_ raw: String) -> AttributedString {
+        var attr = AttributedString(raw)
+        attr.font = .system(size: 14)
+        guard !highlight.isEmpty else { return attr }
+        var searchStart = attr.startIndex
+        while searchStart < attr.endIndex {
+            guard let range = attr[searchStart...].range(of: highlight, options: .caseInsensitive) else { break }
+            attr[range].backgroundColor = Color.yellow.opacity(0.55)
+            attr[range].foregroundColor = Color.black
+            searchStart = range.upperBound
+        }
+        return attr
     }
 
     /// Strips the `<attachment>` XML prefix from user messages before display.
@@ -425,13 +492,14 @@ struct TypingIndicator: View {
 
 struct MarkdownView: View {
     let text: String
+    var highlight: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(parse(text).enumerated()), id: \.offset) { _, seg in
                 switch seg {
                 case .prose(let s):
-                    ProseView(text: s)
+                    ProseView(text: s, highlight: highlight)
                 case .code(let lang, let code):
                     CodeBlock(language: lang, code: code)
                 }
@@ -478,6 +546,7 @@ struct MarkdownView: View {
 
 struct ProseView: View {
     let text: String
+    var highlight: String = ""
 
     private enum LineGroup {
         case header(Int, String)
@@ -626,7 +695,7 @@ struct ProseView: View {
 
     /// Parses inline markdown and applies explicit font attributes so SwiftUI Text
     /// renders bold, italic and inline code correctly regardless of the view's
-    /// .font() modifier.
+    /// .font() modifier. Optionally highlights search matches.
     private func inline(_ raw: String, baseSize: CGFloat = 14) -> AttributedString {
         guard var attr = try? AttributedString(
             markdown: raw,
@@ -646,6 +715,17 @@ struct ProseView: View {
                 attr[run.range].font = .system(size: baseSize).italic()
             } else {
                 attr[run.range].font = .system(size: baseSize)
+            }
+        }
+
+        // Search highlights
+        if !highlight.isEmpty {
+            var pos = attr.startIndex
+            while pos < attr.endIndex,
+                  let range = attr[pos...].range(of: highlight, options: .caseInsensitive) {
+                attr[range].backgroundColor = Color.yellow.opacity(0.55)
+                attr[range].foregroundColor  = Color.black
+                pos = range.upperBound
             }
         }
         return attr

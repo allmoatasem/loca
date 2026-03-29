@@ -182,11 +182,13 @@ extension AppState {
         let totalMs = Date().timeIntervalSince(tStart) * 1000
         let ttftMs  = firstTokenTime.map { $0.timeIntervalSince(tStart) * 1000 } ?? 0
         lastStats = GenerationStats(
-            model: actualModel ?? selectedCapability.modeHint,
+            model:            actualModel ?? selectedCapability.modeHint,
             promptTokens:     lastUsage?.prompt_tokens     ?? 0,
             completionTokens: lastUsage?.completion_tokens ?? 0,
-            ttftMs:   ttftMs,
-            totalMs:  totalMs
+            ttftMs:           ttftMs,
+            totalMs:          totalMs,
+            searchTriggered:  lastUsage?.search_triggered  ?? false,
+            memoryInjected:   lastUsage?.memory_injected   ?? false
         )
 
         // Save conversation after each turn

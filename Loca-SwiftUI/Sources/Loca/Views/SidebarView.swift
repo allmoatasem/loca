@@ -3,6 +3,7 @@ import AppKit
 
 struct SidebarView: View {
     @EnvironmentObject var state: AppState
+    @State private var multiSelection: Set<String> = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -125,12 +126,7 @@ struct SidebarView: View {
         let folders = Array(Set(convs.compactMap { ($0.folder?.isEmpty == false) ? $0.folder : nil })).sorted()
         let unfoldered = convs.filter { $0.folder == nil || $0.folder!.isEmpty }
 
-        return List(
-            selection: Binding(
-                get: { state.activeConversationId },
-                set: { if let id = $0 { state.loadConversation(id) } }
-            )
-        ) {
+        return List(selection: $multiSelection) {
             if !folders.isEmpty {
                 ForEach(folders, id: \.self) { folder in
                     Section {
@@ -143,8 +139,9 @@ struct SidebarView: View {
                             .foregroundColor(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.vertical, 2)
-                            .dropDestination(for: String.self) { ids, _ in
-                                for id in ids { state.setConversationFolder(id, folder: folder) }
+                            .dropDestination(for: String.self) { draggedIds, _ in
+                                let toMove = resolveMove(draggedIds)
+                                for id in toMove { state.setConversationFolder(id, folder: folder) }
                                 return true
                             }
                     }
@@ -158,8 +155,9 @@ struct SidebarView: View {
                             .foregroundColor(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.vertical, 2)
-                            .dropDestination(for: String.self) { ids, _ in
-                                for id in ids { state.setConversationFolder(id, folder: nil) }
+                            .dropDestination(for: String.self) { draggedIds, _ in
+                                let toMove = resolveMove(draggedIds)
+                                for id in toMove { state.setConversationFolder(id, folder: nil) }
                                 return true
                             }
                     }
@@ -169,11 +167,36 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        // Drop zone at the bottom: drag conversations here to create a new folder
+        .safeAreaInset(edge: .bottom) {
+            if !multiSelection.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "folder.badge.plus").font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                    Text("\(multiSelection.count) selected — drag to a folder header")
+                        .font(.system(size: 11)).foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity).padding(8)
+                .background(Color.accentColor.opacity(0.07))
+            }
+        }
+        .onChange(of: multiSelection) {
+            // Single selection → load conversation; multi-select stays silent
+            if multiSelection.count == 1, let id = multiSelection.first {
+                state.loadConversation(id)
+            }
+        }
         .overlay {
             if convs.isEmpty && state.isBackendReady {
                 emptyListOverlay
             }
         }
+    }
+
+    /// If the dragged item is among the multi-selection, move all of them; else just the one.
+    private func resolveMove(_ draggedIds: [String]) -> Set<String> {
+        guard let first = draggedIds.first else { return [] }
+        return multiSelection.contains(first) ? multiSelection : [first]
     }
 
     private var emptyListOverlay: some View {
@@ -196,14 +219,42 @@ struct SidebarView: View {
             .tag(conv.id)
             .draggable(conv.id)
             .contextMenu {
-                Button(conv.starred ? "Unstar" : "Star") { state.toggleStar(conv.id) }
-                Button("Set Folder…") { promptFolder(for: conv) }
-                if conv.folder != nil {
-                    Button("Remove from Folder") { state.setConversationFolder(conv.id, folder: nil) }
+                if multiSelection.count > 1 && multiSelection.contains(conv.id) {
+                    Text("\(multiSelection.count) conversations selected")
+                        .font(.caption).foregroundColor(.secondary)
+                    Button("Set Folder for All…") { promptFolderForSelection() }
+                    Button("Delete All", role: .destructive) {
+                        for id in multiSelection { state.deleteConversation(id) }
+                        multiSelection = []
+                    }
+                } else {
+                    Button(conv.starred ? "Unstar" : "Star") { state.toggleStar(conv.id) }
+                    Button("Set Folder…") { promptFolder(for: conv) }
+                    if conv.folder != nil {
+                        Button("Remove from Folder") { state.setConversationFolder(conv.id, folder: nil) }
+                    }
+                    Divider()
+                    Button("Delete", role: .destructive) { state.deleteConversation(conv.id) }
                 }
-                Divider()
-                Button("Delete", role: .destructive) { state.deleteConversation(conv.id) }
             }
+    }
+
+    private func promptFolderForSelection() {
+        let alert = NSAlert()
+        alert.messageText = "Set Folder for \(multiSelection.count) Conversations"
+        alert.informativeText = "Leave empty to remove from folder:"
+        let tf = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        tf.placeholderString = "Folder name…"
+        alert.accessoryView = tf
+        alert.addButton(withTitle: "Set")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn {
+            let folder = tf.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            for id in multiSelection {
+                state.setConversationFolder(id, folder: folder.isEmpty ? nil : folder)
+            }
+            multiSelection = []
+        }
     }
 
     private func promptFolder(for conv: ConversationMeta) {

@@ -89,6 +89,8 @@ struct UsageStats: Decodable {
     let prompt_tokens: Int
     let completion_tokens: Int
     let total_tokens: Int
+    let search_triggered: Bool?
+    let memory_injected: Bool?
 }
 
 // MARK: - Model capability

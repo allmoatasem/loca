@@ -149,6 +149,8 @@ async def _openai_stream_response(
 ) -> AsyncIterator[bytes]:
     output_chars = 0
     actual_model = model_override or model_hint or "local"
+    search_triggered = False
+    memory_injected = False
     try:
         gen = await orchestrator.handle(
             messages, has_image=has_image, stream=True,
@@ -156,10 +158,12 @@ async def _openai_stream_response(
             num_ctx=num_ctx, research_mode=research_mode,
         )
         async for chunk in gen:
-            # Metadata sentinel from orchestrator — grab actual model name
+            # Metadata sentinel from orchestrator
             if isinstance(chunk, dict):
                 if "__model__" in chunk:
                     actual_model = chunk["__model__"]
+                    search_triggered = bool(chunk.get("__search__", False))
+                    memory_injected = bool(chunk.get("__memory__", False))
                 continue
             output_chars += len(chunk)
             delta = {"role": "assistant", "content": chunk}
@@ -191,6 +195,8 @@ async def _openai_stream_response(
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": prompt_tokens + completion_tokens,
+            "search_triggered": search_triggered,
+            "memory_injected": memory_injected,
         },
     })
     yield f"data: {usage_payload}\n\n".encode()

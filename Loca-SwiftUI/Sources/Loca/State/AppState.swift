@@ -50,6 +50,8 @@ final class AppState: ObservableObject {
         let completionTokens: Int
         let ttftMs: Double
         let totalMs: Double
+        let searchTriggered: Bool
+        let memoryInjected: Bool
         var tokensPerSec: Double {
             guard completionTokens > 0, totalMs > 1 else { return 0 }
             return Double(completionTokens) / (totalMs / 1000)
