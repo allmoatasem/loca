@@ -179,6 +179,44 @@ struct DownloadProgress: Decodable {
     let error: String?
 }
 
+// MARK: - Hardware profiling & recommendations
+
+struct HardwareProfile: Decodable {
+    let platform: String
+    let arch: String
+    let cpu_name: String
+    let total_ram_gb: Double
+    let available_ram_gb: Double
+    let has_apple_silicon: Bool
+    let has_nvidia_gpu: Bool
+    let supports_mlx: Bool
+}
+
+struct ModelRecommendation: Decodable, Identifiable {
+    let name: String
+    let repo_id: String
+    let filename: String?
+    let format: String        // "gguf" or "mlx"
+    let size_gb: Double
+    let quant: String
+    let context: Int
+    let why: String
+
+    var id: String { repo_id + (filename ?? "") }
+
+    var formatLabel: String { format.uppercased() }
+    var sizeLabel: String {
+        size_gb >= 1 ? String(format: "%.1f GB", size_gb)
+                     : String(format: "%.0f MB", size_gb * 1024)
+    }
+}
+
+struct RecommendedModelsResponse: Decodable {
+    let total_ram_gb: Double
+    let has_apple_silicon: Bool
+    let recommendations: [ModelRecommendation]
+}
+
 // MARK: - Models (legacy, kept for capability detection logic)
 
 struct LMModel: Decodable, Identifiable {

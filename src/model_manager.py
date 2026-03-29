@@ -16,9 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import shutil
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -197,7 +196,6 @@ class ModelManager:
         """
         try:
             from huggingface_hub import hf_hub_download, snapshot_download
-            from huggingface_hub import HfFileSystem
         except ImportError:
             yield DownloadProgress(0, error="huggingface_hub is not installed. Run: pip install huggingface-hub")
             return
@@ -214,8 +212,6 @@ class ModelManager:
 
                 # Run hf_hub_download in executor to avoid blocking event loop
                 loop = asyncio.get_event_loop()
-                downloaded_path: str | None = None
-                progress_state = {"bytes": 0, "total": 0}
 
                 def _download() -> str:
                     return hf_hub_download(
@@ -230,7 +226,7 @@ class ModelManager:
                 while not task.done():
                     yield DownloadProgress(percent=-1)  # -1 = indeterminate
                     await asyncio.sleep(1.0)
-                downloaded_path = await task
+                await task
                 yield DownloadProgress(100, done=True)
 
             elif target_format == "mlx":

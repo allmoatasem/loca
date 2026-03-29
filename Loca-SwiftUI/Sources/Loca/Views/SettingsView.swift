@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Settings sheet — model management, download, context window.
+/// Settings sheet — model management, download, hardware-aware recommendations, context window.
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
     @Environment(\.dismiss) private var dismiss
@@ -37,6 +37,8 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     modelsSection
                     Divider()
+                    recommendationsSection
+                    Divider()
                     downloadSection
                     Divider()
                     contextSection
@@ -44,8 +46,11 @@ struct SettingsView: View {
                 .padding(16)
             }
         }
-        .frame(width: 500, height: 560)
-        .onAppear { state.reloadLocalModels() }
+        .frame(width: 520, height: 640)
+        .onAppear {
+            state.reloadLocalModels()
+            state.reloadRecommendations()
+        }
         .alert("Delete \"\(modelToDelete?.name ?? "")\"?",
                isPresented: $showDeleteConfirm,
                presenting: modelToDelete) { m in
@@ -138,6 +143,105 @@ struct SettingsView: View {
         .padding(.vertical, 7)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    // MARK: - Recommendations section
+
+    private var recommendationsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Recommended for Your Hardware", systemImage: "cpu")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                if state.isLoadingRecommendations {
+                    ProgressView().scaleEffect(0.6)
+                } else {
+                    Button {
+                        state.reloadRecommendations()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Refresh hardware detection and recommendations")
+                }
+            }
+
+            if let hw = state.hardwareProfile {
+                Text("\(hw.cpu_name)  ·  \(String(format: "%.0f GB RAM", hw.total_ram_gb))\(hw.has_apple_silicon ? "  ·  Apple Silicon" : hw.has_nvidia_gpu ? "  ·  NVIDIA GPU" : "")")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+
+            if state.recommendedModels.isEmpty && !state.isLoadingRecommendations {
+                Text("No recommendations available — backend may not be running yet.")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            } else {
+                VStack(spacing: 6) {
+                    ForEach(state.recommendedModels) { rec in
+                        recommendationRow(rec)
+                    }
+                }
+            }
+        }
+    }
+
+    private func recommendationRow(_ rec: ModelRecommendation) -> some View {
+        let alreadyDownloaded = state.localModels.contains(where: {
+            $0.name == rec.filename ?? rec.repo_id.split(separator: "/").last.map(String.init) ?? rec.name
+        })
+
+        return HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(rec.name)
+                        .font(.system(size: 12))
+                        .lineLimit(1)
+                    Text(rec.formatLabel)
+                        .font(.system(size: 10))
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(rec.format == "mlx" ? Color.purple.opacity(0.12) : Color.blue.opacity(0.1))
+                        .foregroundColor(rec.format == "mlx" ? .purple : .blue)
+                        .clipShape(Capsule())
+                    Text(rec.sizeLabel)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                Text(rec.why)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer()
+            if alreadyDownloaded {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.green)
+                    .font(.system(size: 14))
+                    .help("Already downloaded")
+            } else {
+                Button {
+                    prefillDownload(rec)
+                } label: {
+                    Label("Get", systemImage: "arrow.down.circle")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .help("Pre-fill the download form for this model")
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func prefillDownload(_ rec: ModelRecommendation) {
+        downloadRepoId   = rec.repo_id
+        downloadFilename = rec.filename ?? ""
+        downloadFormat   = rec.format
+        // Scroll is not programmatic here; user can see the pre-filled fields below
     }
 
     // MARK: - Download section

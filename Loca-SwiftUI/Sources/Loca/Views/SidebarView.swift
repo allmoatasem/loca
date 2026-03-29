@@ -50,39 +50,17 @@ struct SidebarView: View {
                 .controlSize(.mini)
                 .toggleStyle(.switch)
                 .help("Deep Research uses a headless browser (Playwright) to fully render pages and extract content, instead of reading raw HTML. Much more accurate for dynamic sites. Slower.")
-
-            HStack {
-                Spacer()
-                Button {
-                    state.isSettingsOpen = true
-                } label: {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Open settings — manage models, download new models, configure context window")
-                .sheet(isPresented: $state.isSettingsOpen) {
-                    SettingsView()
-                        .environmentObject(state)
-                }
-            }
         }
         .padding(12)
+        .sheet(isPresented: $state.isSettingsOpen) {
+            SettingsView()
+                .environmentObject(state)
+        }
     }
 
     private var localModelPicker: some View {
-        Group {
-            if state.localModels.isEmpty {
-                Button {
-                    state.isSettingsOpen = true
-                } label: {
-                    Label("Download a model…", systemImage: "arrow.down.circle")
-                        .font(.system(size: 11))
-                        .foregroundColor(.accentColor)
-                }
-                .buttonStyle(.plain)
-            } else {
+        VStack(alignment: .leading, spacing: 6) {
+            if !state.localModels.isEmpty {
                 Picker("Model", selection: $state.selectedModelId) {
                     ForEach(state.localModels) { m in
                         HStack(spacing: 4) {
@@ -98,12 +76,20 @@ struct SidebarView: View {
                 .help(state.localModels.first(where: { $0.name == state.selectedModelId })
                     .map { "\($0.name) · \($0.formatLabel) · \($0.sizeLabel)" } ?? "Select a model")
                 .onChange(of: state.selectedModelId) {
-                    // Load the newly selected model into the inference backend
                     if let name = state.selectedModelId, name != state.activeModelName {
                         state.loadModel(name, ctxSize: state.contextWindow)
                     }
                 }
             }
+            Button {
+                state.isSettingsOpen = true
+            } label: {
+                Label("Manage Models", systemImage: "cpu")
+                    .font(.system(size: 11))
+                    .foregroundColor(.accentColor)
+            }
+            .buttonStyle(.plain)
+            .help("Download models, get hardware-optimised recommendations, load or delete models.")
         }
     }
 
@@ -418,6 +404,7 @@ struct SidebarFooter: View {
                     .frame(width: 28, height: 28)
             }
             .buttonStyle(.plain)
+            .contentShape(Rectangle())
             .help("Toggle dark/light theme. Preference is saved locally.")
 
             Button { state.isMemoryPanelOpen = true } label: {
@@ -427,6 +414,7 @@ struct SidebarFooter: View {
                     .frame(width: 28, height: 28)
             }
             .buttonStyle(.plain)
+            .contentShape(Rectangle())
             .help("Memories — facts extracted from your conversations and injected into every new chat. Click to view and manage them.")
         }
     }

@@ -59,6 +59,18 @@ actor BackendClient {
         return downloadId
     }
 
+    // MARK: - Hardware & recommendations
+
+    func fetchHardwareProfile() async throws -> HardwareProfile {
+        let (data, _) = try await get("/api/hardware")
+        return try JSONDecoder().decode(HardwareProfile.self, from: data)
+    }
+
+    func fetchRecommendedModels() async throws -> RecommendedModelsResponse {
+        let (data, _) = try await get("/api/recommended-models")
+        return try JSONDecoder().decode(RecommendedModelsResponse.self, from: data)
+    }
+
     // MARK: - Models (legacy)
 
     func fetchLMModels() async throws -> [LMModel] {

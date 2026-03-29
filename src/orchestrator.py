@@ -19,14 +19,14 @@ from typing import Any, AsyncIterator
 
 import httpx
 
-from .model_manager import ModelManager
 from .memory_extractor import extract_memories
+from .model_manager import ModelManager
 from .router import Model, RouteResult, route
 from .store import add_memory, get_memories_context
-from .tools.web_search import format_search_results, web_search
-from .tools.web_fetch import web_fetch
 from .tools.file_ops import file_read, file_write
 from .tools.shell import shell_exec
+from .tools.web_fetch import web_fetch
+from .tools.web_search import format_search_results, web_search
 
 logger = logging.getLogger(__name__)
 

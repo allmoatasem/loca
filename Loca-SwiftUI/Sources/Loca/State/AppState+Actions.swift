@@ -60,6 +60,20 @@ extension AppState {
         }
     }
 
+    // MARK: - Hardware & recommendations
+
+    func _loadRecommendations() async {
+        isLoadingRecommendations = true
+        do {
+            let resp = try await BackendClient.shared.fetchRecommendedModels()
+            hardwareProfile  = try? await BackendClient.shared.fetchHardwareProfile()
+            recommendedModels = resp.recommendations
+        } catch {
+            // Non-fatal
+        }
+        isLoadingRecommendations = false
+    }
+
     // MARK: - Models (capability routing, uses local model names)
 
     func _loadModels() {

@@ -84,6 +84,12 @@ final class AppState: ObservableObject {
     @Published var modelLoadError: String?
     @Published var isSettingsOpen     = false
 
+    // MARK: - Hardware & recommendations
+
+    @Published var hardwareProfile: HardwareProfile?
+    @Published var recommendedModels: [ModelRecommendation] = []
+    @Published var isLoadingRecommendations = false
+
     // MARK: - Settings
 
     @Published var contextWindow: Int  = 32768
@@ -112,5 +118,6 @@ final class AppState: ObservableObject {
     func reloadLocalModels()    { Task { await _loadLocalModels() } }
     func loadModel(_ name: String, ctxSize: Int? = nil) { Task { await _loadModel(name, ctxSize: ctxSize) } }
     func deleteModel(_ name: String) { Task { await _deleteModel(name) } }
+    func reloadRecommendations() { Task { await _loadRecommendations() } }
 }
 

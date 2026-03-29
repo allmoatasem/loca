@@ -15,6 +15,8 @@ Start with:
 """
 
 import asyncio
+import base64
+import io
 import json
 import logging
 import os
@@ -22,10 +24,6 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-import base64
-import io
-
-import httpx
 import yaml
 from fastapi import FastAPI, File, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -34,11 +32,17 @@ from .inference_backend import InferenceBackend
 from .model_manager import ModelManager
 from .orchestrator import Orchestrator
 from .store import (
-    list_conversations, get_conversation, save_conversation, delete_conversation,
-    patch_conversation, search_conversations,
-    list_memories, add_memory, update_memory, delete_memory,
+    add_memory,
+    delete_conversation,
+    delete_memory,
+    get_conversation,
+    list_conversations,
+    list_memories,
+    patch_conversation,
+    save_conversation,
+    search_conversations,
+    update_memory,
 )
-from .memory_extractor import extract_memories
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +84,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Auto-start the active model if configured
     active_rel = _config.get("inference", {}).get("active_model")
     if active_rel:
-        from pathlib import Path
         active_path = _inference_backend.models_dir / active_rel
         if active_path.exists():
             logger.info(f"Auto-starting inference backend with: {active_path}")
@@ -410,7 +413,9 @@ async def serve_asset(file_path: str) -> Response:
 
 @app.get("/system-stats")
 async def system_stats() -> JSONResponse:
-    import asyncio, re, os
+    import asyncio
+    import os
+    import re
     try:
         proc = await asyncio.create_subprocess_exec(
             "vm_stat",
@@ -527,6 +532,48 @@ async def api_update_memory(mem_id: str, request: Request) -> JSONResponse:
 async def api_delete_memory(mem_id: str) -> JSONResponse:
     delete_memory(mem_id)
     return JSONResponse({"ok": True})
+
+
+@app.get("/api/hardware")
+async def api_hardware() -> JSONResponse:
+    """Return a hardware profile for the current machine."""
+    from .hardware_profiler import get_hardware_profile
+    profile = get_hardware_profile()
+    return JSONResponse({
+        "platform": profile.platform,
+        "arch": profile.arch,
+        "cpu_name": profile.cpu_name,
+        "total_ram_gb": profile.total_ram_gb,
+        "available_ram_gb": profile.available_ram_gb,
+        "has_apple_silicon": profile.has_apple_silicon,
+        "has_nvidia_gpu": profile.has_nvidia_gpu,
+        "supports_mlx": profile.supports_mlx,
+    })
+
+
+@app.get("/api/recommended-models")
+async def api_recommended_models() -> JSONResponse:
+    """Return a list of curated model recommendations for this machine."""
+    from .hardware_profiler import get_hardware_profile, get_recommendations
+    profile = get_hardware_profile()
+    recs = get_recommendations(profile)
+    return JSONResponse({
+        "total_ram_gb": profile.total_ram_gb,
+        "has_apple_silicon": profile.has_apple_silicon,
+        "recommendations": [
+            {
+                "name": r.name,
+                "repo_id": r.repo_id,
+                "filename": r.filename,
+                "format": r.format,
+                "size_gb": r.size_gb,
+                "quant": r.quant,
+                "context": r.context,
+                "why": r.why,
+            }
+            for r in recs
+        ],
+    })
 
 
 @app.post("/api/extract-memories")
