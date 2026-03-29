@@ -1,141 +1,307 @@
 """
-Model manager — tracks which models are active and enforces the loading strategy:
-  - `general` stays loaded at all times
-  - Only one specialist loaded alongside general
-  - Specialists unload after idle_unload_minutes of inactivity
+ModelManager — local model inventory and lifecycle.
 
-Supports both LM Studio (default) and Ollama backends — each model entry in
-config.yaml may carry an optional `api_base` field that overrides the default
-LM Studio URL.  model_sync.py sets this automatically for Ollama models.
+Works with InferenceBackend to provide:
+  - Listing locally downloaded models (GGUF + MLX)
+  - Loading/switching the active model
+  - Downloading models from Hugging Face
+  - Deleting models
+
+The routing system still uses Model enum values (general/code/reason/write) to
+select system prompts and routing logic. The actual LLM is always whatever is
+loaded in InferenceBackend — one model at a time.
 """
+
+from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import time
-from typing import Optional
+from dataclasses import dataclass
+from pathlib import Path
+from typing import AsyncGenerator
 
-import httpx
-
+from .inference_backend import InferenceBackend, InferenceBackendError
 from .router import Model
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class ModelInfo:
+    name: str          # display name / filename without extension
+    path: str          # absolute path to file or directory
+    format: str        # "gguf" or "mlx"
+    size_gb: float
+    is_loaded: bool = False
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "path": self.path,
+            "format": self.format,
+            "size_gb": round(self.size_gb, 2),
+            "is_loaded": self.is_loaded,
+        }
+
+
+@dataclass
+class DownloadProgress:
+    percent: float
+    speed_mbps: float = 0.0
+    eta_s: float = 0.0
+    done: bool = False
+    error: str | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "percent": round(self.percent, 1),
+            "speed_mbps": round(self.speed_mbps, 2),
+            "eta_s": round(self.eta_s),
+            "done": self.done,
+            "error": self.error,
+        }
+
+
 class ModelManager:
-    def __init__(self, config: dict, lmstudio_base_url: str = "http://localhost:1234"):
+    def __init__(self, config: dict, backend: InferenceBackend) -> None:
+        self.backend = backend
         self.config = config
-        self.base_url = lmstudio_base_url.rstrip("/")
-        self._model_cfg: dict = config["models"]
-
-        self._last_used: dict[str, float] = {}
-        self._loaded_specialist: Optional[Model] = None
-        self._idle_task: Optional[asyncio.Task] = None
+        inf = config.get("inference", {})
+        self.models_dir = Path(inf.get("models_dir", "~/loca_models")).expanduser()
+        self.gguf_dir = self.models_dir / "gguf"
+        self.mlx_dir = self.models_dir / "mlx"
+        self._ensure_dirs()
 
     # ------------------------------------------------------------------
-    # Public interface
+    # Local model inventory
     # ------------------------------------------------------------------
 
-    async def ensure_loaded(self, model: Model, model_name_override: str | None = None) -> tuple[str, str]:
+    def list_local(self) -> list[ModelInfo]:
+        """Scan models_dir and return all discovered models."""
+        models: list[ModelInfo] = []
+        loaded_name = self.backend.current_model()
+
+        # GGUF files
+        if self.gguf_dir.exists():
+            for p in sorted(self.gguf_dir.glob("*.gguf")):
+                size_gb = p.stat().st_size / 1_073_741_824
+                name = p.stem
+                models.append(ModelInfo(
+                    name=name,
+                    path=str(p),
+                    format="gguf",
+                    size_gb=size_gb,
+                    is_loaded=(loaded_name == p.name),
+                ))
+
+        # MLX model directories (contain config.json)
+        if self.mlx_dir.exists():
+            for p in sorted(self.mlx_dir.iterdir()):
+                if p.is_dir() and (p / "config.json").exists():
+                    size_gb = _dir_size_gb(p)
+                    name = p.name
+                    models.append(ModelInfo(
+                        name=name,
+                        path=str(p),
+                        format="mlx",
+                        size_gb=size_gb,
+                        is_loaded=(loaded_name == p.name),
+                    ))
+
+        return models
+
+    def get_model(self, name: str) -> ModelInfo | None:
+        for m in self.list_local():
+            if m.name == name:
+                return m
+        return None
+
+    async def get_model_name(self, _model: Model) -> str:
+        """Return the currently loaded model name (ignores routing — one model at a time)."""
+        return self.backend.current_model() or ""
+
+    async def get_model_api_base(self, _model: Model) -> str:
+        """Return the inference backend API base URL."""
+        return self.backend.api_base()
+
+    # ------------------------------------------------------------------
+    # Load / switch
+    # ------------------------------------------------------------------
+
+    async def load(self, model_name: str, ctx_size: int | None = None) -> tuple[str, str]:
+        """Load a model by name into the inference backend."""
+        model = self.get_model(model_name)
+        if not model:
+            raise InferenceBackendError(f"Model '{model_name}' not found in {self.models_dir}")
+        await self.backend.restart(model.path, ctx_size)
+        # Persist active model in config (relative path from models_dir)
+        rel = Path(model.path).relative_to(self.models_dir)
+        self.config.setdefault("inference", {})["active_model"] = str(rel)
+        return model.name, self.backend.api_base()
+
+    async def ensure_loaded(
+        self,
+        model: Model,
+        model_name_override: str | None = None,
+    ) -> tuple[str, str]:
         """
-        Ensure the model is active and return (lmstudio_name, api_base).
-        For specialists, evicts any conflicting specialist from state tracking first.
-        If model_name_override is provided it replaces the config's lmstudio_name
-        (mode routing and system-prompt selection are unchanged).
+        Returns (model_path, api_base) for use in API calls.
+        model_path is the full filesystem path — required by mlx_lm as the 'model' field.
         """
-        cfg = self._model_cfg[model.value]
-        model_name: str = model_name_override or cfg["lmstudio_name"]
-        api_base: str = cfg.get("api_base", self.base_url)
+        # If override specified and different from current, switch
+        if model_name_override and model_name_override != self.backend.current_model():
+            local = self.get_model(model_name_override)
+            if local:
+                await self.backend.restart(local.path)
+                return local.path, self.backend.api_base()
+            # Override doesn't match a local model — log and continue with current
 
-        if model == Model.GENERAL:
-            self._last_used[model.value] = time.time()
-            return model_name, api_base
+        if self.backend.is_running():
+            return self.backend.current_model_path() or "local", self.backend.api_base()
 
-        # Specialist: evict any different specialist from state tracking
-        if self._loaded_specialist and self._loaded_specialist != model:
-            logger.info(
-                f"Swapping specialist: {self._loaded_specialist.value} → {model.value} "
-                f"(backend will release {self._loaded_specialist.value} on next model call)"
-            )
-            self._loaded_specialist = None
+        # Not running — try active_model from config
+        active_rel = self.config.get("inference", {}).get("active_model")
+        if active_rel:
+            active_path = self.models_dir / active_rel
+            if active_path.exists():
+                logger.info(f"Auto-starting backend with: {active_path}")
+                await self.backend.start(str(active_path))
+                return self.backend.current_model_path() or "local", self.backend.api_base()
 
-        if self._loaded_specialist != model:
-            logger.info(f"Loading specialist: {model.value} ({model_name})")
-            await self._warmup(model_name, api_base)
-            self._loaded_specialist = model
+        # Fall back to first available local model
+        local_models = self.list_local()
+        if local_models:
+            logger.info(f"Auto-starting backend with first available model: {local_models[0].name}")
+            await self.backend.start(local_models[0].path)
+            return self.backend.current_model_path() or "local", self.backend.api_base()
 
-        self._last_used[model.value] = time.time()
-        self._schedule_idle_check()
-        return model_name, api_base
-
-    async def get_model_name(self, model: Model) -> str:
-        return self._model_cfg[model.value]["lmstudio_name"]
-
-    async def get_model_api_base(self, model: Model) -> str:
-        return self._model_cfg[model.value].get("api_base", self.base_url)
-
-    async def list_loaded(self) -> list[str]:
-        """Return model IDs currently reported by LM Studio's /v1/models."""
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            try:
-                resp = await client.get(f"{self.base_url}/v1/models")
-                resp.raise_for_status()
-                data = resp.json()
-                return [m["id"] for m in data.get("data", [])]
-            except httpx.HTTPError as e:
-                logger.warning(f"Could not fetch model list from LM Studio: {e}")
-                return []
+        raise InferenceBackendError(
+            "No model is loaded and no models found in models_dir. "
+            "Download a model first via the settings panel."
+        )
 
     # ------------------------------------------------------------------
-    # Warmup (load trigger)
+    # Download
     # ------------------------------------------------------------------
 
-    async def _warmup(self, model_name: str, api_base: str | None = None) -> None:
+    async def download(
+        self,
+        repo_id: str,
+        filename: str | None,
+        target_format: str,
+    ) -> AsyncGenerator[DownloadProgress, None]:
         """
-        Send a minimal chat completion to trigger the backend to load the model.
-        Non-fatal — the real request will still attempt the load if this fails.
+        Download a model from Hugging Face, yielding progress updates.
+
+        Args:
+            repo_id: HF repo, e.g. "bartowski/Qwen2.5-7B-Instruct-GGUF"
+            filename: specific file for GGUF, e.g. "Qwen2.5-7B-Instruct-Q4_K_M.gguf"
+                      None for MLX (downloads whole directory via snapshot_download)
+            target_format: "gguf" or "mlx"
         """
-        base = (api_base or self.base_url).rstrip("/")
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            try:
-                await client.post(
-                    f"{base}/v1/chat/completions",
-                    json={
-                        "model": model_name,
-                        "messages": [{"role": "user", "content": "hi"}],
-                        "max_tokens": 1,
-                        "stream": False,
-                    },
-                )
-                logger.info(f"Warmup complete: {model_name}")
-            except httpx.HTTPError as e:
-                logger.warning(f"Warmup request failed for {model_name}: {e}")
-
-    # ------------------------------------------------------------------
-    # Idle timeout management (state tracking)
-    # ------------------------------------------------------------------
-
-    def _schedule_idle_check(self) -> None:
-        if self._idle_task and not self._idle_task.done():
+        try:
+            from huggingface_hub import snapshot_download
+        except ImportError:
+            yield DownloadProgress(0, error="huggingface_hub is not installed. Run: pip install huggingface-hub")
             return
-        self._idle_task = asyncio.create_task(self._idle_watcher())
 
-    async def _idle_watcher(self) -> None:
-        while self._loaded_specialist is not None:
-            await asyncio.sleep(60)
-            specialist = self._loaded_specialist
-            if specialist is None:
-                break
-            cfg = self._model_cfg[specialist.value]
-            idle_minutes: Optional[int] = cfg.get("idle_unload_minutes")
-            if idle_minutes is None:
-                break
+        target_dir = self.gguf_dir if target_format == "gguf" else self.mlx_dir
+        target_dir.mkdir(parents=True, exist_ok=True)
 
-            last = self._last_used.get(specialist.value, 0)
-            idle_for = (time.time() - last) / 60
-            if idle_for >= idle_minutes:
-                logger.info(
-                    f"Specialist {specialist.value} idle for {idle_for:.1f}m — "
-                    f"marking unloaded (backend will release RAM on next model swap)"
-                )
-                self._loaded_specialist = None
-                break
+        try:
+            if target_format == "gguf" and filename:
+                dest = target_dir / filename
+                if dest.exists():
+                    yield DownloadProgress(100, done=True)
+                    return
+
+                # Stream download directly with real progress tracking
+                import httpx
+                hf_url = f"https://huggingface.co/{repo_id}/resolve/main/{filename}"
+                async with httpx.AsyncClient(timeout=None, follow_redirects=True) as client:
+                    async with client.stream("GET", hf_url) as resp:
+                        resp.raise_for_status()
+                        total = int(resp.headers.get("content-length", 0))
+                        downloaded = 0
+                        t0 = time.monotonic()
+                        with open(dest, "wb") as f:
+                            async for chunk in resp.aiter_bytes(1024 * 1024):
+                                f.write(chunk)
+                                downloaded += len(chunk)
+                                elapsed = time.monotonic() - t0 or 0.001
+                                speed = downloaded / elapsed  # bytes/s
+                                speed_mb = speed / 1e6
+                                pct = (downloaded / total * 100) if total else -1
+                                eta = ((total - downloaded) / speed) if (total and speed > 0) else 0
+                                yield DownloadProgress(
+                                    percent=pct,
+                                    speed_mbps=round(speed_mb, 2),
+                                    eta_s=round(eta),
+                                )
+                yield DownloadProgress(100, done=True)
+
+            elif target_format == "mlx":
+                # snapshot_download fetches all files; target is a directory
+                model_dir_name = repo_id.split("/")[-1]
+                dest = target_dir / model_dir_name
+                if dest.exists() and (dest / "config.json").exists():
+                    yield DownloadProgress(100, done=True)
+                    return
+
+                loop = asyncio.get_event_loop()
+
+                def _snapshot() -> str:
+                    return snapshot_download(
+                        repo_id=repo_id,
+                        local_dir=str(dest),
+                    )
+
+                task = loop.run_in_executor(None, _snapshot)
+                while not task.done():
+                    yield DownloadProgress(percent=-1)
+                    await asyncio.sleep(1.0)
+                await task
+                yield DownloadProgress(100, done=True)
+
+            else:
+                yield DownloadProgress(0, error=f"Unknown format: {target_format}")
+
+        except Exception as exc:
+            logger.error(f"Download failed: {exc}")
+            yield DownloadProgress(0, error=str(exc))
+
+    # ------------------------------------------------------------------
+    # Delete
+    # ------------------------------------------------------------------
+
+    def delete(self, model_name: str) -> None:
+        """Delete a local model by name. Raises if model is currently loaded."""
+        model = self.get_model(model_name)
+        if not model:
+            raise FileNotFoundError(f"Model '{model_name}' not found")
+        if model.is_loaded:
+            raise InferenceBackendError(
+                f"Cannot delete '{model_name}' while it is loaded. Load a different model first."
+            )
+        p = Path(model.path)
+        if p.is_dir():
+            shutil.rmtree(p)
+            logger.info(f"Deleted MLX model directory: {p}")
+        else:
+            p.unlink()
+            logger.info(f"Deleted GGUF file: {p}")
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _ensure_dirs(self) -> None:
+        self.gguf_dir.mkdir(parents=True, exist_ok=True)
+        self.mlx_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _dir_size_gb(path: Path) -> float:
+    total = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+    return total / 1_073_741_824

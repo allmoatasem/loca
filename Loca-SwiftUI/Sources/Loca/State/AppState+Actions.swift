@@ -14,7 +14,8 @@ extension AppState {
                 }
                 if await BackendClient.shared.isHealthy() {
                     isBackendReady = true
-                    await _loadModels()
+                    await _loadLocalModels()
+                    _loadModels()
                     await _loadConversationList()
                     await _loadMemories()
                     _scheduleStatsPoll()
@@ -25,17 +26,129 @@ extension AppState {
         }
     }
 
-    // MARK: - Models
+    // MARK: - Local models
+
+    func _loadLocalModels() async {
+        do {
+            localModels = try await BackendClient.shared.fetchLocalModels()
+            let active = try? await BackendClient.shared.activeModel()
+            activeModelName = active?.name
+            activeBackend   = active?.backend
+        } catch {
+            // Non-fatal
+        }
+    }
+
+    func _loadModel(_ name: String, ctxSize: Int? = nil) async {
+        isLoadingModel = true
+        modelLoadError = nil
+        do {
+            try await BackendClient.shared.loadModel(name: name, ctxSize: ctxSize)
+            await _loadLocalModels()
+        } catch {
+            modelLoadError = error.localizedDescription
+        }
+        isLoadingModel = false
+    }
+
+    func _deleteModel(_ name: String) async {
+        do {
+            try await BackendClient.shared.deleteModel(name: name)
+            await _loadLocalModels()
+        } catch {
+            modelLoadError = error.localizedDescription
+        }
+    }
+
+    // MARK: - Downloads
+
+    func _startDownload(repoId: String, filename: String?, format: String) {
+        Task {
+            do {
+                let dlId = try await BackendClient.shared.startDownload(
+                    repoId: repoId, filename: filename, format: format
+                )
+                activeDownload = ActiveDownload(
+                    repoId: repoId, filename: filename, format: format,
+                    downloadId: dlId, percent: -1
+                )
+                await _pollDownload(dlId)
+            } catch {
+                activeDownload?.error = error.localizedDescription
+            }
+        }
+    }
+
+    func _pollDownload(_ dlId: String) async {
+        guard let url = URL(string: "http://localhost:8000/api/models/download/\(dlId)/progress") else { return }
+        do {
+            let (bytes, _) = try await URLSession.shared.bytes(from: url)
+            var buffer = ""
+            for try await byte in bytes {
+                buffer += String(bytes: [byte], encoding: .utf8) ?? ""
+                while let nl = buffer.firstIndex(of: "\n") {
+                    let line = String(buffer[..<nl])
+                    buffer = String(buffer[buffer.index(after: nl)...])
+                    if line.hasPrefix("data: "),
+                       let data = String(line.dropFirst(6)).data(using: .utf8),
+                       let p = try? JSONDecoder().decode(DownloadProgress.self, from: data) {
+                        activeDownload?.percent    = p.percent
+                        activeDownload?.speedMbps  = p.speed_mbps
+                        activeDownload?.etaSeconds = p.eta_s
+                        if let err = p.error { activeDownload?.error = err; return }
+                        if p.done {
+                            activeDownload?.done = true
+                            activeDownload?.percent = 100
+                            await _loadLocalModels()
+                            return
+                        }
+                    }
+                }
+            }
+        } catch {
+            activeDownload?.error = error.localizedDescription
+        }
+    }
+
+    // MARK: - Hardware & recommendations
+
+    func _loadRecommendations() async {
+        isLoadingRecommendations = true
+        do {
+            let hw = try await BackendClient.shared.fetchHardwareProfile()
+            hardwareProfile = hw
+            llmfitAvailable = hw.llmfit_available
+            let resp = try await BackendClient.shared.fetchRecommendedModels()
+            recommendedModels = resp.recommendations
+        } catch {
+            // Non-fatal
+        }
+        isLoadingRecommendations = false
+    }
+
+    func _installLlmfit() async {
+        isInstallingLlmfit = true
+        do {
+            let ok = try await BackendClient.shared.installLlmfit()
+            if ok {
+                llmfitAvailable = true
+                await _loadRecommendations()
+            }
+        } catch {
+            // Non-fatal
+        }
+        isInstallingLlmfit = false
+    }
+
+    // MARK: - Models (capability routing, uses local model names)
 
     func _loadModels() {
         Task {
             do {
                 availableModels = try await BackendClient.shared.fetchLMModels()
-                // If the current capability has no models, fall back to general
                 if models(for: selectedCapability).isEmpty {
                     selectedCapability = .general
                 }
-                // Pick a default model if none selected, or current is stale
                 let capModels = models(for: selectedCapability)
                 let ids = availableModels.map(\.id)
                 if selectedModelId == nil || !ids.contains(selectedModelId!) {

@@ -1,6 +1,37 @@
 import SwiftUI
 import AppKit
 
+// MARK: - Tooltip helper
+// .help() is unreliable on .buttonStyle(.plain) views on macOS because the plain
+// style strips the underlying NSButton's tooltip binding. This modifier sets the
+// tooltip directly on the NSView via NSViewRepresentable, which always works.
+
+private struct TooltipModifier: ViewModifier {
+    let text: String
+
+    func body(content: Content) -> some View {
+        // Use background so the NSView is behind the SwiftUI button (won't intercept
+        // clicks), but AppKit can still fire tooltip tracking on mouse-enter.
+        content.background(TooltipView(text: text))
+    }
+}
+
+private struct TooltipView: NSViewRepresentable {
+    let text: String
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView()
+        v.toolTip = text
+        return v
+    }
+    func updateNSView(_ v: NSView, context: Context) { v.toolTip = text }
+}
+
+extension View {
+    func nativeTooltip(_ text: String) -> some View {
+        modifier(TooltipModifier(text: text))
+    }
+}
+
 struct SidebarView: View {
     @EnvironmentObject var state: AppState
     @State private var multiSelection: Set<String> = []
@@ -32,26 +63,7 @@ struct SidebarView: View {
                 capabilityPicker
             }
 
-            let capModels = state.models(for: state.selectedCapability)
-            if !capModels.isEmpty {
-                Picker("Model", selection: $state.selectedModelId) {
-                    ForEach(capModels) { m in
-                        Text(shortModelName(m.id)).lineLimit(1).tag(m.id as String?)
-                    }
-                }
-                .labelsHidden()
-                .help(capModels.first(where: { $0.id == state.selectedModelId })?.id ?? "")
-                .onChange(of: state.selectedCapability) {
-                    if let first = state.models(for: state.selectedCapability).first {
-                        state.selectedModelId = first.id
-                    }
-                }
-            } else if !state.availableModels.isEmpty {
-                Text("No \(state.selectedCapability.label.lowercased()) models loaded in LM Studio")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            localModelPicker
 
             HStack {
                 Text("Context").font(.caption).foregroundColor(.secondary)
@@ -68,9 +80,48 @@ struct SidebarView: View {
             Toggle("Deep Research", isOn: $state.researchMode)
                 .controlSize(.mini)
                 .toggleStyle(.switch)
-                .help("Playwright deep fetch. Basic SearXNG search is always on for factual questions.")
+                .help("Deep Research uses a headless browser (Playwright) to fully render pages and extract content, instead of reading raw HTML. Much more accurate for dynamic sites. Slower.")
         }
         .padding(12)
+        .sheet(isPresented: $state.isSettingsOpen) {
+            SettingsView()
+                .environmentObject(state)
+        }
+    }
+
+    private var localModelPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !state.localModels.isEmpty {
+                Picker("Model", selection: $state.selectedModelId) {
+                    ForEach(state.localModels) { m in
+                        HStack(spacing: 4) {
+                            Text(m.name).lineLimit(1)
+                            Text(m.formatLabel)
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                        }
+                        .tag(m.name as String?)
+                    }
+                }
+                .labelsHidden()
+                .help(state.localModels.first(where: { $0.name == state.selectedModelId })
+                    .map { "\($0.name) · \($0.formatLabel) · \($0.sizeLabel)" } ?? "Select a model")
+                .onChange(of: state.selectedModelId) {
+                    if let name = state.selectedModelId, name != state.activeModelName {
+                        state.loadModel(name, ctxSize: state.contextWindow)
+                    }
+                }
+            }
+            Button {
+                state.isSettingsOpen = true
+            } label: {
+                Label("Manage Models", systemImage: "cpu")
+                    .font(.system(size: 11))
+                    .foregroundColor(.accentColor)
+            }
+            .buttonStyle(.plain)
+            .help("Download models, get hardware-optimised recommendations, load or delete models.")
+        }
     }
 
     private var capabilityPicker: some View {
@@ -372,6 +423,7 @@ struct SidebarFooter: View {
                         .frame(height: 3)
                         .tint(used / total > 0.85 ? .orange : .accentColor)
                 }
+                .help("System RAM in use / total. The loaded model consumes most of this. Updated every 10 seconds.")
             }
             Spacer()
             Button {
@@ -383,7 +435,7 @@ struct SidebarFooter: View {
                     .frame(width: 28, height: 28)
             }
             .buttonStyle(.plain)
-            .help(state.isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode")
+            .nativeTooltip("Toggle dark/light theme. Preference is saved locally.")
 
             Button { state.isMemoryPanelOpen = true } label: {
                 Image(systemName: "brain")
@@ -392,7 +444,7 @@ struct SidebarFooter: View {
                     .frame(width: 28, height: 28)
             }
             .buttonStyle(.plain)
-            .help("Memories")
+            .nativeTooltip("Memories — facts extracted from your conversations and injected into every new chat. Click to view and manage them.")
         }
     }
 }

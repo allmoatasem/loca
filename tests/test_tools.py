@@ -7,7 +7,6 @@ Note: web_search and web_fetch tests require network/SearXNG access.
 Run offline tests only with: pytest tests/test_tools.py -v -m "not network"
 """
 
-import asyncio
 import os
 import sys
 import tempfile
@@ -15,9 +14,9 @@ import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
+
 from src.tools.file_ops import file_read, file_write
 from src.tools.shell import shell_exec
-
 
 # ---------------------------------------------------------------------------
 # file_read

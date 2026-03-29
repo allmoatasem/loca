@@ -23,12 +23,69 @@ actor BackendClient {
         } catch { return false }
     }
 
-    // MARK: - Models
+    // MARK: - Local models
+
+    func fetchLocalModels() async throws -> [LocalModel] {
+        let (data, _) = try await get("/api/local-models")
+        return try JSONDecoder().decode(LocalModelsResponse.self, from: data).models
+    }
+
+    func loadModel(name: String, ctxSize: Int? = nil) async throws {
+        let body = LoadModelRequest(name: name, ctx_size: ctxSize)
+        let (_, resp) = try await post("/api/models/load", body: body)
+        if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
+            throw BackendError.http(http.statusCode)
+        }
+    }
+
+    func deleteModel(name: String) async throws {
+        let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
+        _ = try await delete("/api/models/\(encoded)")
+    }
+
+    func activeModel() async throws -> ActiveModelResponse {
+        let (data, _) = try await get("/api/models/active")
+        return try JSONDecoder().decode(ActiveModelResponse.self, from: data)
+    }
+
+    func startDownload(repoId: String, filename: String?, format: String) async throws -> String {
+        var body: [String: Any] = ["repo_id": repoId, "format": format]
+        if let f = filename { body["filename"] = f }
+        let (data, _) = try await postRaw("/api/models/download", body: body)
+        guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let downloadId = obj["download_id"] as? String else {
+            throw BackendError.decode(NSError(domain: "Loca", code: 0, userInfo: [NSLocalizedDescriptionKey: "Missing download_id"]))
+        }
+        return downloadId
+    }
+
+    // MARK: - Hardware & recommendations
+
+    func fetchHardwareProfile() async throws -> HardwareProfile {
+        let (data, _) = try await get("/api/hardware")
+        return try JSONDecoder().decode(HardwareProfile.self, from: data)
+    }
+
+    func fetchRecommendedModels() async throws -> RecommendedModelsResponse {
+        let (data, _) = try await get("/api/recommended-models")
+        return try JSONDecoder().decode(RecommendedModelsResponse.self, from: data)
+    }
+
+    func installLlmfit() async throws -> Bool {
+        struct Resp: Decodable { let ok: Bool }
+        struct Empty: Encodable {}
+        let (data, resp) = try await post("/api/hardware/install-llmfit", body: Empty())
+        if let http = resp as? HTTPURLResponse, http.statusCode != 200 { return false }
+        return (try? JSONDecoder().decode(Resp.self, from: data))?.ok ?? false
+    }
+
+    // MARK: - Models (legacy)
 
     func fetchLMModels() async throws -> [LMModel] {
-        let (data, _) = try await get("/api/lm-models")
-        let obj = try JSONDecoder().decode(ModelListResponse.self, from: data)
-        return obj.data
+        let (data, _) = try await get("/api/local-models")
+        // Map LocalModel list to LMModel for backward compat with capability picker
+        let locals = try JSONDecoder().decode(LocalModelsResponse.self, from: data).models
+        return locals.map { LMModel(id: $0.name) }
     }
 
     // MARK: - Chat (streaming)

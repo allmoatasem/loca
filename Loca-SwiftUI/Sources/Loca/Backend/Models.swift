@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 // MARK: - Chat
 
@@ -136,44 +137,165 @@ enum ModelCapability: String, CaseIterable, Identifiable, Comparable {
     }
 }
 
-// MARK: - Models
+// MARK: - Local models (managed by Loca's own inference backend)
+
+struct LocalModel: Decodable, Identifiable {
+    let name: String
+    let path: String
+    let format: String     // "gguf" or "mlx"
+    let size_gb: Double
+    let is_loaded: Bool
+
+    var id: String { name }
+
+    var formatLabel: String { format.uppercased() }
+
+    var sizeLabel: String {
+        size_gb >= 1 ? String(format: "%.1f GB", size_gb)
+                     : String(format: "%.0f MB", size_gb * 1024)
+    }
+}
+
+struct LocalModelsResponse: Decodable {
+    let models: [LocalModel]
+}
+
+struct LoadModelRequest: Encodable {
+    let name: String
+    let ctx_size: Int?
+}
+
+struct ActiveModelResponse: Decodable {
+    let name: String?
+    let backend: String?
+    let api_base: String?
+    let running: Bool
+}
+
+struct DownloadProgress: Decodable {
+    let percent: Double     // -1 = indeterminate
+    let speed_mbps: Double
+    let eta_s: Double
+    let done: Bool
+    let error: String?
+}
+
+// MARK: - Hardware profiling & recommendations
+
+struct HardwareProfile: Decodable {
+    let platform: String
+    let arch: String
+    let cpu_name: String
+    let total_ram_gb: Double
+    let available_ram_gb: Double
+    let has_apple_silicon: Bool
+    let has_nvidia_gpu: Bool
+    let supports_mlx: Bool
+    let llmfit_available: Bool
+}
+
+struct ModelRecommendation: Decodable, Identifiable {
+    let name: String
+    let repo_id: String
+    let filename: String?
+    let format: String        // "gguf" or "mlx"
+    let size_gb: Double
+    let quant: String
+    let context: Int
+    let why: String
+    let fit_level: String     // e.g. "Perfect Fit" | "Good Fit" | "Tight Fit"
+    let use_case: String      // e.g. "code" | "reasoning" | "vision" | "general"
+    let provider: String      // e.g. "Alibaba" | "Meta" | "Mistral" | "NVIDIA"
+
+    // Synthesise missing keys for backward compat with old backend responses
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name      = try c.decode(String.self, forKey: .name)
+        repo_id   = try c.decode(String.self, forKey: .repo_id)
+        filename  = try? c.decode(String.self, forKey: .filename)
+        format    = try c.decode(String.self, forKey: .format)
+        size_gb   = try c.decode(Double.self, forKey: .size_gb)
+        quant     = try c.decode(String.self, forKey: .quant)
+        context   = try c.decode(Int.self, forKey: .context)
+        why       = try c.decode(String.self, forKey: .why)
+        fit_level = (try? c.decode(String.self, forKey: .fit_level)) ?? ""
+        use_case  = (try? c.decode(String.self, forKey: .use_case)) ?? ""
+        provider  = (try? c.decode(String.self, forKey: .provider)) ?? ""
+    }
+    private enum CodingKeys: String, CodingKey {
+        case name, repo_id, filename, format, size_gb, quant, context, why, fit_level, use_case, provider
+    }
+
+    var id: String { repo_id + (filename ?? "") }
+    var formatLabel: String { format.uppercased() }
+    var sizeLabel: String {
+        size_gb >= 1 ? String(format: "%.1f GB", size_gb)
+                     : String(format: "%.0f MB", size_gb * 1024)
+    }
+
+    /// Inferred category key for filter tabs.
+    var category: String {
+        let src = (use_case + " " + name + " " + repo_id).lowercased()
+        if src.contains("code") || src.contains("coder")               { return "code" }
+        if src.contains("vision") || src.contains("-vl") || src.contains("llava") { return "vision" }
+        if src.contains("reason") || src.contains("think") || src.contains("-r1") { return "reasoning" }
+        if src.contains("writ") || src.contains("creative")            { return "writing" }
+        return "general"
+    }
+
+    /// Traffic-light color based on fit_level from llmfit.
+    var fitColor: Color {
+        let l = fit_level.lowercased()
+        if l.contains("perfect") { return .green }
+        if l.contains("good")    { return .yellow }
+        if l.contains("tight")   { return .red }
+        if l.isEmpty             { return .secondary }
+        return .orange
+    }
+
+    var fitLabel: String {
+        fit_level.isEmpty ? "" : fit_level
+    }
+}
+
+struct RecommendedModelsResponse: Decodable {
+    let total_ram_gb: Double
+    let has_apple_silicon: Bool
+    let llmfit_available: Bool
+    let recommendations: [ModelRecommendation]
+}
+
+// MARK: - Models (legacy, kept for capability detection logic)
 
 struct LMModel: Decodable, Identifiable {
     let id: String
 
-    /// Infers capabilities from the model's ID / name.
-    /// If your model is misclassified, check the exact ID shown in LM Studio — the
-    /// detection is based on substrings of that ID.
     var capabilities: Set<ModelCapability> {
         let lower = id.lowercased()
         var caps: Set<ModelCapability> = []
 
-        // Vision models — explicit name terms + any "-vl" component
         let visionTerms = [
             "llava", "moondream", "bakllava", "minicpm-v", "idefics", "cogvlm",
             "internvl", "qwen-vl", "qwen2-vl", "qwen2.5-vl", "qwen3-vl",
             "blip", "pixtral", "phi-vision", "phi3-vision", "phi3.5-vision",
-            "gemini-vision", "paligemma", "idefics", "florence",
+            "gemini-vision", "paligemma", "florence",
         ]
-        // Also match any model with "vl" as a standalone component: -vl, -vl-, vl-
         let hasVLComponent = lower.hasPrefix("vl-") || lower.contains("-vl-")
             || lower.hasSuffix("-vl") || lower.hasSuffix(".vl")
         if visionTerms.contains(where: { lower.contains($0) }) || hasVLComponent {
             caps.insert(.vision)
         }
 
-        // Thinking / reasoning models
         let thinkTerms = [
             "qwq", "deepseek-r1", "r1-distill", "thinking",
             "skywork-o1", "marco-o1", "nemotron",
         ]
         let hasR1Component = lower.contains("-r1-") || lower.hasSuffix("-r1")
-            || lower.contains(":r1") // some GGUF tags use colon separators
+            || lower.contains(":r1")
         if thinkTerms.contains(where: { lower.contains($0) }) || hasR1Component {
             caps.insert(.thinking)
         }
 
-        // Code-specialist models
         let codeTerms = [
             "coder", "codellama", "code-llama", "starcoder", "deepseek-coder",
             "codestral", "codegemma", "codeqwen", "wizardcoder", "phind-code",
@@ -183,7 +305,6 @@ struct LMModel: Decodable, Identifiable {
             caps.insert(.code)
         }
 
-        // Fallback to general
         return caps.isEmpty ? [.general] : caps
     }
 }
@@ -246,8 +367,25 @@ struct Memory: Decodable, Identifiable {
     let content: String
     let created: Double   // Unix timestamp (matches store column name)
     let conv_id: String?
+    let type: String?     // "user_fact" | "knowledge" | "correction"
 
     var createdDate: Date { Date(timeIntervalSince1970: created) }
+
+    var typeLabel: String {
+        switch type {
+        case "knowledge":  return "Verified"
+        case "correction": return "Correction"
+        default:           return "Fact"
+        }
+    }
+
+    var typeColor: String {
+        switch type {
+        case "knowledge":  return "blue"
+        case "correction": return "orange"
+        default:           return "secondary"
+        }
+    }
 }
 
 struct MemoryListResponse: Decodable {

@@ -757,6 +757,31 @@ body.dark #input code { color: #e06c75; }
 .mem-del:hover { color: #c0392b; opacity: 1; }
 #mem-empty { text-align: center; color: var(--text-muted); font-size: 13px; padding: 32px 20px; }
 
+/* ── Tooltip system ──────────────────────────────────────────────────────── */
+[data-tip] { position: relative; }
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--text);
+  color: var(--surface);
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 5px 8px;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  width: max-content;
+  max-width: 260px;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .15s;
+  z-index: 9999;
+}
+[data-tip]:hover::after { opacity: 1; }
+
 /* ── Selectable text everywhere ──────────────────────────────────────────── */
 #input           { -webkit-user-select: text; user-select: text; }
 .asst-content    { -webkit-user-select: text; user-select: text; }
@@ -877,7 +902,7 @@ code[class*="language-"] {
 <div id="titlebar">
   <div id="tb-title">Loca</div>
   <div id="tb-actions">
-    <button class="tb-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle dark/light mode">
+    <button class="tb-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle dark/light mode" data-tip="Toggle dark/light theme.&#10;Preference is saved locally.">
       <svg id="theme-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="12" cy="12" r="5"/>
         <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
@@ -933,7 +958,8 @@ code[class*="language-"] {
     </div>
 
     <div id="sidebar-bottom">
-      <div id="mem-trigger" onclick="openMemPanel()">
+      <div id="mem-trigger" onclick="openMemPanel()"
+           data-tip="Memories are facts extracted from your conversations&#10;and injected into every new chat.&#10;Click to view and manage them.">
         <span>Memory</span>
         <span id="mem-count">—</span>
       </div>
@@ -946,7 +972,7 @@ code[class*="language-"] {
           <span>Messages</span>
           <span class="stat-val" id="stat-msgs">0</span>
         </div>
-        <div class="stat-row">
+        <div class="stat-row" data-tip="System RAM in use / total.&#10;The loaded model consumes most of this.&#10;Updated every 10 seconds.">
           <span>RAM used</span>
           <span class="stat-val" id="stat-ram">—</span>
         </div>
@@ -985,6 +1011,7 @@ code[class*="language-"] {
           <div style="display:flex;align-items:center;gap:8px">
             <button class="tb-btn" id="research-btn" onclick="toggleResearch()"
                     title="Research mode: Playwright browser + SearXNG for deeper search"
+                    data-tip="Deep Research uses a headless browser (Playwright)&#10;to fully render pages and extract content,&#10;instead of reading raw HTML.&#10;Much more accurate for dynamic sites. Slower."
                     style="border-radius:6px;font-size:11px;padding:5px 8px">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
@@ -1480,15 +1507,17 @@ function renderStats(el, { outputTokens, tok_per_sec, ttft_s, ctxTokens, numCtx,
   const pct      = Math.min(100, Math.round((ctxTokens / ctxLimit) * 100));
   const ctxLabel = ctxLimit >= 1000 ? `${Math.round(ctxLimit/1024)}k` : ctxLimit;
   const items = [
-    model ? `model:${model}` : null,
-    `${outputTokens} tok`,
-    `${tok_per_sec} tok/s`,
-    ttft_s !== null ? `TTFT ${ttft_s}s` : null,
-    `Ctx ${(ctxTokens/1000).toFixed(1)}k/${ctxLabel} (${pct}%)`,
-    researchMode ? `🔍 research` : null,
+    model ? { text: `model:${model}`, tip: 'The model currently handling this conversation.\nChange it in the model picker above.' } : null,
+    { text: `${outputTokens} tok`, tip: `Completion tokens: the number of tokens\nthe model generated in its response.\n\nPrompt tokens sent: ~${Math.round(ctxTokens - outputTokens)}` },
+    { text: `${tok_per_sec} tok/s`, tip: "Tokens per second: the model's generation speed.\nHigher is faster." },
+    ttft_s !== null ? { text: `TTFT ${ttft_s}s`, tip: 'Time to first token: how long the model took\nto start responding after receiving your message.' } : null,
+    { text: `Ctx ${(ctxTokens/1000).toFixed(1)}k/${ctxLabel} (${pct}%)`, tip: `Context used vs. the model's context window.\n${pct}% full. Higher means you're approaching\nthe context limit for this conversation.` },
+    researchMode ? { text: '🔍 research', tip: 'Deep Research is ON.\nPlaywright browser active for richer results.' } : null,
   ].filter(Boolean);
 
-  el.innerHTML = items.map(t => `<span>${esc(t)}</span>`).join('');
+  el.innerHTML = items.map(({ text, tip }) =>
+    `<span data-tip="${tip.replace(/\n/g, '&#10;')}">${esc(text)}</span>`
+  ).join('');
 
   // Click to copy stats line
   el._statsText = items.join(' · ');

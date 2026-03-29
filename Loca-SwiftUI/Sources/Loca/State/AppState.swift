@@ -75,6 +75,38 @@ final class AppState: ObservableObject {
     @Published var ramUsed:  Double?
     @Published var ramTotal: Double?
 
+    // MARK: - Local models
+
+    @Published var localModels: [LocalModel] = []
+    @Published var activeModelName: String?
+    @Published var activeBackend: String?
+    @Published var isLoadingModel     = false
+    @Published var modelLoadError: String?
+    @Published var isSettingsOpen     = false
+
+    // MARK: - Active download (persists across sheet open/close)
+
+    struct ActiveDownload {
+        var repoId: String
+        var filename: String?
+        var format: String
+        var downloadId: String
+        var percent: Double       // -1 = indeterminate
+        var speedMbps: Double = 0
+        var etaSeconds: Double = 0
+        var done: Bool = false
+        var error: String?
+    }
+    @Published var activeDownload: ActiveDownload?
+
+    // MARK: - Hardware & recommendations
+
+    @Published var hardwareProfile: HardwareProfile?
+    @Published var recommendedModels: [ModelRecommendation] = []
+    @Published var isLoadingRecommendations = false
+    @Published var isInstallingLlmfit = false
+    @Published var llmfitAvailable = false
+
     // MARK: - Settings
 
     @Published var contextWindow: Int  = 32768
@@ -100,5 +132,11 @@ final class AppState: ObservableObject {
     func toggleStar(_ id: String)                          { Task { await _toggleStar(id) } }
     func setConversationFolder(_ id: String, folder: String?) { Task { await _setFolder(id, folder: folder) } }
     func searchConversations()                             { Task { await _searchConversations() } }
+    func reloadLocalModels()    { Task { await _loadLocalModels() } }
+    func loadModel(_ name: String, ctxSize: Int? = nil) { Task { await _loadModel(name, ctxSize: ctxSize) } }
+    func deleteModel(_ name: String) { Task { await _deleteModel(name) } }
+    func reloadRecommendations() { Task { await _loadRecommendations() } }
+    func installLlmfit()         { Task { await _installLlmfit() } }
+    func startModelDownload(repoId: String, filename: String?, format: String) { _startDownload(repoId: repoId, filename: filename, format: format) }
 }
 

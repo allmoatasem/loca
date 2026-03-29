@@ -2,30 +2,31 @@
 Orchestrator — the main request loop.
 
 Flow per turn:
-  1. Route the message to a model
+  1. Route the message to a mode (general/code/reason/write) for system prompt selection
   2. Optionally trigger web search and inject results as system context
-  3. Call the model via its backend API (LM Studio or Ollama, OpenAI-compatible)
-  4. Parse any tool calls in the response
-  5. Execute tools → inject results → re-call model (max N times)
-  6. Return final response
+  3. Inject memories from the memory store into the system prompt
+  4. Call the inference backend via OpenAI-compatible /v1/chat/completions
+  5. Parse any tool calls in the response
+  6. Execute tools → inject results → re-call model (max N times)
+  7. Return final response
 """
 
 import asyncio
 import json
 import logging
 import re
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Literal, overload
 
 import httpx
 
-from .model_manager import ModelManager
 from .memory_extractor import extract_memories
+from .model_manager import ModelManager
 from .router import Model, RouteResult, route
 from .store import add_memory, get_memories_context
-from .tools.web_search import format_search_results, web_search
-from .tools.web_fetch import web_fetch
 from .tools.file_ops import file_read, file_write
 from .tools.shell import shell_exec
+from .tools.web_fetch import web_fetch
+from .tools.web_search import format_search_results, web_search
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +45,17 @@ class Orchestrator:
         self._routing_cfg = config.get("routing", {})
         self._tools_cfg = config.get("tools", {})
         self._max_tool_calls: int = self._routing_cfg.get("max_tool_calls_per_turn", 5)
-        self._lmstudio_base: str = config.get("proxy", {}).get("lmstudio_base_url", "http://localhost:1234")
 
     # ------------------------------------------------------------------
     # Public entrypoint
     # ------------------------------------------------------------------
+
+    @overload
+    async def handle(self, messages: list[dict], *, has_image: bool = ..., stream: Literal[True], model_hint: str | None = ..., model_override: str | None = ..., num_ctx: int | None = ..., research_mode: bool = ...) -> AsyncIterator[str | dict]: ...
+    @overload
+    async def handle(self, messages: list[dict], *, has_image: bool = ..., stream: Literal[False], model_hint: str | None = ..., model_override: str | None = ..., num_ctx: int | None = ..., research_mode: bool = ...) -> dict: ...
+    @overload
+    async def handle(self, messages: list[dict], *, has_image: bool = ..., stream: bool = ..., model_hint: str | None = ..., model_override: str | None = ..., num_ctx: int | None = ..., research_mode: bool = ...) -> dict | AsyncIterator[str | dict]: ...
 
     async def handle(
         self,
@@ -59,7 +66,7 @@ class Orchestrator:
         model_override: str | None = None,
         num_ctx: int | None = None,
         research_mode: bool = False,
-    ) -> dict | AsyncIterator[str]:
+    ) -> dict | AsyncIterator[str | dict]:
         user_message = _last_user_content(messages)
         result: RouteResult = route(user_message, has_image=has_image, model_hint=model_hint)
         logger.info(
@@ -136,7 +143,7 @@ class Orchestrator:
         num_ctx: int | None = None,
         research_mode: bool = False,
         memory_injected: bool = False,
-    ) -> AsyncIterator[str | dict]:
+    ) -> AsyncIterator[str | dict[str, Any]]:
         """Streaming: collects full response (for tool-call simplicity), yields in chunks.
         Yields a metadata dict first so the proxy can forward the actual model name."""
         response = await self._call_with_tools(model_name, api_base, messages, route_result, num_ctx=num_ctx)
@@ -260,13 +267,14 @@ class Orchestrator:
     async def extract_and_save_memories(
         self, messages: list[dict], conv_id: str | None = None
     ) -> list[dict]:
-        """Extract memorable facts from messages, persist them, return list."""
+        """Run three-pass memory extraction, persist results, return saved list."""
         model_name, api_base = await self.mm.ensure_loaded(Model.GENERAL)
-        facts = await extract_memories(messages, model_name, api_base)
+        extracted = await extract_memories(messages, model_name, api_base)
         saved = []
-        for fact in facts:
-            mid = add_memory(fact, conv_id=conv_id)
-            saved.append({"id": mid, "content": fact})
+        for mem_type, facts in extracted.items():
+            for fact in facts:
+                mid = add_memory(fact, conv_id=conv_id, type=mem_type)
+                saved.append({"id": mid, "content": fact, "type": mem_type})
         return saved
 
     # ------------------------------------------------------------------
