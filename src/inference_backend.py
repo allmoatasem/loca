@@ -44,6 +44,7 @@ class InferenceBackend:
         self._current_model: str | None = None
         self._current_backend: Backend | None = None
         self._stderr_lines: list[str] = []   # rolling buffer for error reporting
+        self._load_lock = asyncio.Lock()      # prevents concurrent start() calls
 
     # ------------------------------------------------------------------
     # Public API
@@ -51,6 +52,11 @@ class InferenceBackend:
 
     async def start(self, model_path: str, ctx_size: int | None = None) -> None:
         """Start the inference server for the given model path."""
+        async with self._load_lock:
+            await self._start_locked(model_path, ctx_size)
+
+    async def _start_locked(self, model_path: str, ctx_size: int | None = None) -> None:
+        """Internal: called only while _load_lock is held."""
         if self._proc and self._proc.returncode is None:
             await self.stop()
 

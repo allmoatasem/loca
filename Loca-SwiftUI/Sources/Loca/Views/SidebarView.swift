@@ -10,7 +10,9 @@ private struct TooltipModifier: ViewModifier {
     let text: String
 
     func body(content: Content) -> some View {
-        content.overlay(TooltipView(text: text).allowsHitTesting(false))
+        // Use background so the NSView is behind the SwiftUI button (won't intercept
+        // clicks), but AppKit can still fire tooltip tracking on mouse-enter.
+        content.background(TooltipView(text: text))
     }
 }
 

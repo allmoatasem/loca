@@ -312,7 +312,7 @@ async def start_download(request: Request) -> JSONResponse:
 
 
 @app.get("/api/models/download/{download_id}/progress")
-async def download_progress(download_id: str) -> StreamingResponse:
+async def download_progress(download_id: str) -> StreamingResponse | JSONResponse:
     """SSE stream of DownloadProgress events for a running download."""
     queue = _download_jobs.get(download_id)
     if not queue:

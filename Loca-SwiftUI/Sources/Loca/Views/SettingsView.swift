@@ -129,7 +129,7 @@ struct SettingsView: View {
             } else if !model.is_loaded {
                 Button("Load") {
                     state.selectedModelId = model.name
-                    state.loadModel(model.name, ctxSize: state.contextWindow)
+                    // onChange in SidebarView picker handles the actual load call
                 }
                 .controlSize(.mini)
                 .buttonStyle(.bordered)
