@@ -75,6 +75,15 @@ final class AppState: ObservableObject {
     @Published var ramUsed:  Double?
     @Published var ramTotal: Double?
 
+    // MARK: - Local models
+
+    @Published var localModels: [LocalModel] = []
+    @Published var activeModelName: String?
+    @Published var activeBackend: String?
+    @Published var isLoadingModel     = false
+    @Published var modelLoadError: String?
+    @Published var isSettingsOpen     = false
+
     // MARK: - Settings
 
     @Published var contextWindow: Int  = 32768
@@ -100,5 +109,8 @@ final class AppState: ObservableObject {
     func toggleStar(_ id: String)                          { Task { await _toggleStar(id) } }
     func setConversationFolder(_ id: String, folder: String?) { Task { await _setFolder(id, folder: folder) } }
     func searchConversations()                             { Task { await _searchConversations() } }
+    func reloadLocalModels()    { Task { await _loadLocalModels() } }
+    func loadModel(_ name: String, ctxSize: Int? = nil) { Task { await _loadModel(name, ctxSize: ctxSize) } }
+    func deleteModel(_ name: String) { Task { await _deleteModel(name) } }
 }
 

@@ -32,26 +32,7 @@ struct SidebarView: View {
                 capabilityPicker
             }
 
-            let capModels = state.models(for: state.selectedCapability)
-            if !capModels.isEmpty {
-                Picker("Model", selection: $state.selectedModelId) {
-                    ForEach(capModels) { m in
-                        Text(shortModelName(m.id)).lineLimit(1).tag(m.id as String?)
-                    }
-                }
-                .labelsHidden()
-                .help(capModels.first(where: { $0.id == state.selectedModelId })?.id ?? "")
-                .onChange(of: state.selectedCapability) {
-                    if let first = state.models(for: state.selectedCapability).first {
-                        state.selectedModelId = first.id
-                    }
-                }
-            } else if !state.availableModels.isEmpty {
-                Text("No \(state.selectedCapability.label.lowercased()) models loaded in LM Studio")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            localModelPicker
 
             HStack {
                 Text("Context").font(.caption).foregroundColor(.secondary)
@@ -68,9 +49,62 @@ struct SidebarView: View {
             Toggle("Deep Research", isOn: $state.researchMode)
                 .controlSize(.mini)
                 .toggleStyle(.switch)
-                .help("Playwright deep fetch. Basic SearXNG search is always on for factual questions.")
+                .help("Deep Research uses a headless browser (Playwright) to fully render pages and extract content, instead of reading raw HTML. Much more accurate for dynamic sites. Slower.")
+
+            HStack {
+                Spacer()
+                Button {
+                    state.isSettingsOpen = true
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Open settings — manage models, download new models, configure context window")
+                .sheet(isPresented: $state.isSettingsOpen) {
+                    SettingsView()
+                        .environmentObject(state)
+                }
+            }
         }
         .padding(12)
+    }
+
+    private var localModelPicker: some View {
+        Group {
+            if state.localModels.isEmpty {
+                Button {
+                    state.isSettingsOpen = true
+                } label: {
+                    Label("Download a model…", systemImage: "arrow.down.circle")
+                        .font(.system(size: 11))
+                        .foregroundColor(.accentColor)
+                }
+                .buttonStyle(.plain)
+            } else {
+                Picker("Model", selection: $state.selectedModelId) {
+                    ForEach(state.localModels) { m in
+                        HStack(spacing: 4) {
+                            Text(m.name).lineLimit(1)
+                            Text(m.formatLabel)
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                        }
+                        .tag(m.name as String?)
+                    }
+                }
+                .labelsHidden()
+                .help(state.localModels.first(where: { $0.name == state.selectedModelId })
+                    .map { "\($0.name) · \($0.formatLabel) · \($0.sizeLabel)" } ?? "Select a model")
+                .onChange(of: state.selectedModelId) {
+                    // Load the newly selected model into the inference backend
+                    if let name = state.selectedModelId, name != state.activeModelName {
+                        state.loadModel(name, ctxSize: state.contextWindow)
+                    }
+                }
+            }
+        }
     }
 
     private var capabilityPicker: some View {
@@ -372,6 +406,7 @@ struct SidebarFooter: View {
                         .frame(height: 3)
                         .tint(used / total > 0.85 ? .orange : .accentColor)
                 }
+                .help("System RAM in use / total. The loaded model consumes most of this. Updated every 10 seconds.")
             }
             Spacer()
             Button {
@@ -383,7 +418,7 @@ struct SidebarFooter: View {
                     .frame(width: 28, height: 28)
             }
             .buttonStyle(.plain)
-            .help(state.isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode")
+            .help("Toggle dark/light theme. Preference is saved locally.")
 
             Button { state.isMemoryPanelOpen = true } label: {
                 Image(systemName: "brain")
@@ -392,7 +427,7 @@ struct SidebarFooter: View {
                     .frame(width: 28, height: 28)
             }
             .buttonStyle(.plain)
-            .help("Memories")
+            .help("Memories — facts extracted from your conversations and injected into every new chat. Click to view and manage them.")
         }
     }
 }

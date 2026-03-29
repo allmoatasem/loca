@@ -57,6 +57,9 @@ jobs:
 
   swift-build:
     name: Swift build (macOS)
+    # Only run on pushes to main — macos-14 runners cost 10x ubuntu minutes.
+    # PRs get lint + test coverage; main gets the full build validation.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4

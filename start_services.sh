@@ -48,7 +48,16 @@ bail() {
     shutdown
 }
 
-# ── 1. Orchestrator venv ──────────────────────────────────────────────────────
+# ── 1. Check inference backend binaries ──────────────────────────────────────
+# llama-server is required for GGUF models (cross-platform).
+# mlx_lm is optional — only needed for MLX models on Apple Silicon.
+if ! command -v llama-server > /dev/null 2>&1; then
+    bail "llama-server not found. Install llama.cpp via Homebrew:
+  brew install llama.cpp
+Then relaunch Loca."
+fi
+
+# ── 2. Orchestrator venv ──────────────────────────────────────────────────────
 _venv_ok=0
 if [ -d "$VENV" ] \
    && "$VENV/bin/python" -c "import sys" 2>/dev/null \
@@ -67,7 +76,7 @@ elif [ "$DIR/requirements.txt" -nt "$VENV/bin/pip" ]; then
     "$VENV/bin/pip" install -r "$DIR/requirements.txt" -q || bail "Failed to install dependencies."
 fi
 
-# ── 2. SearXNG setup (first-run) ─────────────────────────────────────────────
+# ── 3. SearXNG setup (first-run) ─────────────────────────────────────────────
 if [ -z "$PYTHON312" ] || [ ! -f "$PYTHON312" ]; then
     bail "Python 3.12 not found. Run: brew install python@3.12"
 fi

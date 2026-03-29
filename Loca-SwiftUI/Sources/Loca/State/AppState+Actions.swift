@@ -14,7 +14,8 @@ extension AppState {
                 }
                 if await BackendClient.shared.isHealthy() {
                     isBackendReady = true
-                    await _loadModels()
+                    await _loadLocalModels()
+                    _loadModels()
                     await _loadConversationList()
                     await _loadMemories()
                     _scheduleStatsPoll()
@@ -25,17 +26,49 @@ extension AppState {
         }
     }
 
-    // MARK: - Models
+    // MARK: - Local models
+
+    func _loadLocalModels() async {
+        do {
+            localModels = try await BackendClient.shared.fetchLocalModels()
+            let active = try? await BackendClient.shared.activeModel()
+            activeModelName = active?.name
+            activeBackend   = active?.backend
+        } catch {
+            // Non-fatal
+        }
+    }
+
+    func _loadModel(_ name: String, ctxSize: Int? = nil) async {
+        isLoadingModel = true
+        modelLoadError = nil
+        do {
+            try await BackendClient.shared.loadModel(name: name, ctxSize: ctxSize)
+            await _loadLocalModels()
+        } catch {
+            modelLoadError = error.localizedDescription
+        }
+        isLoadingModel = false
+    }
+
+    func _deleteModel(_ name: String) async {
+        do {
+            try await BackendClient.shared.deleteModel(name: name)
+            await _loadLocalModels()
+        } catch {
+            modelLoadError = error.localizedDescription
+        }
+    }
+
+    // MARK: - Models (capability routing, uses local model names)
 
     func _loadModels() {
         Task {
             do {
                 availableModels = try await BackendClient.shared.fetchLMModels()
-                // If the current capability has no models, fall back to general
                 if models(for: selectedCapability).isEmpty {
                     selectedCapability = .general
                 }
-                // Pick a default model if none selected, or current is stale
                 let capModels = models(for: selectedCapability)
                 let ids = availableModels.map(\.id)
                 if selectedModelId == nil || !ids.contains(selectedModelId!) {
