@@ -1,44 +1,57 @@
+# ── Inference backend ────────────────────────────────────────────────────────
+# Loca manages its own inference server (mlx_lm or llama-server).
+# No LM Studio required.
+inference:
+  backend: auto            # auto | mlx | llama.cpp
+  port: 8080               # port the inference server listens on
+  models_dir: ~/loca_models  # root directory for all downloaded models
+                           #   ~/loca_models/gguf/  ← .gguf files
+                           #   ~/loca_models/mlx/   ← MLX model directories
+  ctx_size: 32768          # default context window size (tokens)
+  llama_server: llama-server  # binary name or full path to llama-server
+  active_model: null       # relative path from models_dir to load on startup
+                           # e.g. "gguf/qwen2.5-7b-q4_k_m.gguf"
+
+# ── Model routing ────────────────────────────────────────────────────────────
+# These names map routing modes → display names.
+# The active inference backend serves whichever model is loaded — only one at
+# a time. Use /api/models/load to switch models.
 models:
   general:
-    lmstudio_name: qwen3.5-35b-a3b
-    always_loaded: true
-    idle_unload_minutes: null
+    display_name: General
     capabilities:
     - vision
     - code
     - chat
     - analysis
   reason:
-    lmstudio_name: nvidia/nemotron-3-nano
-    always_loaded: false
-    idle_unload_minutes: 10
+    display_name: Thinking
     capabilities:
     - reasoning
     - planning
   code:
-    lmstudio_name: qwen/qwen3-coder-next
-    always_loaded: false
-    idle_unload_minutes: 10
+    display_name: Code
     capabilities:
     - code
   write:
-    lmstudio_name: qwen3.5-27b-claude-4.6-opus-distilled-mlx
-    always_loaded: false
-    idle_unload_minutes: 10
+    display_name: Write
     capabilities:
     - creative_writing
     - summarization
     - drafting
     - instruction_following
+
 routing:
   default_model: general
   code_complexity_threshold: multi-file or >100 lines or architecture
   max_tool_calls_per_turn: 5
+
 search:
   searxng_url: http://127.0.0.1:8888
   max_results: 5
   max_tokens_per_result: 500
   content_extractor: trafilatura
+
 tools:
   shell_exec:
     enabled: true
@@ -54,7 +67,7 @@ tools:
     - git
     - python3
     - pwd
+
 proxy:
   host: 0.0.0.0
   port: 8000
-  lmstudio_base_url: http://localhost:1234

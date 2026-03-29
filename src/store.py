@@ -38,14 +38,19 @@ def _migrate(c: sqlite3.Connection) -> None:
         id      TEXT PRIMARY KEY,
         content TEXT NOT NULL,
         created REAL NOT NULL,
-        conv_id TEXT
+        conv_id TEXT,
+        type    TEXT NOT NULL DEFAULT 'user_fact'
     );
     """)
-    # Idempotent additions for existing databases
+    # Idempotent column additions for existing databases
+    conv_cols = {r[1] for r in c.execute("PRAGMA table_info(conversations)")}
     for col, defn in [("starred", "INTEGER NOT NULL DEFAULT 0"), ("folder", "TEXT")]:
-        existing = {r[1] for r in c.execute("PRAGMA table_info(conversations)")}
-        if col not in existing:
+        if col not in conv_cols:
             c.execute(f"ALTER TABLE conversations ADD COLUMN {col} {defn}")
+
+    mem_cols = {r[1] for r in c.execute("PRAGMA table_info(memories)")}
+    if "type" not in mem_cols:
+        c.execute("ALTER TABLE memories ADD COLUMN type TEXT NOT NULL DEFAULT 'user_fact'")
     c.commit()
 
 
@@ -80,6 +85,8 @@ def patch_conversation(conv_id: str, *, starred=_MISSING, folder=_MISSING) -> No
 
 
 def search_conversations(query: str, limit: int = 50) -> list[dict]:
+    if not query.strip():
+        return []
     like = f"%{query}%"
     with _conn() as c:
         return [dict(r) for r in c.execute(
@@ -126,22 +133,37 @@ def delete_conversation(conv_id: str) -> None:
 
 # ── Memories ──────────────────────────────────────────────────────────────────
 
-def list_memories(limit: int = 200) -> list[dict]:
+MEMORY_TYPES = ("user_fact", "knowledge", "correction")
+
+
+def list_memories(limit: int = 200, type: str | None = None) -> list[dict]:
     with _conn() as c:
+        if type:
+            return [dict(r) for r in c.execute(
+                "SELECT * FROM memories WHERE type=? ORDER BY created DESC LIMIT ?", (type, limit)
+            )]
         return [dict(r) for r in c.execute(
             "SELECT * FROM memories ORDER BY created DESC LIMIT ?", (limit,)
         )]
 
 
-def add_memory(content: str, conv_id: str | None = None) -> str:
+def add_memory(content: str, conv_id: str | None = None, type: str = "user_fact") -> str:
+    if type not in MEMORY_TYPES:
+        type = "user_fact"
     mid = str(uuid.uuid4())
     with _conn() as c:
         c.execute(
-            "INSERT INTO memories (id, content, created, conv_id) VALUES (?, ?, ?, ?)",
-            (mid, content.strip(), time.time(), conv_id),
+            "INSERT INTO memories (id, content, created, conv_id, type) VALUES (?, ?, ?, ?, ?)",
+            (mid, content.strip(), time.time(), conv_id, type),
         )
         c.commit()
     return mid
+
+
+def update_memory(mem_id: str, content: str) -> None:
+    with _conn() as c:
+        c.execute("UPDATE memories SET content=? WHERE id=?", (content.strip(), mem_id))
+        c.commit()
 
 
 def delete_memory(mem_id: str) -> None:
@@ -150,10 +172,32 @@ def delete_memory(mem_id: str) -> None:
         c.commit()
 
 
-def get_memories_context(limit: int = 15) -> str:
-    """Return the most recent memories formatted for injection into system prompts."""
-    mems = list_memories(limit)
-    if not mems:
+def get_memories_context(limit_per_type: int = 10) -> str:
+    """
+    Return memories grouped by type, formatted for injection into system prompts.
+
+    Three sections:
+      - User facts: preferences, projects, personal context
+      - Verified knowledge: facts confirmed via tool calls (web_search, web_fetch)
+      - User corrections: rules the user has taught the model
+    """
+    facts = list_memories(limit=limit_per_type, type="user_fact")
+    knowledge = list_memories(limit=limit_per_type, type="knowledge")
+    corrections = list_memories(limit=limit_per_type, type="correction")
+
+    if not facts and not knowledge and not corrections:
         return ""
-    lines = "\n".join(f"- {m['content']}" for m in reversed(mems))
-    return f"<memory>\n{lines}\n</memory>"
+
+    sections: list[str] = []
+    if facts:
+        lines = "\n".join(f"- {m['content']}" for m in reversed(facts))
+        sections.append(f"User facts:\n{lines}")
+    if knowledge:
+        lines = "\n".join(f"- {m['content']}" for m in reversed(knowledge))
+        sections.append(f"Verified knowledge (retrieved via search/fetch):\n{lines}")
+    if corrections:
+        lines = "\n".join(f"- {m['content']}" for m in reversed(corrections))
+        sections.append(f"User corrections (rules to apply going forward):\n{lines}")
+
+    body = "\n\n".join(sections)
+    return f"<memory>\n{body}\n</memory>"

@@ -1,24 +1,24 @@
 """
 FastAPI proxy server.
 
-Sits between Open WebUI and LM Studio, intercepting /v1/chat/completions to apply:
+Intercepts /v1/chat/completions to apply:
   - Intelligent model routing
   - Web search injection
   - Tool call orchestration
+  - Memory injection
 
-All other LM Studio endpoints are reverse-proxied transparently.
+Manages the local inference backend (mlx_lm or llama-server) directly —
+no LM Studio required.
 
 Start with:
     uvicorn src.proxy:app --host 0.0.0.0 --port 8000 --reload
-
-Point Open WebUI at http://localhost:8000 (OpenAI-compatible mode).
-LM Studio runs at localhost:1234.
 """
 
 import asyncio
 import json
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -30,12 +30,13 @@ import yaml
 from fastapi import FastAPI, File, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
+from .inference_backend import InferenceBackend
 from .model_manager import ModelManager
 from .orchestrator import Orchestrator
 from .store import (
     list_conversations, get_conversation, save_conversation, delete_conversation,
     patch_conversation, search_conversations,
-    list_memories, add_memory, delete_memory,
+    list_memories, add_memory, update_memory, delete_memory,
 )
 from .memory_extractor import extract_memories
 
@@ -59,24 +60,40 @@ def _load_config() -> dict:
 # ---------------------------------------------------------------------------
 
 _config: dict = {}
+_inference_backend: InferenceBackend | None = None
 _model_manager: ModelManager | None = None
 _orchestrator: Orchestrator | None = None
+
+# In-memory download job tracking: download_id → asyncio.Queue of DownloadProgress
+_download_jobs: dict[str, asyncio.Queue] = {}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    global _config, _model_manager, _orchestrator
+    global _config, _inference_backend, _model_manager, _orchestrator
 
     _config = _load_config()
-    proxy_cfg = _config.get("proxy", {})
-    lmstudio_url: str = proxy_cfg.get("lmstudio_base_url", "http://localhost:1234")
-
-    _model_manager = ModelManager(_config, lmstudio_base_url=lmstudio_url)
+    _inference_backend = InferenceBackend(_config)
+    _model_manager = ModelManager(_config, _inference_backend)
     _orchestrator = Orchestrator(_config, _model_manager)
 
-    logger.info(f"Orchestrator proxy started — forwarding to LM Studio at {lmstudio_url}")
+    # Auto-start the active model if configured
+    active_rel = _config.get("inference", {}).get("active_model")
+    if active_rel:
+        from pathlib import Path
+        active_path = _inference_backend.models_dir / active_rel
+        if active_path.exists():
+            logger.info(f"Auto-starting inference backend with: {active_path}")
+            try:
+                await _inference_backend.start(str(active_path))
+            except Exception as e:
+                logger.warning(f"Could not auto-start inference backend: {e}")
+
+    logger.info("Loca proxy started")
     yield
-    # Cleanup (nothing special needed)
+    # Shutdown
+    if _inference_backend:
+        await _inference_backend.stop()
 
 
 app = FastAPI(title="Local AI Orchestrator Proxy", lifespan=lifespan)
@@ -204,31 +221,113 @@ async def _openai_stream_response(
 
 
 # ---------------------------------------------------------------------------
-# /v1/models — routing aliases (for Open WebUI / legacy clients)
-# /api/lm-models — actual models available in LM Studio (for model picker UI)
+# /v1/models — OpenAI-compatible model list
+# /api/local-models — full model inventory with format/size info
+# /api/models/* — load, delete, download, active status
 # ---------------------------------------------------------------------------
 
 @app.get("/v1/models")
 async def models() -> JSONResponse:
-    models_cfg = _config.get("models", {})
-    model_list = [
-        {"id": alias, "object": "model", "owned_by": "local"}
-        for alias in models_cfg
-    ]
+    assert _model_manager is not None
+    local = _model_manager.list_local()
+    model_list = [{"id": m.name, "object": "model", "owned_by": "local"} for m in local]
     return JSONResponse(content={"object": "list", "data": model_list})
 
 
-@app.get("/api/lm-models")
-async def lm_models() -> JSONResponse:
-    """Return models currently loaded/available in LM Studio."""
-    lmstudio_url = _config.get("proxy", {}).get("lmstudio_base_url", "http://localhost:1234")
-    async with httpx.AsyncClient(timeout=8.0) as client:
-        try:
-            resp = await client.get(f"{lmstudio_url}/v1/models")
-            resp.raise_for_status()
-            return JSONResponse(resp.json())
-        except Exception:
-            return JSONResponse({"object": "list", "data": []})
+@app.get("/api/local-models")
+async def local_models() -> JSONResponse:
+    """Return all downloaded models with format, size, and loaded status."""
+    assert _model_manager is not None
+    return JSONResponse({"models": [m.to_dict() for m in _model_manager.list_local()]})
+
+
+@app.get("/api/models/active")
+async def active_model() -> JSONResponse:
+    """Return info about the currently loaded model."""
+    assert _inference_backend is not None
+    return JSONResponse({
+        "name": _inference_backend.current_model(),
+        "backend": _inference_backend.current_backend(),
+        "api_base": _inference_backend.api_base(),
+        "running": _inference_backend.is_running(),
+    })
+
+
+@app.post("/api/models/load")
+async def load_model(request: Request) -> JSONResponse:
+    """Load a local model into the inference backend."""
+    assert _model_manager is not None
+    body = await request.json()
+    name = body.get("name", "")
+    ctx_size = body.get("ctx_size")
+    if not name:
+        return JSONResponse({"error": "name is required"}, status_code=400)
+    try:
+        model_name, api_base = await _model_manager.load(name, ctx_size)
+        return JSONResponse({"ok": True, "name": model_name, "api_base": api_base})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.delete("/api/models/{model_name:path}")
+async def delete_model(model_name: str) -> JSONResponse:
+    """Delete a downloaded model by name."""
+    assert _model_manager is not None
+    try:
+        _model_manager.delete(model_name)
+        return JSONResponse({"ok": True})
+    except FileNotFoundError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/models/download")
+async def start_download(request: Request) -> JSONResponse:
+    """
+    Start a model download. Returns a download_id to poll for progress.
+    Body: {repo_id, filename?, format}
+    """
+    assert _model_manager is not None
+    body = await request.json()
+    repo_id = body.get("repo_id", "")
+    filename = body.get("filename")
+    fmt = body.get("format", "gguf")
+    if not repo_id:
+        return JSONResponse({"error": "repo_id is required"}, status_code=400)
+
+    download_id = str(uuid.uuid4())
+    queue: asyncio.Queue = asyncio.Queue()
+    _download_jobs[download_id] = queue
+
+    async def _run_download() -> None:
+        async for progress in _model_manager.download(repo_id, filename, fmt):
+            await queue.put(progress)
+
+    asyncio.create_task(_run_download())
+    return JSONResponse({"download_id": download_id})
+
+
+@app.get("/api/models/download/{download_id}/progress")
+async def download_progress(download_id: str) -> StreamingResponse:
+    """SSE stream of DownloadProgress events for a running download."""
+    queue = _download_jobs.get(download_id)
+    if not queue:
+        return JSONResponse({"error": "unknown download_id"}, status_code=404)
+
+    async def _stream() -> AsyncIterator[bytes]:
+        while True:
+            try:
+                progress = await asyncio.wait_for(queue.get(), timeout=30.0)
+                data = json.dumps(progress.to_dict())
+                yield f"data: {data}\n\n".encode()
+                if progress.done or progress.error:
+                    _download_jobs.pop(download_id, None)
+                    break
+            except asyncio.TimeoutError:
+                yield b"data: {\"heartbeat\": true}\n\n"
+
+    return StreamingResponse(_stream(), media_type="text/event-stream")
 
 
 # ---------------------------------------------------------------------------
@@ -399,15 +498,29 @@ async def api_delete_conversation(conv_id: str) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 @app.get("/api/memories")
-async def api_list_memories() -> JSONResponse:
-    return JSONResponse({"memories": list_memories()})
+async def api_list_memories(type: str | None = None) -> JSONResponse:
+    return JSONResponse({"memories": list_memories(type=type)})
 
 
 @app.post("/api/memories")
 async def api_add_memory(request: Request) -> JSONResponse:
     body = await request.json()
-    mid = add_memory(content=body.get("content", ""), conv_id=body.get("conv_id"))
+    mid = add_memory(
+        content=body.get("content", ""),
+        conv_id=body.get("conv_id"),
+        type=body.get("type", "user_fact"),
+    )
     return JSONResponse({"id": mid})
+
+
+@app.patch("/api/memories/{mem_id}")
+async def api_update_memory(mem_id: str, request: Request) -> JSONResponse:
+    body = await request.json()
+    content = body.get("content", "").strip()
+    if not content:
+        return JSONResponse({"error": "content is required"}, status_code=400)
+    update_memory(mem_id, content)
+    return JSONResponse({"ok": True})
 
 
 @app.delete("/api/memories/{mem_id}")
@@ -418,38 +531,13 @@ async def api_delete_memory(mem_id: str) -> JSONResponse:
 
 @app.post("/api/extract-memories")
 async def api_extract_memories(request: Request) -> JSONResponse:
-    """Run memory extraction on the given messages and persist new facts."""
+    """Run three-pass memory extraction on the given messages and persist results."""
     assert _orchestrator is not None
     body = await request.json()
     messages = body.get("messages", [])
     conv_id  = body.get("conv_id")
     saved = await _orchestrator.extract_and_save_memories(messages, conv_id)
     return JSONResponse({"memories": saved})
-
-
-# ---------------------------------------------------------------------------
-# Transparent reverse proxy for all other LM Studio endpoints
-# ---------------------------------------------------------------------------
-
-@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-async def reverse_proxy(request: Request, path: str) -> Response:
-    lmstudio_url = _config.get("proxy", {}).get("lmstudio_base_url", "http://localhost:1234")
-    target_url = f"{lmstudio_url}/{path}"
-
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        proxied = await client.request(
-            method=request.method,
-            url=target_url,
-            headers={k: v for k, v in request.headers.items() if k.lower() != "host"},
-            content=await request.body(),
-            params=dict(request.query_params),
-        )
-
-    return Response(
-        content=proxied.content,
-        status_code=proxied.status_code,
-        headers=dict(proxied.headers),
-    )
 
 
 # ---------------------------------------------------------------------------

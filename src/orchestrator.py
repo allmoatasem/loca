@@ -2,12 +2,13 @@
 Orchestrator — the main request loop.
 
 Flow per turn:
-  1. Route the message to a model
+  1. Route the message to a mode (general/code/reason/write) for system prompt selection
   2. Optionally trigger web search and inject results as system context
-  3. Call the model via its backend API (LM Studio or Ollama, OpenAI-compatible)
-  4. Parse any tool calls in the response
-  5. Execute tools → inject results → re-call model (max N times)
-  6. Return final response
+  3. Inject memories from the memory store into the system prompt
+  4. Call the inference backend via OpenAI-compatible /v1/chat/completions
+  5. Parse any tool calls in the response
+  6. Execute tools → inject results → re-call model (max N times)
+  7. Return final response
 """
 
 import asyncio
@@ -44,7 +45,6 @@ class Orchestrator:
         self._routing_cfg = config.get("routing", {})
         self._tools_cfg = config.get("tools", {})
         self._max_tool_calls: int = self._routing_cfg.get("max_tool_calls_per_turn", 5)
-        self._lmstudio_base: str = config.get("proxy", {}).get("lmstudio_base_url", "http://localhost:1234")
 
     # ------------------------------------------------------------------
     # Public entrypoint
@@ -260,13 +260,14 @@ class Orchestrator:
     async def extract_and_save_memories(
         self, messages: list[dict], conv_id: str | None = None
     ) -> list[dict]:
-        """Extract memorable facts from messages, persist them, return list."""
+        """Run three-pass memory extraction, persist results, return saved list."""
         model_name, api_base = await self.mm.ensure_loaded(Model.GENERAL)
-        facts = await extract_memories(messages, model_name, api_base)
+        extracted = await extract_memories(messages, model_name, api_base)
         saved = []
-        for fact in facts:
-            mid = add_memory(fact, conv_id=conv_id)
-            saved.append({"id": mid, "content": fact})
+        for mem_type, facts in extracted.items():
+            for fact in facts:
+                mid = add_memory(fact, conv_id=conv_id, type=mem_type)
+                saved.append({"id": mid, "content": fact, "type": mem_type})
         return saved
 
     # ------------------------------------------------------------------
