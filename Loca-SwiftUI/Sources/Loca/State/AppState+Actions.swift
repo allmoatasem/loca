@@ -92,7 +92,9 @@ extension AppState {
                     if line.hasPrefix("data: "),
                        let data = String(line.dropFirst(6)).data(using: .utf8),
                        let p = try? JSONDecoder().decode(DownloadProgress.self, from: data) {
-                        activeDownload?.percent = p.percent
+                        activeDownload?.percent    = p.percent
+                        activeDownload?.speedMbps  = p.speed_mbps
+                        activeDownload?.etaSeconds = p.eta_s
                         if let err = p.error { activeDownload?.error = err; return }
                         if p.done {
                             activeDownload?.done = true

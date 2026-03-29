@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import platform
 import shutil
 import sys
@@ -66,10 +67,15 @@ class InferenceBackend:
 
         logger.info(f"Starting {backend} backend: {' '.join(args)}")
         self._stderr_lines = []
+        # KMP_DUPLICATE_LIB_OK suppresses the OpenMP duplicate-library crash that
+        # occurs when llama-server or mlx_lm links libomp and another dylib in the
+        # same process also links it (common on macOS with Homebrew).
+        env = {**os.environ, "KMP_DUPLICATE_LIB_OK": "TRUE"}
         self._proc = await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=env,
         )
         self._current_model = Path(model_path).name
         self._current_backend = backend

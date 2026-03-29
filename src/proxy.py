@@ -311,7 +311,7 @@ async def start_download(request: Request) -> JSONResponse:
     return JSONResponse({"download_id": download_id})
 
 
-@app.get("/api/models/download/{download_id}/progress")
+@app.get("/api/models/download/{download_id}/progress", response_model=None)
 async def download_progress(download_id: str) -> StreamingResponse | JSONResponse:
     """SSE stream of DownloadProgress events for a running download."""
     queue = _download_jobs.get(download_id)
@@ -585,6 +585,8 @@ async def api_recommended_models() -> JSONResponse:
                 "quant": r.quant,
                 "context": r.context,
                 "why": r.why,
+                "fit_level": r.fit_level,
+                "use_case": r.use_case,
             }
             for r in recs
         ],

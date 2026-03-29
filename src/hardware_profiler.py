@@ -51,6 +51,8 @@ class ModelRecommendation:
     quant: str
     context: int
     why: str
+    fit_level: str = ""      # e.g. "Perfect Fit" | "Good Fit" | "Tight Fit"
+    use_case: str = ""       # e.g. "code" | "reasoning" | "vision" | "general"
 
 
 # ---------------------------------------------------------------------------
@@ -314,7 +316,7 @@ def get_recommendations(profile: HardwareProfile | None = None) -> list[ModelRec
 
     bin_path = _llmfit_bin()
     if bin_path:
-        data = _run_llmfit(["recommend", "--limit", "15"], bin_path)
+        data = _run_llmfit(["recommend", "--limit", "50"], bin_path)
         # llmfit wraps output in {"models": [...]}
         if data and isinstance(data, dict):
             items = data.get("models", [])
@@ -365,6 +367,8 @@ def get_recommendations(profile: HardwareProfile | None = None) -> list[ModelRec
                     quant=quant,
                     context=ctx,
                     why=why,
+                    fit_level=str(item.get("fit_level") or ""),
+                    use_case=str(item.get("use_case") or item.get("category") or ""),
                 ))
             if results:
                 return results

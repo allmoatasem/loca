@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 // MARK: - Chat
 
@@ -202,13 +203,56 @@ struct ModelRecommendation: Decodable, Identifiable {
     let quant: String
     let context: Int
     let why: String
+    let fit_level: String     // e.g. "Perfect Fit" | "Good Fit" | "Tight Fit"
+    let use_case: String      // e.g. "code" | "reasoning" | "vision" | "general"
+
+    // Synthesise missing keys for backward compat with old backend responses
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name      = try c.decode(String.self, forKey: .name)
+        repo_id   = try c.decode(String.self, forKey: .repo_id)
+        filename  = try? c.decode(String.self, forKey: .filename)
+        format    = try c.decode(String.self, forKey: .format)
+        size_gb   = try c.decode(Double.self, forKey: .size_gb)
+        quant     = try c.decode(String.self, forKey: .quant)
+        context   = try c.decode(Int.self, forKey: .context)
+        why       = try c.decode(String.self, forKey: .why)
+        fit_level = (try? c.decode(String.self, forKey: .fit_level)) ?? ""
+        use_case  = (try? c.decode(String.self, forKey: .use_case)) ?? ""
+    }
+    private enum CodingKeys: String, CodingKey {
+        case name, repo_id, filename, format, size_gb, quant, context, why, fit_level, use_case
+    }
 
     var id: String { repo_id + (filename ?? "") }
-
     var formatLabel: String { format.uppercased() }
     var sizeLabel: String {
         size_gb >= 1 ? String(format: "%.1f GB", size_gb)
                      : String(format: "%.0f MB", size_gb * 1024)
+    }
+
+    /// Inferred category key for filter tabs.
+    var category: String {
+        let src = (use_case + " " + name + " " + repo_id).lowercased()
+        if src.contains("code") || src.contains("coder")               { return "code" }
+        if src.contains("vision") || src.contains("-vl") || src.contains("llava") { return "vision" }
+        if src.contains("reason") || src.contains("think") || src.contains("-r1") { return "reasoning" }
+        if src.contains("writ") || src.contains("creative")            { return "writing" }
+        return "general"
+    }
+
+    /// Traffic-light color based on fit_level from llmfit.
+    var fitColor: Color {
+        let l = fit_level.lowercased()
+        if l.contains("perfect") { return .green }
+        if l.contains("good")    { return .yellow }
+        if l.contains("tight")   { return .red }
+        if l.isEmpty             { return .secondary }
+        return .orange
+    }
+
+    var fitLabel: String {
+        fit_level.isEmpty ? "" : fit_level
     }
 }
 

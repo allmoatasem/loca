@@ -92,6 +92,8 @@ final class AppState: ObservableObject {
         var format: String
         var downloadId: String
         var percent: Double       // -1 = indeterminate
+        var speedMbps: Double = 0
+        var etaSeconds: Double = 0
         var done: Bool = false
         var error: String?
     }
