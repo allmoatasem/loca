@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncGenerator
@@ -201,7 +202,7 @@ class ModelManager:
             target_format: "gguf" or "mlx"
         """
         try:
-            from huggingface_hub import hf_hub_download, snapshot_download
+            from huggingface_hub import snapshot_download
         except ImportError:
             yield DownloadProgress(0, error="huggingface_hub is not installed. Run: pip install huggingface-hub")
             return
@@ -216,22 +217,29 @@ class ModelManager:
                     yield DownloadProgress(100, done=True)
                     return
 
-                # Run hf_hub_download in executor to avoid blocking event loop
-                loop = asyncio.get_event_loop()
-
-                def _download() -> str:
-                    return hf_hub_download(
-                        repo_id=repo_id,
-                        filename=filename,
-                        local_dir=str(target_dir),
-                    )
-
-                # Yield indeterminate progress while downloading in background
-                task = loop.run_in_executor(None, _download)
-                while not task.done():
-                    yield DownloadProgress(percent=-1)  # -1 = indeterminate
-                    await asyncio.sleep(1.0)
-                await task
+                # Stream download directly with real progress tracking
+                import httpx
+                hf_url = f"https://huggingface.co/{repo_id}/resolve/main/{filename}"
+                async with httpx.AsyncClient(timeout=None, follow_redirects=True) as client:
+                    async with client.stream("GET", hf_url) as resp:
+                        resp.raise_for_status()
+                        total = int(resp.headers.get("content-length", 0))
+                        downloaded = 0
+                        t0 = time.monotonic()
+                        with open(dest, "wb") as f:
+                            async for chunk in resp.aiter_bytes(1024 * 1024):
+                                f.write(chunk)
+                                downloaded += len(chunk)
+                                elapsed = time.monotonic() - t0 or 0.001
+                                speed = downloaded / elapsed  # bytes/s
+                                speed_mb = speed / 1e6
+                                pct = (downloaded / total * 100) if total else -1
+                                eta = ((total - downloaded) / speed) if (total and speed > 0) else 0
+                                yield DownloadProgress(
+                                    percent=pct,
+                                    speed_mbps=round(speed_mb, 2),
+                                    eta_s=round(eta),
+                                )
                 yield DownloadProgress(100, done=True)
 
             elif target_format == "mlx":

@@ -18,7 +18,7 @@ struct SettingsView: View {
             }
         }
     }
-    @State private var tab: Tab = .discover
+    @State private var tab: Tab = .downloaded
 
     var body: some View {
         VStack(spacing: 0) {
@@ -160,12 +160,25 @@ private struct DownloadedModelsTab: View {
 private struct DiscoverTab: View {
     @EnvironmentObject var state: AppState
     @State private var selectedCategory = "all"
+    @State private var searchText = ""
 
     private let categories = ["all", "general", "code", "reasoning", "vision", "writing"]
 
     private var filtered: [ModelRecommendation] {
-        guard selectedCategory != "all" else { return state.recommendedModels }
-        return state.recommendedModels.filter { $0.category == selectedCategory }
+        var result = state.recommendedModels
+        if selectedCategory != "all" {
+            result = result.filter { $0.category == selectedCategory }
+        }
+        let q = searchText.trimmingCharacters(in: .whitespaces).lowercased()
+        if !q.isEmpty {
+            result = result.filter {
+                $0.name.lowercased().contains(q)
+                || $0.provider.lowercased().contains(q)
+                || $0.use_case.lowercased().contains(q)
+                || $0.repo_id.lowercased().contains(q)
+            }
+        }
+        return result
     }
 
     var body: some View {
@@ -175,11 +188,32 @@ private struct DiscoverTab: View {
                 hardwareBadge
                 Spacer()
                 categoryFilter
-                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 10)
+            .padding(.bottom, 4)
+
+            HStack(spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary).font(.system(size: 11))
+                    TextField("Search models, providers…", text: $searchText)
+                        .textFieldStyle(.plain).font(.system(size: 12))
+                    if !searchText.isEmpty {
+                        Button { searchText = "" } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary).font(.system(size: 11))
+                        }.buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 8).padding(.vertical, 5)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
                 refreshButton
             }
             .padding(.horizontal, 20)
-            .padding(.vertical, 10)
+            .padding(.bottom, 6)
 
             Divider()
 
@@ -191,7 +225,7 @@ private struct DiscoverTab: View {
                 legendDot(.secondary, "Unknown")
                 Spacer()
                 if !state.recommendedModels.isEmpty {
-                    Text("\(filtered.count) model\(filtered.count == 1 ? "" : "s")")
+                    Text("\(filtered.count) of \(state.recommendedModels.count)")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                 }
@@ -212,7 +246,7 @@ private struct DiscoverTab: View {
                     Image(systemName: "cpu").font(.system(size: 32)).foregroundColor(.secondary)
                     Text(state.recommendedModels.isEmpty
                          ? "No recommendations yet — tap ↺ to scan your hardware."
-                         : "No \(selectedCategory) models in the recommendations.")
+                         : "No results for the current filters.")
                         .font(.system(size: 13)).foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity)
@@ -342,6 +376,14 @@ private struct RecommendationRow: View {
                         modelBadge(rec.formatLabel,
                               bg: rec.format == "mlx" ? Color.purple.opacity(0.12) : Color.blue.opacity(0.1),
                               fg: rec.format == "mlx" ? .purple : .blue)
+                        if !rec.provider.isEmpty {
+                            Text(rec.provider)
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal, 4).padding(.vertical, 2)
+                                .background(Color.secondary.opacity(0.08))
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                        }
                         Text(rec.sizeLabel)
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)

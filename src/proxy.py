@@ -587,6 +587,7 @@ async def api_recommended_models() -> JSONResponse:
                 "why": r.why,
                 "fit_level": r.fit_level,
                 "use_case": r.use_case,
+                "provider": r.provider,
             }
             for r in recs
         ],

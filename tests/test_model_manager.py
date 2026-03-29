@@ -179,9 +179,10 @@ async def test_ensure_loaded_returns_running_backend(tmp_path):
     mm, backend = make_manager(tmp_path)
     backend.is_running.return_value = True
     backend.current_model.return_value = "mymodel.gguf"
+    backend.current_model_path.return_value = "/models/gguf/mymodel.gguf"
 
     name, api_base = await mm.ensure_loaded(Model.GENERAL)
-    assert name == "mymodel.gguf"
+    assert name == "/models/gguf/mymodel.gguf"
     backend.start.assert_not_called()
 
 

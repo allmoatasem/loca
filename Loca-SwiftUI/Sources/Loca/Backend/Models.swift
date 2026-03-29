@@ -205,6 +205,7 @@ struct ModelRecommendation: Decodable, Identifiable {
     let why: String
     let fit_level: String     // e.g. "Perfect Fit" | "Good Fit" | "Tight Fit"
     let use_case: String      // e.g. "code" | "reasoning" | "vision" | "general"
+    let provider: String      // e.g. "Alibaba" | "Meta" | "Mistral" | "NVIDIA"
 
     // Synthesise missing keys for backward compat with old backend responses
     init(from decoder: Decoder) throws {
@@ -219,9 +220,10 @@ struct ModelRecommendation: Decodable, Identifiable {
         why       = try c.decode(String.self, forKey: .why)
         fit_level = (try? c.decode(String.self, forKey: .fit_level)) ?? ""
         use_case  = (try? c.decode(String.self, forKey: .use_case)) ?? ""
+        provider  = (try? c.decode(String.self, forKey: .provider)) ?? ""
     }
     private enum CodingKeys: String, CodingKey {
-        case name, repo_id, filename, format, size_gb, quant, context, why, fit_level, use_case
+        case name, repo_id, filename, format, size_gb, quant, context, why, fit_level, use_case, provider
     }
 
     var id: String { repo_id + (filename ?? "") }

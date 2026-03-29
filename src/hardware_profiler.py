@@ -53,6 +53,40 @@ class ModelRecommendation:
     why: str
     fit_level: str = ""      # e.g. "Perfect Fit" | "Good Fit" | "Tight Fit"
     use_case: str = ""       # e.g. "code" | "reasoning" | "vision" | "general"
+    provider: str = ""       # e.g. "Alibaba" | "Meta" | "Mistral" | "NVIDIA"
+
+
+# ---------------------------------------------------------------------------
+# Provider name inference
+# ---------------------------------------------------------------------------
+
+_PROVIDER_MAP: dict[str, str] = {
+    "qwen": "Alibaba", "alibaba": "Alibaba",
+    "meta-llama": "Meta", "meta": "Meta",
+    "mistralai": "Mistral", "mistral": "Mistral",
+    "google": "Google", "gemma": "Google",
+    "microsoft": "Microsoft", "phi": "Microsoft",
+    "nvidia": "NVIDIA", "nemotron": "NVIDIA",
+    "deepseek-ai": "DeepSeek", "deepseek": "DeepSeek",
+    "01-ai": "01.AI",
+    "cohere": "Cohere", "command": "Cohere",
+    "bartowski": "Bartowski (GGUF)", "bartowski-gguf": "Bartowski (GGUF)",
+    "mlx-community": "MLX Community",
+    "mlx_community": "MLX Community",
+    "lmstudio-community": "LM Studio",
+    "huggingfaceh4": "HuggingFace",
+    "teknium": "Teknium",
+    "thebloke": "TheBloke",
+}
+
+
+def _infer_provider(repo_id: str) -> str:
+    owner = repo_id.split("/")[0].lower()
+    for key, name in _PROVIDER_MAP.items():
+        if owner == key or owner.startswith(key):
+            return name
+    # Capitalise first segment as fallback
+    return repo_id.split("/")[0].replace("-", " ").title() if "/" in repo_id else ""
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +300,10 @@ def _fallback_recommendations(profile: HardwareProfile) -> list[ModelRecommendat
     if not profile.supports_mlx:
         results = [r for r in results if r.format != "mlx"]
     results.sort(key=lambda r: (0 if r.format == "mlx" else 1, r.size_gb))
+    # Backfill provider from repo_id
+    for r in results:
+        if not r.provider:
+            r.provider = _infer_provider(r.repo_id)
     return results
 
 
@@ -316,7 +354,7 @@ def get_recommendations(profile: HardwareProfile | None = None) -> list[ModelRec
 
     bin_path = _llmfit_bin()
     if bin_path:
-        data = _run_llmfit(["recommend", "--limit", "50"], bin_path)
+        data = _run_llmfit(["recommend", "--limit", "200"], bin_path)
         # llmfit wraps output in {"models": [...]}
         if data and isinstance(data, dict):
             items = data.get("models", [])
@@ -369,6 +407,7 @@ def get_recommendations(profile: HardwareProfile | None = None) -> list[ModelRec
                     why=why,
                     fit_level=str(item.get("fit_level") or ""),
                     use_case=str(item.get("use_case") or item.get("category") or ""),
+                    provider=_infer_provider(repo),
                 ))
             if results:
                 return results
