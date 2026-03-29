@@ -99,8 +99,11 @@ actor BackendClient {
     }
 
     func searchConversations(_ query: String) async throws -> [ConversationMeta] {
-        let enc = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
-        let (data, _) = try await get("/api/search/conversations?q=\(enc)")
+        var comps = URLComponents(url: base, resolvingAgainstBaseURL: false)!
+        comps.path = "/api/search/conversations"
+        comps.queryItems = [URLQueryItem(name: "q", value: query)]
+        guard let url = comps.url else { return [] }
+        let (data, _) = try await session.data(from: url)
         return try JSONDecoder().decode(ConversationListResponse.self, from: data).conversations
     }
 

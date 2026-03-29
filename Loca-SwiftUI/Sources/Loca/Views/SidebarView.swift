@@ -107,29 +107,11 @@ struct SidebarView: View {
     }
 
     private var convSearchBar: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .foregroundColor(.secondary).font(.system(size: 11))
-            TextField("Search conversations…", text: $state.conversationQuery)
-                .font(.system(size: 12)).textFieldStyle(.plain)
-                .onSubmit { state.searchConversations() }
-                .onChange(of: state.conversationQuery) {
-                    if state.conversationQuery.isEmpty { state.conversationResults = [] }
-                    else { state.searchConversations() }
-                }
-            if !state.conversationQuery.isEmpty {
-                Button {
-                    state.conversationQuery = ""
-                    state.conversationResults = []
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.secondary).font(.system(size: 11))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 10).padding(.vertical, 6)
-        .background(Color(nsColor: .controlBackgroundColor))
+        ConvSearchBar(
+            query: $state.conversationQuery,
+            onSearch: { state.searchConversations() },
+            onClear: { state.conversationQuery = ""; state.conversationResults = [] }
+        )
     }
 
     private var convListBody: some View {
@@ -151,15 +133,35 @@ struct SidebarView: View {
         ) {
             if !folders.isEmpty {
                 ForEach(folders, id: \.self) { folder in
-                    Section(folder) {
+                    Section {
                         ForEach(convs.filter { $0.folder == folder }) { conv in
                             conversationRow(conv)
                         }
+                    } header: {
+                        Text(folder)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 2)
+                            .dropDestination(for: String.self) { ids, _ in
+                                for id in ids { state.setConversationFolder(id, folder: folder) }
+                                return true
+                            }
                     }
                 }
                 if !unfoldered.isEmpty {
-                    Section("Other") {
+                    Section {
                         ForEach(unfoldered) { conv in conversationRow(conv) }
+                    } header: {
+                        Text("Other")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 2)
+                            .dropDestination(for: String.self) { ids, _ in
+                                for id in ids { state.setConversationFolder(id, folder: nil) }
+                                return true
+                            }
                     }
                 }
             } else {
@@ -192,6 +194,7 @@ struct SidebarView: View {
     private func conversationRow(_ conv: ConversationMeta) -> some View {
         ConversationRow(conv: conv)
             .tag(conv.id)
+            .draggable(conv.id)
             .contextMenu {
                 Button(conv.starred ? "Unstar" : "Star") { state.toggleStar(conv.id) }
                 Button("Set Folder…") { promptFolder(for: conv) }
@@ -218,6 +221,40 @@ struct SidebarView: View {
             let folder = tf.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             state.setConversationFolder(conv.id, folder: folder.isEmpty ? nil : folder)
         }
+    }
+}
+
+// MARK: - Conversation search bar (owns FocusState so TextField gets focus)
+
+struct ConvSearchBar: View {
+    @Binding var query: String
+    let onSearch: () -> Void
+    let onClear: () -> Void
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .foregroundColor(.secondary).font(.system(size: 11))
+            TextField("Search conversations…", text: $query)
+                .font(.system(size: 12))
+                .textFieldStyle(.plain)
+                .focused($focused)
+                .onSubmit { onSearch() }
+                .onChange(of: query) {
+                    if query.isEmpty { onClear() } else { onSearch() }
+                }
+            if !query.isEmpty {
+                Button(action: onClear) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.secondary).font(.system(size: 11))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .onTapGesture { focused = true }
     }
 }
 
@@ -290,13 +327,18 @@ struct SidebarFooter: View {
                 state.isDarkMode.toggle()
             } label: {
                 Image(systemName: state.isDarkMode ? "sun.max" : "moon")
+                    .font(.system(size: 16))
                     .foregroundColor(.secondary)
+                    .frame(width: 28, height: 28)
             }
             .buttonStyle(.plain)
             .help(state.isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode")
 
             Button { state.isMemoryPanelOpen = true } label: {
-                Image(systemName: "brain").foregroundColor(.secondary)
+                Image(systemName: "brain")
+                    .font(.system(size: 16))
+                    .foregroundColor(.secondary)
+                    .frame(width: 28, height: 28)
             }
             .buttonStyle(.plain)
             .help("Memories")

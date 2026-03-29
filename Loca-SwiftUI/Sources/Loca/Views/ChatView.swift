@@ -474,7 +474,7 @@ struct MarkdownView: View {
     }
 }
 
-// MARK: - Prose renderer (headers, bullets, numbered lists, paragraphs)
+// MARK: - Prose renderer (headers, bullets, numbered lists, tables, paragraphs)
 
 struct ProseView: View {
     let text: String
@@ -485,6 +485,7 @@ struct ProseView: View {
         case numbered(Int, String)
         case paragraph(String)
         case hrule
+        case table([[String]])   // rows → cells
     }
 
     var body: some View {
@@ -498,39 +499,60 @@ struct ProseView: View {
     private func lineGroups(_ input: String) -> [LineGroup] {
         var groups: [LineGroup] = []
         var paragraphLines: [String] = []
+        var tableLines: [String] = []
         let numberedRE = try? NSRegularExpression(pattern: #"^(\d+)\.\s+(.+)"#)
 
-        func flush() {
+        func flushParagraph() {
             let joined = paragraphLines.joined(separator: "\n")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if !joined.isEmpty { groups.append(.paragraph(joined)) }
             paragraphLines = []
         }
 
+        func flushTable() {
+            guard !tableLines.isEmpty else { return }
+            var rows: [[String]] = []
+            for tl in tableLines {
+                let cells = tl.components(separatedBy: "|").dropFirst().dropLast()
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                let isSep = cells.allSatisfy { c in c.isEmpty || c.allSatisfy { $0 == "-" || $0 == ":" } }
+                if !isSep && !cells.isEmpty { rows.append(Array(cells)) }
+            }
+            if !rows.isEmpty { groups.append(.table(rows)) }
+            tableLines = []
+        }
+
         for line in input.components(separatedBy: "\n") {
-            if line.hasPrefix("### ") {
-                flush(); groups.append(.header(3, String(line.dropFirst(4))))
-            } else if line.hasPrefix("## ") {
-                flush(); groups.append(.header(2, String(line.dropFirst(3))))
-            } else if line.hasPrefix("# ") {
-                flush(); groups.append(.header(1, String(line.dropFirst(2))))
-            } else if line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ") {
-                flush(); groups.append(.bullet(String(line.dropFirst(2))))
-            } else if let m = numberedRE?.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
-                      let nr = Range(m.range(at: 1), in: line),
-                      let cr = Range(m.range(at: 2), in: line),
-                      let n = Int(line[nr]) {
-                flush(); groups.append(.numbered(n, String(line[cr])))
-            } else if line == "---" || line == "***" || line == "___" {
-                flush(); groups.append(.hrule)
-            } else if line.trimmingCharacters(in: .whitespaces).isEmpty {
-                flush()
+            if line.hasPrefix("|") {
+                flushParagraph()
+                tableLines.append(line)
             } else {
-                paragraphLines.append(line)
+                flushTable()
+                if line.hasPrefix("### ") {
+                    flushParagraph(); groups.append(.header(3, String(line.dropFirst(4))))
+                } else if line.hasPrefix("## ") {
+                    flushParagraph(); groups.append(.header(2, String(line.dropFirst(3))))
+                } else if line.hasPrefix("# ") {
+                    flushParagraph(); groups.append(.header(1, String(line.dropFirst(2))))
+                } else if line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ") {
+                    flushParagraph(); groups.append(.bullet(String(line.dropFirst(2))))
+                } else if let m = numberedRE?.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+                          let nr = Range(m.range(at: 1), in: line),
+                          let cr = Range(m.range(at: 2), in: line),
+                          let n = Int(line[nr]) {
+                    flushParagraph(); groups.append(.numbered(n, String(line[cr])))
+                } else if line == "---" || line == "***" || line == "___" {
+                    flushParagraph(); groups.append(.hrule)
+                } else if line.trimmingCharacters(in: .whitespaces).isEmpty {
+                    flushParagraph()
+                } else {
+                    paragraphLines.append(line)
+                }
             }
         }
-        flush()
-        return groups
+        flushParagraph()
+        flushTable()
+        return groups.isEmpty ? [.paragraph(input)] : groups
     }
 
     @ViewBuilder
@@ -561,7 +583,45 @@ struct ProseView: View {
             Text(inline(s)).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
         case .hrule:
             Divider().padding(.vertical, 4)
+        case .table(let rows):
+            tableView(rows)
         }
+    }
+
+    private func tableView(_ rows: [[String]]) -> some View {
+        let colCount = rows.map(\.count).max() ?? 1
+        return VStack(alignment: .leading, spacing: 0) {
+            ForEach(rows.indices, id: \.self) { ri in
+                HStack(spacing: 0) {
+                    ForEach(0..<colCount, id: \.self) { ci in
+                        let cell = ci < rows[ri].count ? rows[ri][ci] : ""
+                        Group {
+                            if ri == 0 {
+                                Text(inline(cell, baseSize: 13))
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .padding(.horizontal, 10).padding(.vertical, 6)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Color.secondary.opacity(0.1))
+                            } else {
+                                Text(inline(cell, baseSize: 13))
+                                    .font(.system(size: 13))
+                                    .padding(.horizontal, 10).padding(.vertical, 6)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(ri % 2 == 0 ? Color.secondary.opacity(0.03) : Color.clear)
+                            }
+                        }
+                        .textSelection(.enabled)
+                        if ci < colCount - 1 {
+                            Divider()
+                        }
+                    }
+                }
+                if ri < rows.count - 1 { Divider() }
+            }
+        }
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25)))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .padding(.vertical, 4)
     }
 
     /// Parses inline markdown and applies explicit font attributes so SwiftUI Text

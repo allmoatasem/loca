@@ -17,6 +17,7 @@ final class ChatInputActions: ObservableObject {
 ///  • Return → send,  Shift+Return → newline
 ///  • Native placeholder text drawn inside the view
 ///  • Exposes selection-wrapping through ChatInputActions
+///  • Live syntax highlighting for markdown markers in the input field
 struct ChatTextEditor: NSViewRepresentable {
     @Binding var text: String
     var placeholder: String = "Ask anything…"
@@ -63,13 +64,12 @@ struct ChatTextEditor: NSViewRepresentable {
 
     func updateNSView(_ sv: NSScrollView, context: Context) {
         guard let tv = sv.documentView as? PlaceholderTextView else { return }
-        // Only overwrite when the binding changed from outside (e.g. cleared after send).
-        // During normal typing textDidChange keeps both in sync, so this branch is skipped.
         if tv.string != text {
             let sel = tv.selectedRange()
             tv.string = text
             let len = (text as NSString).length
             tv.setSelectedRange(NSRange(location: min(sel.location, len), length: 0))
+            context.coordinator.applyHighlights(to: tv)
         }
     }
 
@@ -78,22 +78,92 @@ struct ChatTextEditor: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: ChatTextEditor
         weak var textView: PlaceholderTextView?
+        private var isHighlighting = false
 
         init(_ parent: ChatTextEditor) { self.parent = parent }
 
         func textDidChange(_ notification: Notification) {
             guard let tv = notification.object as? NSTextView else { return }
             parent.text = tv.string
+            applyHighlights(to: tv)
         }
 
         func textView(_ tv: NSTextView, doCommandBy sel: Selector) -> Bool {
             if sel == #selector(NSResponder.insertNewline(_:)) {
-                // Shift+Return → let NSTextView insert a newline normally
                 if NSEvent.modifierFlags.contains(.shift) { return false }
                 parent.onSend()
                 return true
             }
             return false
+        }
+
+        // MARK: Syntax highlighting
+
+        func applyHighlights(to tv: NSTextView) {
+            guard !isHighlighting, let ts = tv.textStorage else { return }
+            isHighlighting = true
+            defer { isHighlighting = false }
+
+            let str = ts.string
+            let full = NSRange(location: 0, length: (str as NSString).length)
+            guard full.length > 0 else { return }
+
+            let savedSel = tv.selectedRange()
+
+            ts.beginEditing()
+
+            // Reset to base styling
+            let baseFont   = NSFont.systemFont(ofSize: 14)
+            let labelColor = NSColor.labelColor
+            ts.addAttribute(.font, value: baseFont, range: full)
+            ts.addAttribute(.foregroundColor, value: labelColor, range: full)
+            ts.removeAttribute(.backgroundColor, range: full)
+
+            // Fenced code blocks  ```...```
+            if let re = try? NSRegularExpression(pattern: "```[^`]*```", options: [.dotMatchesLineSeparators]) {
+                re.enumerateMatches(in: str, range: full) { m, _, _ in
+                    guard let r = m?.range, r.location != NSNotFound else { return }
+                    ts.addAttribute(.font, value: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular), range: r)
+                    ts.addAttribute(.foregroundColor, value: NSColor.systemTeal, range: r)
+                    ts.addAttribute(.backgroundColor, value: NSColor.tertiaryLabelColor.withAlphaComponent(0.08), range: r)
+                }
+            }
+
+            // Inline code  `...`  (single backtick, same line)
+            if let re = try? NSRegularExpression(pattern: "`[^`\n]+`") {
+                re.enumerateMatches(in: str, range: full) { m, _, _ in
+                    guard let r = m?.range, r.location != NSNotFound else { return }
+                    ts.addAttribute(.font, value: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular), range: r)
+                    ts.addAttribute(.foregroundColor, value: NSColor.systemTeal, range: r)
+                }
+            }
+
+            // Bold  **...**
+            if let re = try? NSRegularExpression(pattern: "\\*\\*[^*\n]+\\*\\*") {
+                re.enumerateMatches(in: str, range: full) { m, _, _ in
+                    guard let r = m?.range, r.location != NSNotFound else { return }
+                    ts.addAttribute(.font, value: NSFont.boldSystemFont(ofSize: 14), range: r)
+                }
+            }
+
+            // Italic  _..._  or  *...*  (single, not adjacent to another * or _)
+            if let re = try? NSRegularExpression(pattern: "(?<![*_])([*_])[^*_\n]+\\1(?![*_])") {
+                re.enumerateMatches(in: str, range: full) { m, _, _ in
+                    guard let r = m?.range, r.location != NSNotFound else { return }
+                    let desc = NSFont.systemFont(ofSize: 14).fontDescriptor.withSymbolicTraits(.italic)
+                    if let font = NSFont(descriptor: desc, size: 14) {
+                        ts.addAttribute(.font, value: font, range: r)
+                    }
+                }
+            }
+
+            ts.endEditing()
+
+            // Restore cursor (attribute editing can move selection in some versions)
+            let safeLen = (tv.string as NSString).length
+            let safeLoc = min(savedSel.location, safeLen)
+            let safeLen2 = min(savedSel.length, safeLen - safeLoc)
+            tv.setSelectedRange(NSRange(location: safeLoc, length: safeLen2))
         }
 
         // MARK: Format helpers
