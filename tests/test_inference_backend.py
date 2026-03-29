@@ -105,8 +105,10 @@ def test_llama_args_structure():
 def test_mlx_args_structure():
     b = make_backend()
     args = b._build_mlx_args("/models/mlx-model", 4096)
-    assert "-m" in args
-    assert "mlx_lm.server" in args
+    # Either "mlx_lm server" script path or "python -m mlx_lm server"
+    combined = " ".join(args)
+    assert "mlx_lm" in combined
+    assert "server" in combined
     assert "--port" in args
     assert str(18080) in args
 

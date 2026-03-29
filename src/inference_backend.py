@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import platform
+import shutil
 import sys
 from pathlib import Path
 from typing import Literal
@@ -113,6 +114,11 @@ class InferenceBackend:
         return self._proc is not None and self._proc.returncode is None
 
     def current_model(self) -> str | None:
+        # Clear stale state if the process has exited
+        if self._proc is not None and self._proc.returncode is not None:
+            self._current_model = None
+            self._current_backend = None
+            self._proc = None
         return self._current_model
 
     def current_backend(self) -> Backend | None:
@@ -170,7 +176,16 @@ class InferenceBackend:
         return self._build_llama_args(model_path, ctx_size)
 
     def _build_mlx_args(self, model_path: str, ctx_size: int) -> list[str]:
-        # "python3 -m mlx_lm server" (space, not dot) is the non-deprecated invocation
+        # Prefer the mlx_lm script on PATH (works regardless of which venv is active).
+        # Fall back to sys.executable -m mlx_lm if not on PATH.
+        mlx_bin = shutil.which("mlx_lm")
+        if mlx_bin:
+            return [
+                mlx_bin, "server",
+                "--model", model_path,
+                "--port", str(self.port),
+                "--max-tokens", str(ctx_size),
+            ]
         return [
             sys.executable, "-m", "mlx_lm", "server",
             "--model", model_path,

@@ -1,6 +1,35 @@
 import SwiftUI
 import AppKit
 
+// MARK: - Tooltip helper
+// .help() is unreliable on .buttonStyle(.plain) views on macOS because the plain
+// style strips the underlying NSButton's tooltip binding. This modifier sets the
+// tooltip directly on the NSView via NSViewRepresentable, which always works.
+
+private struct TooltipModifier: ViewModifier {
+    let text: String
+
+    func body(content: Content) -> some View {
+        content.overlay(TooltipView(text: text).allowsHitTesting(false))
+    }
+}
+
+private struct TooltipView: NSViewRepresentable {
+    let text: String
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView()
+        v.toolTip = text
+        return v
+    }
+    func updateNSView(_ v: NSView, context: Context) { v.toolTip = text }
+}
+
+extension View {
+    func nativeTooltip(_ text: String) -> some View {
+        modifier(TooltipModifier(text: text))
+    }
+}
+
 struct SidebarView: View {
     @EnvironmentObject var state: AppState
     @State private var multiSelection: Set<String> = []
@@ -402,18 +431,18 @@ struct SidebarFooter: View {
                     .font(.system(size: 16))
                     .foregroundColor(.secondary)
                     .frame(width: 28, height: 28)
-                    .help("Toggle dark/light theme. Preference is saved locally.")
             }
             .buttonStyle(.plain)
+            .nativeTooltip("Toggle dark/light theme. Preference is saved locally.")
 
             Button { state.isMemoryPanelOpen = true } label: {
                 Image(systemName: "brain")
                     .font(.system(size: 16))
                     .foregroundColor(.secondary)
                     .frame(width: 28, height: 28)
-                    .help("Memories — facts extracted from your conversations and injected into every new chat. Click to view and manage them.")
             }
             .buttonStyle(.plain)
+            .nativeTooltip("Memories — facts extracted from your conversations and injected into every new chat. Click to view and manage them.")
         }
     }
 }

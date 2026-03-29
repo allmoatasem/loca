@@ -276,14 +276,21 @@ def get_hardware_profile() -> HardwareProfile:
     bin_path = _llmfit_bin()
     if bin_path:
         data = _run_llmfit(["system"], bin_path)
+        # llmfit wraps output in {"system": {...}}
         if data and isinstance(data, dict):
+            sys_data = data.get("system", data)
             try:
-                total = float(data.get("total_memory_gb") or data.get("memory_gb") or 0)
-                available = float(data.get("available_memory_gb") or data.get("free_memory_gb") or 0)
-                cpu = str(data.get("cpu") or data.get("cpu_model") or platform.processor() or "Unknown")
+                total = float(sys_data.get("total_ram_gb") or sys_data.get("memory_gb") or 0)
+                available = float(sys_data.get("available_ram_gb") or sys_data.get("free_memory_gb") or 0)
+                cpu = str(sys_data.get("cpu_name") or sys_data.get("cpu") or platform.processor() or "Unknown CPU")
                 arch = platform.machine().lower()
                 has_apple = arch in ("arm64", "aarch64") and sys.platform == "darwin"
-                has_nvidia = bool(data.get("gpus") or data.get("nvidia_gpus") or data.get("has_nvidia"))
+                # llmfit reports nvidia via gpus list where backend != Metal
+                gpus = sys_data.get("gpus") or []
+                has_nvidia = any(
+                    isinstance(g, dict) and g.get("backend", "").upper() not in ("METAL", "")
+                    for g in gpus
+                )
                 return HardwareProfile(
                     platform=sys.platform,
                     arch=arch,
@@ -295,8 +302,8 @@ def get_hardware_profile() -> HardwareProfile:
                     supports_mlx=has_apple,
                     llmfit_available=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"llmfit system parse failed: {e}")
     return _fallback_profile()
 
 
@@ -307,32 +314,57 @@ def get_recommendations(profile: HardwareProfile | None = None) -> list[ModelRec
 
     bin_path = _llmfit_bin()
     if bin_path:
-        # Try recommend subcommand with limit 10
-        data = _run_llmfit(["recommend", "--limit", "10"], bin_path)
-        if data:
-            recs = data if isinstance(data, list) else data.get("recommendations", [])
+        data = _run_llmfit(["recommend", "--limit", "15"], bin_path)
+        # llmfit wraps output in {"models": [...]}
+        if data and isinstance(data, dict):
+            items = data.get("models", [])
             results: list[ModelRecommendation] = []
-            for item in recs:
+            for item in items:
                 if not isinstance(item, dict):
                     continue
-                # llmfit JSON field mapping
-                name = str(item.get("name") or item.get("model_name") or "Unknown")
-                repo = str(item.get("repo_id") or item.get("huggingface_repo") or item.get("repository") or "")
-                fname = item.get("filename") or item.get("file") or None
-                fmt_raw = str(item.get("format") or item.get("runtime") or "gguf").lower()
+                name = str(item.get("name") or "Unknown")
+                fmt_raw = str(item.get("runtime") or "gguf").lower()
                 fmt = "mlx" if "mlx" in fmt_raw else "gguf"
                 if fmt == "mlx" and not profile.supports_mlx:
                     continue
-                size = float(item.get("memory_required_gb") or item.get("size_gb") or item.get("vram_gb") or 0)
-                quant = str(item.get("quantization") or item.get("quant") or "Q4_K_M")
-                ctx = int(item.get("context_length") or item.get("context") or item.get("max_context") or 32768)
-                why = str(item.get("reason") or item.get("description") or item.get("fit_reason") or "Recommended by llmfit for your hardware.")
-                if not repo:
-                    # Skip entries without a downloadable repo
+
+                # The llmfit "name" field is actually a HuggingFace repo_id (org/model)
+                # For GGUF, prefer the first gguf_source repo
+                if fmt == "gguf":
+                    sources = item.get("gguf_sources") or []
+                    repo = sources[0].get("repo", name) if sources else name
+                else:
+                    repo = name  # MLX: name IS the HF repo
+
+                # Only include entries that look like valid HF repos
+                if "/" not in repo:
                     continue
+
+                size = float(item.get("memory_required_gb") or 0)
+                quant = str(item.get("best_quant") or "Q4_K_M")
+                ctx = int(item.get("context_length") or 32768)
+                score = item.get("score", 0)
+                fit = item.get("fit_level", "")
+                tps = item.get("estimated_tps", 0)
+                why_parts = []
+                if fit:
+                    why_parts.append(fit)
+                if tps:
+                    why_parts.append(f"~{tps:.0f} tok/s")
+                use_case = item.get("use_case") or item.get("category") or ""
+                if use_case:
+                    why_parts.append(use_case)
+                why = "  ·  ".join(why_parts) if why_parts else f"Score {score:.0f} — recommended by llmfit"
+
                 results.append(ModelRecommendation(
-                    name=name, repo_id=repo, filename=fname,
-                    format=fmt, size_gb=size, quant=quant, context=ctx, why=why,
+                    name=name.split("/")[-1],  # display name: just the model part
+                    repo_id=repo,
+                    filename=None,             # MLX: snapshot; GGUF: no specific file
+                    format=fmt,
+                    size_gb=size,
+                    quant=quant,
+                    context=ctx,
+                    why=why,
                 ))
             if results:
                 return results
