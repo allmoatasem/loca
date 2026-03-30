@@ -28,7 +28,13 @@
 │  • GET /api/local-models  →  ModelManager.list_local()                │
 │  • POST /api/models/load  →  ModelManager.load()                      │
 │  • POST /api/models/download  →  ModelManager.download() + SSE       │
+│  • POST /api/models/download/{id}/cancel|pause  →  task management   │
 │  • DELETE /api/models/{name}  →  ModelManager.delete()                │
+│  • GET /api/recommended-models  →  hardware_profiler (cached)         │
+│  • GET /api/hardware  →  hardware_profiler.get_hardware_profile()     │
+│  • POST /api/hardware/install-llmfit  →  auto-download llmfit binary  │
+│  • GET /api/hf-search  →  Hugging Face Hub search API                 │
+│  • GET /api/repo-files  →  Hugging Face sibling files for a repo      │
 │  • POST /api/upload  →  image/pdf/text extraction                     │
 └───────────┬────────────────────────────────────────────────────────── ┘
             │
@@ -36,7 +42,7 @@
 ┌───────────────────────────────────────────────────────────────────────┐
 │  Orchestrator  src/orchestrator.py                                    │
 │                                                                       │
-│  1. Route message → mode (general/code/reason/write)                  │
+│  1. Route message → mode (general/code/reason)                        │
 │  2. Load system prompt for that mode (prompts/*.md)                   │
 │  3. Inject memories from store into system prompt                     │
 │  4. Optionally trigger web search via SearXNG + trafilatura/Playwright│
@@ -81,8 +87,9 @@ Separate process:
 | `src/proxy.py` | FastAPI server. All HTTP endpoints live here. Wires together the other components. |
 | `src/orchestrator.py` | Main request loop. Routing, search injection, memory injection, tool execution, streaming. |
 | `src/inference_backend.py` | Subprocess manager for mlx_lm / llama-server. Start, stop, health-poll, restart. |
-| `src/model_manager.py` | Local model inventory (list, load, delete) and HF Hub download with SSE progress. |
-| `src/router.py` | Keyword-based message routing to general/code/reason/write modes. Search trigger detection. |
+| `src/model_manager.py` | Local model inventory (list, load, delete) and HF Hub download with real-time SSE progress, pause/resume/cancel via HTTP Range headers. |
+| `src/hardware_profiler.py` | Hardware detection and model recommendations. Runs llmfit (auto-downloaded); falls back to built-in catalog. Exposes `HardwareProfile` and `ModelRecommendation` dataclasses. |
+| `src/router.py` | Keyword-based message routing to general/code/reason modes. Search trigger detection. |
 | `src/store.py` | SQLite store (`data/loca.db`). Conversations (messages, title, starred, folder) and memories (user_fact, knowledge, correction). |
 | `src/memory_extractor.py` | Three-pass LLM extraction of user facts, verified knowledge, and user corrections from conversations. |
 | `src/tools/web_search.py` | SearXNG query + trafilatura or Playwright content extraction. |
@@ -92,8 +99,8 @@ Separate process:
 | `src/static/index.html` | Single-file chat UI. All HTML, CSS, and JS. |
 | `prompts/system_*.md` | System prompts per mode. Loaded fresh on every request. |
 | `config.yaml` | All runtime configuration — inference backend, models dir, routing, search, tools, proxy. |
-| `Loca-SwiftUI/` | Swift/SwiftUI macOS app. Hosts a WKWebView pointing at the proxy. |
-| `start_services.sh` | macOS startup: checks deps, starts proxy + SearXNG. |
+| `Loca-SwiftUI/` | Native macOS SwiftUI app. MVVM with `AppState` as the single source of truth, `BackendClient` for HTTP, and views in `Sources/Loca/Views/`. See [SWIFT_ARCHITECTURE.md](SWIFT_ARCHITECTURE.md). |
+| `start_services.sh` | macOS startup: resets status file, checks deps, starts proxy + SearXNG. |
 | `start_services_linux.sh` | Linux startup. |
 | `start_services_windows.bat` | Windows startup. |
 | `build_app.sh` | Builds and signs the macOS .app bundle. |
@@ -146,6 +153,48 @@ Three memory types, all stored in `data/loca.db`:
 | `correction` | Rules the user has taught the model | "Trust web_search results over training cutoff" |
 
 Extraction runs after each conversation turn via `POST /api/extract-memories`. The injected `<memory>` block in the system prompt is grouped by type so the model sees corrections as explicit rules.
+
+---
+
+## Hardware profiler and model recommendations
+
+`src/hardware_profiler.py` provides two public functions used by the proxy:
+
+- `get_hardware_profile()` → `HardwareProfile` — detects RAM, CPU, Apple Silicon / NVIDIA GPU
+- `get_recommendations(profile)` → `list[ModelRecommendation]` — returns models ranked for the machine
+
+**llmfit path (primary):** llmfit is a small Go binary ([AlexsJones/llmfit](https://github.com/AlexsJones/llmfit)) that scores up to 1000 models per hardware profile. Loca auto-downloads it to `.llmfit/` on first use. The proxy caches results at startup using an `asyncio.Lock` so only one llmfit process ever runs at a time.
+
+**Fallback path:** If llmfit is unavailable, a built-in catalog of ~8 curated Qwen2.5 / MLX models is used, filtered by `total_ram_gb`.
+
+Recommendations are cached in `_recs_cache` (in-memory dict) and served from `/api/recommended-models`. A `?force=true` query parameter rebuilds the cache.
+
+---
+
+## Download flow
+
+```
+POST /api/models/download
+      │  {repo_id, filename?, format}
+      │
+      ▼
+asyncio.Queue + asyncio.Task per download_id
+      │
+      ▼
+ModelManager.download(repo_id, filename, format)
+      │
+      ├─ MLX: fetch file list from HF API, download each .safetensors
+      │       Range headers for resume; partial bytes pre-credited
+      │
+      └─ GGUF: single file, Range header for resume
+      │
+      yields DownloadProgress(percent, done, error)
+      │
+      ▼
+GET /api/models/download/{id}/progress  →  SSE stream
+POST /api/models/download/{id}/cancel   →  task.cancel() + delete partial files
+POST /api/models/download/{id}/pause    →  task.cancel() (partial files kept for resume)
+```
 
 ---
 

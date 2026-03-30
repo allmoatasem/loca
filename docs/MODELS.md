@@ -52,14 +52,36 @@ These handle most conversations, vision, and file analysis.
 
 ---
 
+## Hardware-aware recommendations (Discover tab)
+
+Open **Manage Models → Discover** to see models ranked for your specific machine.
+
+Loca uses [llmfit](https://github.com/AlexsJones/llmfit) to score up to 1000 models against your hardware profile (RAM, Apple Silicon / NVIDIA GPU). The Discover tab shows:
+
+- **Fit level** — Perfect Fit / Good Fit / Tight Fit
+- **Estimated tokens/sec** on your hardware
+- **Size** in GB (llmfit estimate)
+- **Use case** — general, code, reasoning, vision
+- **Format** — MLX (Apple Silicon) or GGUF (cross-platform)
+
+Use the **All / MLX / GGUF** segmented picker to filter by format. Click the ⓘ button on any card to read the full recommendation notes. Models load 50 at a time; scroll to the bottom to load more.
+
+If llmfit is not installed, Loca will offer to download it automatically from GitHub. Once installed, it is cached at `.llmfit/llmfit` — you can also put it on your `PATH` if you prefer.
+
+---
+
 ## Downloading models
 
-### Via Loca settings panel (recommended)
-1. Open Loca → gear icon → Models tab
-2. Enter the Hugging Face `repo_id` (e.g. `bartowski/Qwen2.5-7B-Instruct-GGUF`)
-3. For GGUF: enter the specific filename (e.g. `Qwen2.5-7B-Instruct-Q4_K_M.gguf`)
-4. For MLX: leave filename blank — the full directory will be downloaded
-5. Click Download and watch the progress bar
+### Via Discover tab (recommended)
+1. Open Loca → **Manage Models** → **Discover**
+2. Browse hardware-matched recommendations or filter by format
+3. Click a model card → confirm → download starts with real-time progress
+
+### Via Search HF or manual entry
+1. Open **Manage Models** → **Search HF** tab (to search Hugging Face) or enter a repo ID directly
+2. For GGUF: select the specific filename (e.g. `Qwen2.5-7B-Instruct-Q4_K_M.gguf`)
+3. For MLX: leave filename blank — the full directory will be downloaded
+4. Click Download — progress updates live; you can pause and resume at any time
 
 ### Via command line
 ```bash
@@ -91,6 +113,6 @@ MLX models use fixed quantisation per repo (usually 4-bit or 8-bit) — no choic
 
 ## Adding a model to config.yaml
 
-The `config.yaml` models section is now for display names only — routing uses whichever model is loaded in the inference backend. You don't need to edit config.yaml to use a model; just download it and load it from the settings panel.
+The `config.yaml` models section is now for display names only — routing uses whichever model is loaded in the inference backend. You don't need to edit config.yaml to use a model; just download it and load it from Manage Models.
 
-The `routing` section controls which system prompt mode handles each conversation type (general, code, reason, write). These are independent of which model is loaded.
+The `routing` section controls which system prompt mode handles each conversation type (general, code, reason). These are independent of which model is loaded.
