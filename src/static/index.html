@@ -2443,7 +2443,7 @@ function renderDiscover() {
           ${r.provider ? `<span style="font-size:10px;color:var(--text-muted)">${esc(r.provider)}</span>` : ''}
         </div>
         <div class="model-card-meta">
-          <span>~${fmtGB(r.size_gb)}</span>
+          <span>${fmtGB(r.size_gb)}</span>
           <span>${r.quant||''}</span>
           ${r.context ? `<span>${formatCtx(r.context)}</span>` : ''}
           <span style="color:var(--text-muted)">${esc(r.why||'')}</span>

@@ -237,9 +237,8 @@ struct ModelRecommendation: Decodable, Identifiable {
     var id: String { repo_id + (filename ?? "") }
     var formatLabel: String { format.uppercased() }
     var sizeLabel: String {
-        let s = size_gb >= 1 ? String(format: "%.1f GB", size_gb)
-                             : String(format: "%.0f MB", size_gb * 1024)
-        return "~\(s)"
+        size_gb >= 1 ? String(format: "%.1f GB", size_gb)
+                     : String(format: "%.0f MB", size_gb * 1024)
     }
 
     /// Inferred category key for filter tabs.
