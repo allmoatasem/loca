@@ -37,7 +37,11 @@ On first run, `start_services.sh` will:
 
 ### Download your first model
 
-Open Loca → gear icon → Models → enter a Hugging Face repo ID:
+Open Loca → **Manage Models** → **Discover** tab.
+
+Loca automatically detects your hardware and shows recommended models sorted by fit score. Each card shows estimated size, tokens/sec, and whether the model is MLX (Apple Silicon) or GGUF. Click a card to start downloading.
+
+For a specific model, use the **Search HF** tab or enter the repo ID directly:
 
 - Quick start (small, GGUF): `bartowski/Qwen2.5-7B-Instruct-GGUF`, file: `Qwen2.5-7B-Instruct-Q4_K_M.gguf`
 - Best quality (MLX, needs 36+ GB): `mlx-community/Qwen2.5-32B-Instruct-4bit`

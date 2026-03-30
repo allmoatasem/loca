@@ -10,7 +10,8 @@ Loca manages its own inference backend (MLX on Apple Silicon, llama.cpp everywhe
 
 - **No dependencies on LM Studio or Ollama** — drives `mlx_lm.server` and `llama-server` directly
 - **MLX + GGUF models** — use MLX directories for Apple Silicon speed or GGUF files for cross-platform
-- **In-app model management** — download from Hugging Face, switch models, delete, set context window
+- **Hardware-aware model discovery** — llmfit analyses your RAM/GPU and recommends the best MLX and GGUF models for your machine, with live fit scores, tokens/sec estimates, and format filters
+- **In-app model management** — download from Hugging Face with real-time progress, pause/resume/cancel, switch models, delete, set context window
 - **Persistent memory** — three types: user facts, verified knowledge, and corrections; injected into every conversation
 - **Web search** — SearXNG + trafilatura, with optional Playwright deep research mode for dynamic sites
 - **Tool use** — web_search, web_fetch, file_read, file_write, shell_exec, image_describe
@@ -85,15 +86,13 @@ On first run, Python dependencies and SearXNG are installed automatically. The o
 
 ## Your first model
 
-Open Loca → gear icon (⚙) → Models tab.
+Open Loca → **Manage Models** → **Discover** tab.
 
-**Fast start (GGUF, cross-platform):**
-- Repo: `bartowski/Qwen2.5-7B-Instruct-GGUF`
-- File: `Qwen2.5-7B-Instruct-Q4_K_M.gguf`
+Loca uses [llmfit](https://github.com/AlexsJones/llmfit) to analyse your hardware and automatically show the best models for your machine — sorted by fit score, with MLX and GGUF clearly labelled. Tap any model card to download it.
 
-**Best quality on Apple Silicon (MLX):**
-- Repo: `mlx-community/Qwen2.5-32B-Instruct-4bit`
-- File: (leave blank)
+**Manual download** (Search HF tab or direct entry):
+- GGUF (cross-platform): `bartowski/Qwen2.5-7B-Instruct-GGUF`, file: `Qwen2.5-7B-Instruct-Q4_K_M.gguf`
+- MLX (Apple Silicon only): `mlx-community/Qwen2.5-32B-Instruct-4bit`, file: (leave blank)
 
 See [docs/MODELS.md](docs/MODELS.md) for a full list of recommended models.
 
@@ -124,8 +123,9 @@ Full reference: [docs/SETUP.md](docs/SETUP.md)
 ## Docs
 
 - [Architecture](docs/ARCHITECTURE.md) — system diagram, component reference, data flow
-- [Models guide](docs/MODELS.md) — MLX vs GGUF, recommended models, quantisation guide
+- [Models guide](docs/MODELS.md) — Discover tab, MLX vs GGUF, recommended models, quantisation guide
 - [Setup guide](docs/SETUP.md) — per-platform install, config reference
+- [Swift architecture](docs/SWIFT_ARCHITECTURE.md) — macOS app structure, MVVM pattern, AppState
 
 ---
 
