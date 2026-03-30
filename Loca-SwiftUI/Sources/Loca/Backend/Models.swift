@@ -146,6 +146,7 @@ struct LocalModel: Decodable, Identifiable {
     let size_gb: Double
     let is_loaded: Bool
     let context_length: Int?
+    let param_label: String?
 
     var id: String { name }
 

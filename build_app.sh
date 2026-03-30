@@ -54,8 +54,12 @@ echo "Bundling Python backend…"
 rm -rf "$RESOURCES/src" "$RESOURCES/prompts"
 cp -R "$DIR/src"     "$RESOURCES/src"
 cp -R "$DIR/prompts" "$RESOURCES/prompts"
-cp    "$DIR/requirements.txt" "$RESOURCES/requirements.txt"
-cp    "$DIR/config.yaml"      "$RESOURCES/config.yaml"
+cp    "$DIR/requirements.txt"       "$RESOURCES/requirements.txt"
+cp    "$DIR/config.yaml"            "$RESOURCES/config.yaml"
+# SearXNG settings (both filenames used by different versions)
+for f in searxng-settings.yml searxng-settings.yaml; do
+    [ -f "$DIR/$f" ] && cp "$DIR/$f" "$RESOURCES/$f"
+done
 # Remove __pycache__ dirs to keep the bundle clean
 find "$RESOURCES/src" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 

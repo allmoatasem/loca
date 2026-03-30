@@ -36,6 +36,7 @@ class ModelInfo:
     size_gb: float
     is_loaded: bool = False
     context_length: int | None = None  # max tokens from config
+    param_label: str | None = None     # e.g. "7B", "70B", "3.8B"
 
     def to_dict(self) -> dict:
         return {
@@ -45,6 +46,7 @@ class ModelInfo:
             "size_gb": round(self.size_gb, 2),
             "is_loaded": self.is_loaded,
             "context_length": self.context_length,
+            "param_label": self.param_label,
         }
 
 
@@ -96,6 +98,7 @@ class ModelManager:
                     format="gguf",
                     size_gb=size_gb,
                     is_loaded=(loaded_name == p.name),
+                    param_label=_extract_param_label(name),
                 ))
 
         # MLX model directories (contain config.json)
@@ -112,6 +115,7 @@ class ModelManager:
                         size_gb=size_gb,
                         is_loaded=(loaded_name == p.name),
                         context_length=ctx,
+                        param_label=_extract_param_label(name),
                     ))
 
         return models
@@ -309,6 +313,13 @@ class ModelManager:
 def _dir_size_gb(path: Path) -> float:
     total = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
     return total / 1_073_741_824
+
+
+def _extract_param_label(name: str) -> str | None:
+    """Extract parameter count from model name, e.g. '7B', '70B', '3.8B'."""
+    import re
+    m = re.search(r'(\d+(?:\.\d+)?B(?:-A\d+(?:\.\d+)?B)?)', name, re.IGNORECASE)
+    return m.group(0).upper() if m else None
 
 
 def _read_context_length(config_path: Path) -> int | None:

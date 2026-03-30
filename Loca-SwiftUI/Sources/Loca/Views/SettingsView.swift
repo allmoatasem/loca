@@ -119,6 +119,9 @@ private struct DownloadedModelsTab: View {
                     modelBadge(m.formatLabel,
                           bg: m.format == "mlx" ? Color.purple.opacity(0.12) : Color.blue.opacity(0.1),
                           fg: m.format == "mlx" ? .purple : .blue)
+                    if let p = m.param_label {
+                        Text(p).font(.system(size: 11, weight: .medium)).foregroundColor(.secondary)
+                    }
                     Text(m.sizeLabel).font(.system(size: 11)).foregroundColor(.secondary)
                     if let ctx = m.contextLabel {
                         Text(ctx).font(.system(size: 10)).foregroundColor(.secondary)

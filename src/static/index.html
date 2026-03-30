@@ -2379,6 +2379,7 @@ async function renderDownloaded() {
           <div class="model-card-name">${esc(m.name)}</div>
           <div class="model-card-meta">
             <span class="badge ${m.format === 'mlx' ? 'badge-mlx' : 'badge-gguf'}">${m.format.toUpperCase()}</span>
+            ${m.param_label ? `<span style="font-weight:600">${esc(m.param_label)}</span>` : ''}
             <span>${fmtGB(m.size_gb)}</span>
             ${ctx ? `<span>${ctx}</span>` : ''}
           </div>
