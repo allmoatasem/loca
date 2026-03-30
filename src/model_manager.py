@@ -321,16 +321,17 @@ class ModelManager:
                 sem = asyncio.Semaphore(4)
                 progress_queue: asyncio.Queue[DownloadProgress] = asyncio.Queue()
 
-                # Pre-credit already-complete files
+                # Credit complete files; credit partial bytes so resume progress is accurate
                 pending: list[dict] = []
                 for sib in siblings:
                     rfilename = sib["rfilename"]
                     file_size = actual_sizes.get(rfilename, 0)
                     file_dest = dest / rfilename
-                    if file_dest.exists() and file_size > 0 and file_dest.stat().st_size == file_size:
-                        downloaded_bytes[rfilename] = file_size
+                    existing = file_dest.stat().st_size if file_dest.exists() else 0
+                    if file_size > 0 and existing == file_size:
+                        downloaded_bytes[rfilename] = file_size   # fully done
                     else:
-                        downloaded_bytes[rfilename] = 0
+                        downloaded_bytes[rfilename] = existing    # 0 or partial
                         pending.append(sib)
 
                 async def _download_file(sib: dict) -> None:
@@ -338,12 +339,22 @@ class ModelManager:
                     file_dest = dest / rfilename
                     file_dest.parent.mkdir(parents=True, exist_ok=True)
                     hf_url = f"https://huggingface.co/{repo_id}/resolve/main/{rfilename}"
+                    resume_from = file_dest.stat().st_size if file_dest.exists() else 0
                     async with sem:
                         async with httpx.AsyncClient(timeout=None, follow_redirects=True) as client:
-                            async with client.stream("GET", hf_url) as resp:
-                                resp.raise_for_status()
+                            headers = {"Range": f"bytes={resume_from}-"} if resume_from > 0 else {}
+                            async with client.stream("GET", hf_url, headers=headers) as resp:
+                                if resp.status_code == 416:
+                                    return  # server says file already complete
+                                if resp.status_code not in (200, 206):
+                                    resp.raise_for_status()
+                                # 200 means server ignored Range; start fresh
+                                if resp.status_code == 200 and resume_from > 0:
+                                    resume_from = 0
+                                    downloaded_bytes[rfilename] = 0
+                                mode = "ab" if resume_from > 0 else "wb"
                                 try:
-                                    with open(file_dest, "wb") as f:
+                                    with open(file_dest, mode) as f:
                                         async for chunk in resp.aiter_bytes(1024 * 1024):
                                             f.write(chunk)
                                             downloaded_bytes[rfilename] += len(chunk)
@@ -359,24 +370,35 @@ class ModelManager:
                                                 total_bytes=total_size,
                                             ))
                                 except Exception:
-                                    file_dest.unlink(missing_ok=True)
+                                    if mode == "wb":
+                                        file_dest.unlink(missing_ok=True)
                                     raise
 
                 download_task = asyncio.gather(*[_download_file(s) for s in pending])
+                try:
+                    while not download_task.done():
+                        try:
+                            prog = progress_queue.get_nowait()
+                            yield prog
+                        except asyncio.QueueEmpty:
+                            await asyncio.sleep(0.1)
 
-                while not download_task.done():
-                    try:
-                        prog = progress_queue.get_nowait()
-                        yield prog
-                    except asyncio.QueueEmpty:
-                        await asyncio.sleep(0.1)
+                    await download_task  # re-raises any exception from a worker
+                    # Drain any remaining progress events
+                    while not progress_queue.empty():
+                        yield progress_queue.get_nowait()
 
-                await download_task  # re-raises any exception from a worker
-                # Drain any remaining progress events
-                while not progress_queue.empty():
-                    yield progress_queue.get_nowait()
-
-                yield DownloadProgress(100, done=True)
+                    yield DownloadProgress(100, done=True)
+                except BaseException:
+                    # Ensure worker coroutines are stopped on cancel, pause, or error —
+                    # asyncio.gather tasks are NOT automatically cancelled when the parent is.
+                    if not download_task.done():
+                        download_task.cancel()
+                        try:
+                            await download_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
+                    raise
 
             else:
                 yield DownloadProgress(0, error=f"Unknown format: {target_format}")
