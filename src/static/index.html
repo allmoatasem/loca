@@ -928,7 +928,6 @@ code[class*="language-"] {
         <button class="mode-tab active" data-mode="general" onclick="selectMode(this)">General</button>
         <button class="mode-tab"        data-mode="code"    onclick="selectMode(this)">Code</button>
         <button class="mode-tab"        data-mode="reason"  onclick="selectMode(this)">Reason</button>
-        <button class="mode-tab"        data-mode="write"   onclick="selectMode(this)">Write</button>
       </div>
       <div id="model-desc"></div>
     </div>
@@ -1077,10 +1076,9 @@ let currentModel   = null;
 let researchMode   = false;
 
 const MODE_DESCS = {
-  general: 'Vision · chat · code · analysis',
+  general: 'Vision · chat · code · writing · analysis',
   reason:  'Planning · trade-offs · math · logic',
   code:    'Code generation · debugging · review',
-  write:   'Drafting · editing · summarisation',
 };
 
 // Keep for any old references
@@ -1391,6 +1389,19 @@ function buildUserContent(text) {
 }
 
 // ── Send ──────────────────────────────────────────────────────────────────────
+const _VISION_TERMS = [
+  'llava','moondream','bakllava','minicpm-v','idefics','cogvlm',
+  'internvl','qwen-vl','qwen2-vl','qwen2.5-vl','qwen3-vl',
+  'blip','pixtral','phi-vision','phi3-vision','phi3.5-vision',
+  'gemini-vision','paligemma','florence',
+];
+function _isVisionModel(name) {
+  if (!name) return false;
+  const l = name.toLowerCase();
+  if (_VISION_TERMS.some(t => l.includes(t))) return true;
+  return /(?:^|-)vl(?:-|$|\.)/.test(l);
+}
+
 async function sendMessage() {
   const text = getInputText();
   const hasAttachments = attachments.some(Boolean);
@@ -1401,6 +1412,23 @@ async function sendMessage() {
   const modelOverride = document.getElementById('model-select').value || undefined;
   const numCtx = parseInt(document.getElementById('ctx-select').value, 10);
   currentModel = modelOverride || mode;
+
+  // Guard: reject images for non-vision models
+  const hasImages = attachments.some(a => a && a.type === 'image');
+  if (hasImages && !_isVisionModel(currentModel)) {
+    document.getElementById('empty')?.remove();
+    appendUser(text, attachments.filter(Boolean));
+    const { bodyEl } = appendAssistant(currentModel);
+    bodyEl.innerHTML = '<p>⚠️ The current model (<strong>' +
+      (currentModel || 'unknown') +
+      '</strong>) does not support images. Please load a vision model ' +
+      '(e.g. one containing "llava", "-vl", or "minicpm-v" in the name) and try again.</p>';
+    attachments = [];
+    const strip = document.getElementById('attach-strip');
+    strip.innerHTML = ''; strip.classList.remove('has-files');
+    inputEl.innerHTML = '';
+    return;
+  }
   document.getElementById('empty')?.remove();
 
   const userContent = buildUserContent(text);
