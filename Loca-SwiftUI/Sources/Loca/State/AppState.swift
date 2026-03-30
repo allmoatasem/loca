@@ -138,7 +138,8 @@ final class AppState: ObservableObject {
     func loadModel(_ name: String, ctxSize: Int? = nil) { Task { await _loadModel(name, ctxSize: ctxSize) } }
     func deleteModel(_ name: String) { Task { await _deleteModel(name) } }
     func unloadModel()               { Task { await _unloadModel() } }
-    func reloadRecommendations() { Task { await _loadRecommendations() } }
+    func reloadRecommendations() { Task { await _loadRecommendations(force: true) } }
+    func loadRecommendationsIfNeeded() { guard recommendedModels.isEmpty else { return }; Task { await _loadRecommendations(force: false) } }
     func installLlmfit()         { Task { await _installLlmfit() } }
     func startModelDownload(repoId: String, filename: String?, format: String) { _startDownload(repoId: repoId, filename: filename, format: format) }
     func pauseDownload()  { Task { await _pauseDownload() } }

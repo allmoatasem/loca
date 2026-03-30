@@ -356,7 +356,7 @@ def get_recommendations(profile: HardwareProfile | None = None) -> list[ModelRec
 
     bin_path = _llmfit_bin()
     if bin_path:
-        data = _run_llmfit(["recommend", "--limit", "200"], bin_path)
+        data = _run_llmfit(["recommend", "--limit", "1000"], bin_path)
         # llmfit wraps output in {"models": [...]}
         if data and isinstance(data, dict):
             items = data.get("models", [])
@@ -375,8 +375,15 @@ def get_recommendations(profile: HardwareProfile | None = None) -> list[ModelRec
                 if fmt == "gguf":
                     sources = item.get("gguf_sources") or []
                     repo = sources[0].get("repo", name) if sources else name
+                    # Try to extract the recommended file from source metadata
+                    src_file = None
+                    if sources:
+                        src_file = (sources[0].get("file") or sources[0].get("filename")
+                                    or sources[0].get("gguf_file") or sources[0].get("path"))
+                    gguf_filename: str | None = str(src_file) if src_file else None
                 else:
                     repo = name  # MLX: name IS the HF repo
+                    gguf_filename = None
 
                 # Only include entries that look like valid HF repos
                 if "/" not in repo:
@@ -390,12 +397,16 @@ def get_recommendations(profile: HardwareProfile | None = None) -> list[ModelRec
                 tps = float(item.get("estimated_tps") or 0)
                 use_case = str(item.get("use_case") or item.get("category") or "")
                 # why: plain description only — fit/tps/use_case are shown as separate UI pills
-                why = str(item.get("notes") or item.get("description") or "")
+                raw_notes = item.get("notes") or item.get("description") or ""
+                if isinstance(raw_notes, list):
+                    why = " · ".join(str(n) for n in raw_notes if n)
+                else:
+                    why = str(raw_notes)
 
                 results.append(ModelRecommendation(
                     name=name.split("/")[-1],  # display name: just the model part
                     repo_id=repo,
-                    filename=None,             # MLX: snapshot; GGUF: no specific file
+                    filename=gguf_filename,    # MLX: None (full repo); GGUF: from llmfit if available
                     format=fmt,
                     size_gb=size,
                     quant=quant,

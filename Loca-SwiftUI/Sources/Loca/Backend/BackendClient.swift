@@ -75,6 +75,16 @@ actor BackendClient {
         _ = try await postRaw("/api/models/download/\(id)/cancel", body: [:])
     }
 
+    func fetchRepoFiles(repoId: String, format: String = "gguf") async throws -> [RepoFile] {
+        let encoded = repoId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? repoId
+        guard let url = URL(string: "http://localhost:8000/api/repo-files?repo_id=\(encoded)&format=\(format)") else {
+            throw URLError(.badURL)
+        }
+        let (data, _) = try await session.data(from: url)
+        struct Resp: Decodable { let files: [RepoFile] }
+        return try JSONDecoder().decode(Resp.self, from: data).files
+    }
+
     // MARK: - Hardware & recommendations
 
     func fetchHardwareProfile() async throws -> HardwareProfile {
@@ -82,8 +92,9 @@ actor BackendClient {
         return try JSONDecoder().decode(HardwareProfile.self, from: data)
     }
 
-    func fetchRecommendedModels() async throws -> RecommendedModelsResponse {
-        let (data, _) = try await get("/api/recommended-models")
+    func fetchRecommendedModels(force: Bool = false) async throws -> RecommendedModelsResponse {
+        let path = force ? "/api/recommended-models?force=true" : "/api/recommended-models"
+        let (data, _) = try await get(path)
         return try JSONDecoder().decode(RecommendedModelsResponse.self, from: data)
     }
 

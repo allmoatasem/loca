@@ -8,12 +8,10 @@ struct SettingsView: View {
     enum Tab: String, CaseIterable {
         case downloaded = "Downloaded"
         case discover   = "Discover"
-        case settings   = "Settings"
         var icon: String {
             switch self {
             case .downloaded: return "internaldrive"
             case .discover:   return "cpu"
-            case .settings:   return "gearshape"
             }
         }
     }
@@ -32,7 +30,7 @@ struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 300)
+                .frame(width: 220)
                 Spacer()
                 Button("Done") { state.isSettingsOpen = false }
                     .keyboardShortcut(.return)
@@ -46,7 +44,6 @@ struct SettingsView: View {
             switch tab {
             case .downloaded: DownloadedModelsTab()
             case .discover:   DiscoverTab()
-            case .settings:   ModelSettingsTab()
             }
 
             // ── Download status bar (persistent across all tabs) ──────────
@@ -58,7 +55,7 @@ struct SettingsView: View {
         .frame(width: 900, height: 700)
         .onAppear {
             state.reloadLocalModels()
-            state.reloadRecommendations()
+            state.loadRecommendationsIfNeeded()
         }
     }
 }
@@ -180,11 +177,30 @@ private struct DiscoverTab: View {
     @EnvironmentObject var state: AppState
     @State private var selectedCategory = "all"
     @State private var searchText = ""
+    @State private var discoverMode: DiscoverMode = .forYou
+    @State private var forYouFormat = "all"
+    @State private var hfFormat = "gguf"
+    @State private var hfQuery = ""
+    @State private var hfHits: [HFHit] = []
+    @State private var hfSearchTask: Task<Void, Never>?
+    @State private var isSearchingHF = false
+    @State private var displayLimit = 50
+
+    enum DiscoverMode { case forYou, search }
+
+    struct HFHit: Identifiable {
+        let id = UUID()
+        let repo_id: String
+        let downloads: Int
+    }
 
     private let categories = ["all", "general", "code", "reasoning", "vision"]
 
     private var filtered: [ModelRecommendation] {
         var result = state.recommendedModels
+        if forYouFormat != "all" {
+            result = result.filter { $0.format == forYouFormat }
+        }
         if selectedCategory != "all" {
             result = result.filter { $0.category == selectedCategory }
         }
@@ -204,9 +220,37 @@ private struct DiscoverTab: View {
         VStack(spacing: 0) {
             // ── Toolbar ──────────────────────────────────────────────────
             HStack(spacing: 10) {
-                hardwareBadge
+                Picker("", selection: $discoverMode) {
+                    Text("For You").tag(DiscoverMode.forYou)
+                    Text("Search HF").tag(DiscoverMode.search)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 180)
+                .onChange(of: discoverMode) { if $0 == .forYou { hfHits = []; hfQuery = "" } }
+
                 Spacer()
-                categoryFilter
+
+                if discoverMode == .forYou {
+                    hardwareBadge
+                    Picker("", selection: $forYouFormat) {
+                        Text("All").tag("all")
+                        Text("MLX").tag("mlx")
+                        Text("GGUF").tag("gguf")
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 120)
+                    categoryFilter
+                } else {
+                    Picker("", selection: $hfFormat) {
+                        Text("GGUF").tag("gguf")
+                        Text("MLX").tag("mlx")
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 100)
+                    .onChange(of: hfFormat) { _ in scheduleHFSearch() }
+                }
+
+                if discoverMode == .forYou { refreshButton }
             }
             .padding(.horizontal, 20)
             .padding(.top, 10)
@@ -216,71 +260,115 @@ private struct DiscoverTab: View {
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")
                         .foregroundColor(.secondary).font(.system(size: 11))
-                    TextField("Search models, providers…", text: $searchText)
-                        .textFieldStyle(.plain).font(.system(size: 12))
-                    if !searchText.isEmpty {
-                        Button { searchText = "" } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(.secondary).font(.system(size: 11))
-                        }.buttonStyle(.plain)
+                    if discoverMode == .forYou {
+                        TextField("Search models, providers…", text: $searchText)
+                            .textFieldStyle(.plain).font(.system(size: 12))
+                        if !searchText.isEmpty {
+                            Button { searchText = "" } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.secondary).font(.system(size: 11))
+                            }.buttonStyle(.plain)
+                        }
+                    } else {
+                        TextField("Search Hugging Face (e.g. Qwen2.5-7B-Instruct)…", text: $hfQuery)
+                            .textFieldStyle(.plain).font(.system(size: 12))
+                            .onChange(of: hfQuery) { _ in scheduleHFSearch() }
+                        if !hfQuery.isEmpty {
+                            Button { hfQuery = ""; hfHits = [] } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.secondary).font(.system(size: 11))
+                            }.buttonStyle(.plain)
+                        }
+                        if isSearchingHF { ProgressView().scaleEffect(0.5) }
                     }
                 }
                 .padding(.horizontal, 8).padding(.vertical, 5)
                 .background(Color(nsColor: .controlBackgroundColor))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
-                refreshButton
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 6)
 
             Divider()
 
-            // ── Legend ───────────────────────────────────────────────────
-            HStack(spacing: 14) {
-                legendDot(.green,     "Perfect fit")
-                legendDot(.yellow,    "Good fit")
-                legendDot(.orange,    "Tight fit")
-                legendDot(.secondary, "Unknown")
-                Spacer()
-                if !state.recommendedModels.isEmpty {
-                    Text("\(filtered.count) of \(state.recommendedModels.count)")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 6)
-
-            Divider()
-
-            // ── List ─────────────────────────────────────────────────────
-            if state.isLoadingRecommendations {
-                Spacer()
-                ProgressView("Detecting hardware…").frame(maxWidth: .infinity)
-                Spacer()
-            } else if filtered.isEmpty {
-                Spacer()
-                VStack(spacing: 6) {
-                    Image(systemName: "cpu").font(.system(size: 32)).foregroundColor(.secondary)
-                    Text(state.recommendedModels.isEmpty
-                         ? "No recommendations yet — tap ↺ to scan your hardware."
-                         : "No results for the current filters.")
-                        .font(.system(size: 13)).foregroundColor(.secondary)
-                }
-                .frame(maxWidth: .infinity)
-                Spacer()
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 6) {
-                        ForEach(filtered) { rec in
-                            RecommendationRow(rec: rec)
-                        }
+            if discoverMode == .forYou {
+                HStack(spacing: 14) {
+                    legendDot(.green, "Perfect fit")
+                    legendDot(.yellow, "Good fit")
+                    legendDot(.orange, "Tight fit")
+                    legendDot(.secondary, "Unknown")
+                    Spacer()
+                    if !state.recommendedModels.isEmpty {
+                        Text("\(min(displayLimit, filtered.count)) of \(filtered.count)")
+                            .font(.system(size: 11)).foregroundColor(.secondary)
                     }
-                    .padding(16)
                 }
+                .padding(.horizontal, 20).padding(.vertical, 6)
+                Divider()
             }
 
+            // ── Content ──────────────────────────────────────────────────
+            if discoverMode == .forYou {
+                if state.isLoadingRecommendations {
+                    Spacer()
+                    ProgressView("Detecting hardware…").frame(maxWidth: .infinity)
+                    Spacer()
+                } else if filtered.isEmpty {
+                    Spacer()
+                    VStack(spacing: 6) {
+                        Image(systemName: "cpu").font(.system(size: 32)).foregroundColor(.secondary)
+                        Text(state.recommendedModels.isEmpty
+                             ? "No recommendations yet — tap ↺ to scan your hardware."
+                             : forYouFormat == "gguf"
+                                 ? "No GGUF recommendations for your hardware.\nUse Search HF to find GGUF models."
+                                 : "No results for the current filters.")
+                            .font(.system(size: 13)).foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    Spacer()
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 6) {
+                            ForEach(filtered.prefix(displayLimit)) { rec in
+                                RecommendationRow(rec: rec)
+                            }
+                            if displayLimit < filtered.count {
+                                ProgressView()
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                                    .onAppear { displayLimit += 50 }
+                            }
+                        }
+                        .padding(16)
+                    }
+                    .onChange(of: selectedCategory) { _ in displayLimit = 50 }
+                    .onChange(of: forYouFormat)     { _ in displayLimit = 50 }
+                    .onChange(of: searchText)       { _ in displayLimit = 50 }
+                }
+            } else {
+                if hfHits.isEmpty && !isSearchingHF {
+                    Spacer()
+                    VStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass").font(.system(size: 32)).foregroundColor(.secondary)
+                        Text(hfQuery.isEmpty ? "Search Hugging Face for models to download."
+                                             : "No results for \"\(hfQuery)\".")
+                            .font(.system(size: 13)).foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    Spacer()
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 6) {
+                            ForEach(hfHits) { hit in
+                                HFSearchRow(hit: hit, format: hfFormat)
+                            }
+                        }
+                        .padding(16)
+                    }
+                }
+            }
         }
     }
 
@@ -350,6 +438,102 @@ private struct DiscoverTab: View {
             Text(label).font(.system(size: 10)).foregroundColor(.secondary)
         }
     }
+
+    private func scheduleHFSearch() {
+        hfSearchTask?.cancel()
+        guard hfQuery.count >= 2 else { hfHits = []; return }
+        hfSearchTask = Task {
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run { isSearchingHF = true }
+            guard let url = URL(string: "http://localhost:8000/api/hf-search?q=\(hfQuery.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? hfQuery)&format=\(hfFormat)&limit=20") else { return }
+            do {
+                let (data, _) = try await URLSession.shared.data(from: url)
+                struct Resp: Decodable { struct M: Decodable { let repo_id: String; let downloads: Int }; let models: [M] }
+                let resp = try JSONDecoder().decode(Resp.self, from: data)
+                await MainActor.run {
+                    hfHits = resp.models.map { HFHit(repo_id: $0.repo_id, downloads: $0.downloads) }
+                    isSearchingHF = false
+                }
+            } catch {
+                await MainActor.run { isSearchingHF = false }
+            }
+        }
+    }
+}
+
+// MARK: - HF Search Row
+
+private struct HFSearchRow: View {
+    @EnvironmentObject var state: AppState
+    let hit: DiscoverTab.HFHit
+    let format: String
+    @State private var showGGUFPicker = false
+
+    private var isThisDownloading: Bool {
+        state.activeDownload?.repoId == hit.repo_id
+            && state.activeDownload?.done == false
+            && state.activeDownload?.error == nil
+    }
+    private var isAnyDownloading: Bool {
+        state.activeDownload != nil
+            && state.activeDownload?.done == false
+            && state.activeDownload?.error == nil
+    }
+    private var alreadyDownloaded: Bool {
+        let modelName = hit.repo_id.split(separator: "/").last.map(String.init) ?? ""
+        return state.localModels.contains { $0.name == modelName }
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(hit.repo_id.split(separator: "/").last.map(String.init) ?? hit.repo_id)
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                    modelBadge(format.uppercased(),
+                          bg: format == "mlx" ? Color.purple.opacity(0.12) : Color.blue.opacity(0.1),
+                          fg: format == "mlx" ? .purple : .blue)
+                }
+                Text(hit.repo_id)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                Text("\(hit.downloads / 1000)K downloads")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            if alreadyDownloaded {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.green).font(.system(size: 16))
+            } else if isThisDownloading {
+                ProgressView().scaleEffect(0.65)
+            } else {
+                Button {
+                    if format == "gguf" {
+                        showGGUFPicker = true
+                    } else {
+                        state.startModelDownload(repoId: hit.repo_id, filename: nil, format: format)
+                    }
+                } label: {
+                    Label("Get", systemImage: "arrow.down.circle").font(.system(size: 11))
+                }
+                .buttonStyle(.bordered).controlSize(.mini)
+                .disabled(isAnyDownloading)
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .sheet(isPresented: $showGGUFPicker) {
+            GGUFFilePicker(repoId: hit.repo_id)
+                .environmentObject(state)
+        }
+    }
 }
 
 // MARK: - Recommendation Row
@@ -357,6 +541,8 @@ private struct DiscoverTab: View {
 private struct RecommendationRow: View {
     @EnvironmentObject var state: AppState
     let rec: ModelRecommendation
+    @State private var showGGUFPicker = false
+    @State private var showNotesPopover = false
 
     private var alreadyDownloaded: Bool {
         state.localModels.contains(where: { $0.name == (rec.filename ?? rec.repo_id.split(separator: "/").last.map(String.init) ?? rec.name) })
@@ -372,23 +558,18 @@ private struct RecommendationRow: View {
             && state.activeDownload?.error == nil
     }
 
-    // MARK: – Brand colour palette
-    // Purple/blue are already used for format badges; these three complement them.
-    private static let providerColor:    Color = .indigo   // brand / origin
-    private static let tpsColor:         Color = .teal     // performance metric
-    private static let capabilityColor:  Color = .orange   // model function / use-case
+    private static let providerColor:    Color = .indigo
+    private static let tpsColor:         Color = .teal
+    private static let capabilityColor:  Color = .orange
 
     var body: some View {
         HStack(spacing: 10) {
-            // Fitness indicator dot
             Circle()
                 .fill(rec.fitColor)
                 .frame(width: 9, height: 9)
                 .help(rec.fitLabel.isEmpty ? "Fit unknown" : rec.fitLabel)
 
-            // Model info
             VStack(alignment: .leading, spacing: 4) {
-                // ── Row 1: name + format + size ──────────────────────────
                 HStack(spacing: 6) {
                     Text(rec.name)
                         .font(.system(size: 12, weight: .semibold))
@@ -412,45 +593,53 @@ private struct RecommendationRow: View {
                         .foregroundColor(.secondary)
                 }
 
-                // ── Row 2: coloured metadata pills ───────────────────────
                 HStack(spacing: 5) {
-                    // Fit score (indigo-tinted fit colour)
                     if rec.score > 0 {
                         metaPill("\(Int(rec.score))% fit",
-                                 bg: rec.fitColor.opacity(0.12),
-                                 fg: rec.fitColor)
+                                 bg: rec.fitColor.opacity(0.08),
+                                 fg: rec.fitColor.opacity(0.85))
                     }
-                    // Provider  – indigo
                     if !rec.provider.isEmpty {
                         metaPill(rec.provider,
-                                 bg: Self.providerColor.opacity(0.1),
-                                 fg: Self.providerColor)
+                                 bg: Self.providerColor.opacity(0.07),
+                                 fg: Self.providerColor.opacity(0.75))
                     }
-                    // tok/s  – teal
                     if rec.tps > 0 {
                         metaPill("~\(Int(rec.tps)) tok/s",
-                                 bg: Self.tpsColor.opacity(0.1),
-                                 fg: Self.tpsColor)
+                                 bg: Self.tpsColor.opacity(0.07),
+                                 fg: Self.tpsColor.opacity(0.75))
                     }
-                    // Capabilities  – orange
                     if !rec.use_case.isEmpty {
-                        metaPill(rec.use_case.capitalized,
-                                 bg: Self.capabilityColor.opacity(0.1),
-                                 fg: Self.capabilityColor)
+                        metaPill(rec.use_case.capitalized
+                                    .components(separatedBy: " ").prefix(3).joined(separator: " "),
+                                 bg: Self.capabilityColor.opacity(0.07),
+                                 fg: Self.capabilityColor.opacity(0.75))
                     }
-                    // Fallback description (only when no llmfit data fills row 2)
                     if !rec.why.isEmpty {
-                        Text(rec.why)
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
+                        Button {
+                            showNotesPopover.toggle()
+                        } label: {
+                            Image(systemName: "info.circle")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary.opacity(0.6))
+                        }
+                        .buttonStyle(.plain)
+                        .popover(isPresented: $showNotesPopover, arrowEdge: .bottom) {
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(rec.why)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.primary)
+                                    .multilineTextAlignment(.leading)
+                            }
+                            .padding(14)
+                            .frame(width: 300)
+                        }
                     }
                 }
             }
 
             Spacer()
 
-            // Action button
             if alreadyDownloaded {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundColor(.green)
@@ -460,11 +649,15 @@ private struct RecommendationRow: View {
                 ProgressView().scaleEffect(0.65)
             } else {
                 Button {
-                    state.startModelDownload(
-                        repoId: rec.repo_id,
-                        filename: rec.filename,
-                        format: rec.format
-                    )
+                    if rec.format == "gguf" && rec.filename == nil {
+                        showGGUFPicker = true
+                    } else {
+                        state.startModelDownload(
+                            repoId: rec.repo_id,
+                            filename: rec.filename,
+                            format: rec.format
+                        )
+                    }
                 } label: {
                     Label("Get", systemImage: "arrow.down.circle")
                         .font(.system(size: 11))
@@ -479,9 +672,12 @@ private struct RecommendationRow: View {
         .padding(.vertical, 8)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 7))
+        .sheet(isPresented: $showGGUFPicker) {
+            GGUFFilePicker(repoId: rec.repo_id)
+                .environmentObject(state)
+        }
     }
 
-    /// Small coloured pill badge used in row 2.
     private func metaPill(_ text: String, bg: Color, fg: Color) -> some View {
         Text(text)
             .font(.system(size: 9, weight: .medium))
@@ -489,6 +685,106 @@ private struct RecommendationRow: View {
             .padding(.horizontal, 5).padding(.vertical, 2)
             .background(bg)
             .clipShape(Capsule())
+    }
+}
+
+// MARK: - GGUF File Picker
+
+private struct GGUFFilePicker: View {
+    @EnvironmentObject var state: AppState
+    @Environment(\.dismiss) var dismiss
+    let repoId: String
+
+    @State private var files: [RepoFile] = []
+    @State private var isLoading = true
+    @State private var loadError: String?
+
+    private var modelName: String {
+        repoId.split(separator: "/").last.map(String.init) ?? repoId
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Select file to download").font(.headline)
+                    Text(repoId).font(.system(size: 11)).foregroundColor(.secondary)
+                }
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.escape)
+            }
+            .padding(20)
+            Divider()
+
+            if isLoading {
+                Spacer()
+                ProgressView("Loading file list…").frame(maxWidth: .infinity)
+                Spacer()
+            } else if let err = loadError {
+                Spacer()
+                VStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle").font(.system(size: 28)).foregroundColor(.orange)
+                    Text(err).font(.system(size: 12)).foregroundColor(.secondary).multilineTextAlignment(.center)
+                }
+                .padding(20)
+                Spacer()
+            } else if files.isEmpty {
+                Spacer()
+                Text("No GGUF files found in this repository.")
+                    .font(.system(size: 13)).foregroundColor(.secondary)
+                Spacer()
+            } else {
+                ScrollView {
+                    VStack(spacing: 6) {
+                        ForEach(files) { file in
+                            HStack(spacing: 10) {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(file.name)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .lineLimit(1)
+                                    HStack(spacing: 6) {
+                                        if let q = file.quantLabel {
+                                            Text(q)
+                                                .font(.system(size: 9, weight: .semibold))
+                                                .foregroundColor(.blue)
+                                                .padding(.horizontal, 5).padding(.vertical, 2)
+                                                .background(Color.blue.opacity(0.1))
+                                                .clipShape(Capsule())
+                                        }
+                                        Text(file.sizeLabel)
+                                            .font(.system(size: 11))
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                                Spacer()
+                                Button {
+                                    state.startModelDownload(repoId: repoId, filename: file.name, format: "gguf")
+                                    dismiss()
+                                } label: {
+                                    Label("Get", systemImage: "arrow.down.circle").font(.system(size: 11))
+                                }
+                                .buttonStyle(.borderedProminent).controlSize(.mini)
+                                .disabled(state.activeDownload != nil && state.activeDownload?.done == false && state.activeDownload?.error == nil)
+                            }
+                            .padding(.horizontal, 14).padding(.vertical, 10)
+                            .background(Color(nsColor: .controlBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
+                    .padding(16)
+                }
+            }
+        }
+        .frame(width: 600, height: 420)
+        .task {
+            do {
+                files = try await BackendClient.shared.fetchRepoFiles(repoId: repoId, format: "gguf")
+                isLoading = false
+            } catch {
+                loadError = error.localizedDescription
+                isLoading = false
+            }
+        }
     }
 }
 
@@ -505,7 +801,6 @@ private struct DownloadStatusBar: View {
     var body: some View {
         VStack(spacing: 5) {
             HStack(spacing: 8) {
-                // Left: icon + status text
                 if dl.done {
                     Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
                     Text("Downloaded \(modelName)").font(.system(size: 12))
@@ -554,7 +849,6 @@ private struct DownloadStatusBar: View {
 
                 Spacer()
 
-                // Right: control buttons
                 if !dl.done, dl.error == nil {
                     if dl.paused {
                         Button { state.resumeDownload() } label: {
@@ -579,7 +873,6 @@ private struct DownloadStatusBar: View {
                 }
             }
 
-            // Progress bar (hide when paused at 0 or done)
             if !dl.done, dl.error == nil, dl.percent >= 0 {
                 ProgressView(value: dl.percent, total: 100)
                     .progressViewStyle(.linear)
@@ -596,189 +889,6 @@ private struct DownloadStatusBar: View {
         if s < 60 { return "\(s)s" }
         return "\(s / 60)m \(s % 60)s"
     }
-}
-
-// MARK: - Model Settings Tab
-
-private struct ModelSettingsTab: View {
-    @EnvironmentObject var state: AppState
-
-    @State private var downloadRepoId   = ""
-    @State private var downloadFilename = ""
-    @State private var downloadFormat   = "gguf"
-    @State private var hfSuggestions: [HFSuggestion] = []
-    @State private var hfSearchTask: Task<Void, Never>?
-    @State private var showSuggestions  = false
-
-    private struct HFSuggestion: Identifiable {
-        let id = UUID()
-        let repo_id: String
-        let downloads: Int
-    }
-    private let formats = ["gguf", "mlx"]
-    private let ctxOptions = [4096, 8192, 16384, 32768, 65536, 131072]
-
-    private var isDownloading: Bool {
-        state.activeDownload != nil
-            && state.activeDownload?.done == false
-            && state.activeDownload?.error == nil
-    }
-    private var downloadError: String? { state.activeDownload?.error }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                downloadSection
-                Divider()
-                contextSection
-            }
-            .padding(20)
-        }
-    }
-
-    // MARK: Download
-
-    private var downloadSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Download from Hugging Face", systemImage: "arrow.down.circle")
-                .font(.system(size: 13, weight: .semibold))
-
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Format").font(.system(size: 11)).foregroundColor(.secondary)
-                    Picker("", selection: $downloadFormat) {
-                        ForEach(formats, id: \.self) { Text($0.uppercased()).tag($0) }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .frame(width: 120)
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Repository ID").font(.system(size: 11)).foregroundColor(.secondary)
-                    TextField(downloadFormat == "gguf"
-                              ? "bartowski/Qwen2.5-7B-Instruct-GGUF"
-                              : "mlx-community/Qwen2.5-7B-Instruct-4bit",
-                              text: $downloadRepoId)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 12))
-                        .onChange(of: downloadRepoId) { fetchHFSuggestions(downloadRepoId) }
-                    if showSuggestions {
-                        VStack(alignment: .leading, spacing: 0) {
-                            ForEach(hfSuggestions) { s in
-                                Button {
-                                    downloadRepoId = s.repo_id
-                                    showSuggestions = false
-                                    hfSuggestions = []
-                                } label: {
-                                    HStack {
-                                        Text(s.repo_id).font(.system(size: 11)).lineLimit(1)
-                                        Spacer()
-                                        Text("\(s.downloads / 1000)K↓").font(.system(size: 10)).foregroundColor(.secondary)
-                                    }
-                                    .padding(.horizontal, 8).padding(.vertical, 5).contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                                .background(Color(nsColor: .controlBackgroundColor))
-                                Divider()
-                            }
-                        }
-                        .background(Color(nsColor: .windowBackgroundColor))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
-                        .shadow(radius: 4)
-                    }
-                }
-            }
-
-            if downloadFormat == "gguf" {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Filename (required for GGUF)").font(.system(size: 11)).foregroundColor(.secondary)
-                    TextField("Qwen2.5-7B-Instruct-Q4_K_M.gguf", text: $downloadFilename)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 12))
-                }
-            } else {
-                Text("Leave filename blank — the entire model directory will be downloaded.")
-                    .font(.system(size: 11)).foregroundColor(.secondary)
-            }
-
-            if let err = downloadError { Text(err).font(.system(size: 11)).foregroundColor(.red) }
-
-            Button(action: startDownload) {
-                Label(isDownloading ? "Downloading…" : "Download", systemImage: "arrow.down.circle")
-            }
-            .disabled(isDownloading
-                || downloadRepoId.trimmingCharacters(in: .whitespaces).isEmpty
-                || (downloadFormat == "gguf" && downloadFilename.trimmingCharacters(in: .whitespaces).isEmpty))
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-        }
-    }
-
-    // MARK: Context window
-
-    private var contextSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Context Window", systemImage: "doc.text.magnifyingglass")
-                .font(.system(size: 13, weight: .semibold))
-
-            HStack(spacing: 12) {
-                Picker("", selection: $state.contextWindow) {
-                    ForEach(ctxOptions, id: \.self) { n in
-                        Text(ctxLabel(n)).tag(n)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 100)
-
-                Text("Larger values allow longer conversations but use more RAM. Takes effect on next model load.")
-                    .font(.system(size: 11)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-
-            if let active = state.activeModelName {
-                Button("Reload \(active) with \(ctxLabel(state.contextWindow)) context") {
-                    state.loadModel(active, ctxSize: state.contextWindow)
-                }
-                .controlSize(.small)
-                .buttonStyle(.bordered)
-            }
-        }
-    }
-
-    // MARK: Helpers
-
-    private func fetchHFSuggestions(_ query: String) {
-        hfSearchTask?.cancel()
-        guard query.count >= 2 else { hfSuggestions = []; showSuggestions = false; return }
-        hfSearchTask = Task {
-            try? await Task.sleep(nanoseconds: 400_000_000)
-            guard !Task.isCancelled else { return }
-            guard let url = URL(string: "http://localhost:8000/api/hf-search?q=\(query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query)&format=\(downloadFormat)&limit=8") else { return }
-            do {
-                let (data, _) = try await URLSession.shared.data(from: url)
-                struct Resp: Decodable { struct M: Decodable { let repo_id: String; let downloads: Int }; let models: [M] }
-                let resp = try JSONDecoder().decode(Resp.self, from: data)
-                await MainActor.run {
-                    hfSuggestions = resp.models.map { HFSuggestion(repo_id: $0.repo_id, downloads: $0.downloads) }
-                    showSuggestions = !hfSuggestions.isEmpty
-                }
-            } catch {}
-        }
-    }
-
-    private func startDownload() {
-        let repoId   = downloadRepoId.trimmingCharacters(in: .whitespaces)
-        let filename = downloadFilename.trimmingCharacters(in: .whitespaces)
-        guard !repoId.isEmpty else { return }
-        state.startModelDownload(
-            repoId: repoId,
-            filename: filename.isEmpty ? nil : filename,
-            format: downloadFormat
-        )
-    }
-
-    private func ctxLabel(_ n: Int) -> String { n >= 1024 ? "\(n / 1024)K" : "\(n)" }
 }
 
 // MARK: - Shared badge helper

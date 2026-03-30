@@ -79,6 +79,8 @@ _orchestrator: Orchestrator | None = None
 _download_jobs:  dict[str, asyncio.Queue]  = {}   # download_id → progress queue
 _download_tasks: dict[str, asyncio.Task]   = {}   # download_id → running asyncio Task
 _download_meta:  dict[str, dict]           = {}   # download_id → {repo_id, filename, format}
+_recs_cache:      dict | None               = None  # cached /api/recommended-models response
+_recs_cache_lock: asyncio.Lock | None      = None  # ensures only one build runs at a time
 
 
 @asynccontextmanager
@@ -102,6 +104,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 logger.warning(f"Could not auto-start inference backend: {e}")
 
     logger.info("Loca proxy started")
+    asyncio.create_task(_build_recs_cache())
     yield
     # Shutdown
     if _inference_backend:
@@ -627,37 +630,67 @@ async def api_install_llmfit() -> JSONResponse:
     return JSONResponse({"ok": False, "error": "Download failed — check logs"}, status_code=500)
 
 
-@app.get("/api/recommended-models")
-async def api_recommended_models() -> JSONResponse:
-    """Return model recommendations from llmfit (or built-in fallback catalog)."""
-    from .hardware_profiler import _llmfit_bin, get_hardware_profile, get_recommendations
-    profile = get_hardware_profile()
-    recs = get_recommendations(profile)
-    # Fetch actual download sizes from HF in parallel (replaces the VRAM-based llmfit estimate)
-    actual_sizes = await _fetch_hf_actual_sizes(recs)
-    return JSONResponse({
-        "total_ram_gb": profile.total_ram_gb,
-        "has_apple_silicon": profile.has_apple_silicon,
-        "llmfit_available": bool(_llmfit_bin()),
-        "recommendations": [
-            {
-                "name": r.name,
-                "repo_id": r.repo_id,
-                "filename": r.filename,
-                "format": r.format,
-                "size_gb": actual_sizes.get(r.repo_id, r.size_gb),
-                "quant": r.quant,
-                "context": r.context,
-                "why": r.why,
-                "fit_level": r.fit_level,
-                "use_case": r.use_case,
-                "provider": r.provider,
-                "score": r.score,
-                "tps": r.tps,
+async def _build_recs_cache(force: bool = False) -> None:
+    """Build the recommendations cache. Uses a lock so concurrent callers wait on the same build
+    instead of spawning duplicate llmfit processes.
+
+    get_hardware_profile / get_recommendations call blocking subprocesses, so they run in a
+    thread executor to keep the asyncio event loop free (uvicorn stays responsive during startup).
+    """
+    global _recs_cache, _recs_cache_lock
+    if _recs_cache_lock is None:
+        _recs_cache_lock = asyncio.Lock()
+
+    async with _recs_cache_lock:
+        # If another task already built the cache while we were waiting, skip.
+        if not force and _recs_cache is not None:
+            return
+        try:
+            from .hardware_profiler import _llmfit_bin, get_hardware_profile, get_recommendations
+            loop = asyncio.get_event_loop()
+            profile = await loop.run_in_executor(None, get_hardware_profile)
+            recs    = await loop.run_in_executor(None, get_recommendations, profile)
+            # Skip HF API size-fetching here — those requests burn rate-limit budget
+            # that downloads need. llmfit's own estimates are used instead.
+            _recs_cache = {
+                "total_ram_gb": profile.total_ram_gb,
+                "has_apple_silicon": profile.has_apple_silicon,
+                "llmfit_available": bool(_llmfit_bin()),
+                "recommendations": [
+                    {
+                        "name": r.name,
+                        "repo_id": r.repo_id,
+                        "filename": r.filename,
+                        "format": r.format,
+                        "size_gb": r.size_gb,
+                        "quant": r.quant,
+                        "context": r.context,
+                        "why": r.why,
+                        "fit_level": r.fit_level,
+                        "use_case": r.use_case,
+                        "provider": r.provider,
+                        "score": r.score,
+                        "tps": r.tps,
+                    }
+                    for r in recs
+                ],
             }
-            for r in recs
-        ],
-    })
+            logger.info(f"Recommendations cache built: {len(recs)} models")
+        except Exception as e:
+            logger.warning(f"Failed to build recommendations cache: {e}")
+
+
+@app.get("/api/recommended-models")
+async def api_recommended_models(force: bool = False) -> JSONResponse:
+    """Return model recommendations. Cached after first build; ?force=true rebuilds.
+
+    If the background warm-up is still running, this waits on the same lock instead of
+    spawning a second llmfit process.
+    """
+    await _build_recs_cache(force=force)
+    if _recs_cache is not None:
+        return JSONResponse(_recs_cache)
+    return JSONResponse({"total_ram_gb": 0, "has_apple_silicon": False, "llmfit_available": False, "recommendations": []})
 
 
 async def _fetch_hf_actual_sizes(recs: list) -> dict[str, float]:
@@ -669,33 +702,36 @@ async def _fetch_hf_actual_sizes(recs: list) -> dict[str, float]:
     """
     import httpx
 
+    sem = asyncio.Semaphore(10)  # max 10 concurrent HF requests to avoid rate limiting
+
     async def _get_size(client: httpx.AsyncClient, rec) -> tuple[str, float | None]:
-        try:
-            if rec.format == "mlx":
-                r = await client.get(
-                    f"https://huggingface.co/api/models/{rec.repo_id}",
-                    timeout=8,
-                )
-                if r.status_code == 200:
-                    siblings = [
-                        s for s in r.json().get("siblings", [])
-                        if not s["rfilename"].endswith(".gitattributes")
-                    ]
-                    total = sum(s.get("size", 0) for s in siblings)
-                    if total > 0:
-                        return rec.repo_id, total / 1_073_741_824
-            elif rec.filename:
-                r = await client.head(
-                    f"https://huggingface.co/{rec.repo_id}/resolve/main/{rec.filename}",
-                    follow_redirects=True,
-                    timeout=8,
-                )
-                size = int(r.headers.get("content-length", 0))
-                if size > 0:
-                    return rec.repo_id, size / 1_073_741_824
-        except Exception:
-            pass
-        return rec.repo_id, None
+        async with sem:
+            try:
+                if rec.format == "mlx":
+                    r = await client.get(
+                        f"https://huggingface.co/api/models/{rec.repo_id}",
+                        timeout=8,
+                    )
+                    if r.status_code == 200:
+                        siblings = [
+                            s for s in r.json().get("siblings", [])
+                            if not s["rfilename"].endswith(".gitattributes")
+                        ]
+                        total = sum(s.get("size", 0) for s in siblings)
+                        if total > 0:
+                            return rec.repo_id, total / 1_073_741_824
+                elif rec.filename:
+                    r = await client.head(
+                        f"https://huggingface.co/{rec.repo_id}/resolve/main/{rec.filename}",
+                        follow_redirects=True,
+                        timeout=8,
+                    )
+                    size = int(r.headers.get("content-length", 0))
+                    if size > 0:
+                        return rec.repo_id, size / 1_073_741_824
+            except Exception:
+                pass
+            return rec.repo_id, None
 
     async with httpx.AsyncClient() as client:
         results = await asyncio.gather(*[_get_size(client, r) for r in recs])
@@ -742,6 +778,39 @@ async def api_hf_search(q: str = "", format: str = "gguf", limit: int = 8) -> JS
     except Exception as e:
         logger.warning(f"HF search failed: {e}")
         return JSONResponse({"models": [], "error": str(e)})
+
+
+@app.get("/api/repo-files")
+async def api_repo_files(repo_id: str = "", format: str = "gguf") -> JSONResponse:
+    """Return downloadable files for a HF repo, sorted with recommended quants first."""
+    if not repo_id.strip():
+        return JSONResponse({"files": []})
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"https://huggingface.co/api/models/{repo_id}")
+            r.raise_for_status()
+            siblings = r.json().get("siblings", [])
+        ext = ".gguf" if format == "gguf" else ".safetensors"
+        files = [
+            {"name": s["rfilename"],
+             "size_gb": round(s.get("size", 0) / 1_073_741_824, 2)}
+            for s in siblings
+            if s["rfilename"].lower().endswith(ext)
+            and not s["rfilename"].startswith(".")
+        ]
+        if format == "gguf":
+            quant_order = ["Q4_K_M", "Q5_K_M", "Q4_K_S", "Q6_K", "Q8_0", "IQ4_XS", "Q3_K_M", "Q2_K", "F16", "BF16"]
+            def _quant_rank(fname: str) -> int:
+                upper = fname.upper()
+                for i, q in enumerate(quant_order):
+                    if q in upper:
+                        return i
+                return 99
+            files.sort(key=lambda f: _quant_rank(f["name"]))
+        return JSONResponse({"files": files})
+    except Exception as e:
+        return JSONResponse({"files": [], "error": str(e)})
 
 
 @app.post("/api/extract-memories")
