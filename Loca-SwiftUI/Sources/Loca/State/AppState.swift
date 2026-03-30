@@ -96,6 +96,7 @@ final class AppState: ObservableObject {
         var etaSeconds: Double = 0
         var totalBytes: Int64 = 0
         var done: Bool = false
+        var paused: Bool = false
         var error: String?
     }
     @Published var activeDownload: ActiveDownload?
@@ -140,5 +141,12 @@ final class AppState: ObservableObject {
     func reloadRecommendations() { Task { await _loadRecommendations() } }
     func installLlmfit()         { Task { await _installLlmfit() } }
     func startModelDownload(repoId: String, filename: String?, format: String) { _startDownload(repoId: repoId, filename: filename, format: format) }
+    func pauseDownload()  { Task { await _pauseDownload() } }
+    func resumeDownload() {
+        guard let dl = activeDownload, dl.paused else { return }
+        activeDownload?.paused = false
+        _startDownload(repoId: dl.repoId, filename: dl.filename, format: dl.format)
+    }
+    func cancelDownload() { Task { await _cancelDownload() } }
 }
 

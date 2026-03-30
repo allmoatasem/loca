@@ -54,6 +54,8 @@ class ModelRecommendation:
     fit_level: str = ""      # e.g. "Perfect Fit" | "Good Fit" | "Tight Fit"
     use_case: str = ""       # e.g. "code" | "reasoning" | "vision" | "general"
     provider: str = ""       # e.g. "Alibaba" | "Meta" | "Mistral" | "NVIDIA"
+    score: float = 0.0       # llmfit fit score 0–100
+    tps: float = 0.0         # estimated tokens/sec on this hardware
 
 
 # ---------------------------------------------------------------------------
@@ -383,18 +385,12 @@ def get_recommendations(profile: HardwareProfile | None = None) -> list[ModelRec
                 size = float(item.get("memory_required_gb") or 0)
                 quant = str(item.get("best_quant") or "Q4_K_M")
                 ctx = int(item.get("context_length") or 32768)
-                score = item.get("score", 0)
-                fit = item.get("fit_level", "")
-                tps = item.get("estimated_tps", 0)
-                why_parts = []
-                if fit:
-                    why_parts.append(fit)
-                if tps:
-                    why_parts.append(f"~{tps:.0f} tok/s")
-                use_case = item.get("use_case") or item.get("category") or ""
-                if use_case:
-                    why_parts.append(use_case)
-                why = "  ·  ".join(why_parts) if why_parts else f"Score {score:.0f} — recommended by llmfit"
+                score = float(item.get("score") or 0)
+                fit = str(item.get("fit_level") or "")
+                tps = float(item.get("estimated_tps") or 0)
+                use_case = str(item.get("use_case") or item.get("category") or "")
+                # why: plain description only — fit/tps/use_case are shown as separate UI pills
+                why = str(item.get("notes") or item.get("description") or "")
 
                 results.append(ModelRecommendation(
                     name=name.split("/")[-1],  # display name: just the model part
@@ -405,9 +401,11 @@ def get_recommendations(profile: HardwareProfile | None = None) -> list[ModelRec
                     quant=quant,
                     context=ctx,
                     why=why,
-                    fit_level=str(item.get("fit_level") or ""),
-                    use_case=str(item.get("use_case") or item.get("category") or ""),
+                    fit_level=fit,
+                    use_case=use_case,
                     provider=_infer_provider(repo),
+                    score=score,
+                    tps=tps,
                 ))
             if results:
                 return results

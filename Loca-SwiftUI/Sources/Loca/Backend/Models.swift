@@ -214,6 +214,8 @@ struct ModelRecommendation: Decodable, Identifiable {
     let fit_level: String     // e.g. "Perfect Fit" | "Good Fit" | "Tight Fit"
     let use_case: String      // e.g. "code" | "reasoning" | "vision" | "general"
     let provider: String      // e.g. "Alibaba" | "Meta" | "Mistral" | "NVIDIA"
+    let score: Double         // llmfit fit score 0–100
+    let tps: Double           // estimated tokens/sec on this hardware
 
     // Synthesise missing keys for backward compat with old backend responses
     init(from decoder: Decoder) throws {
@@ -229,9 +231,11 @@ struct ModelRecommendation: Decodable, Identifiable {
         fit_level = (try? c.decode(String.self, forKey: .fit_level)) ?? ""
         use_case  = (try? c.decode(String.self, forKey: .use_case)) ?? ""
         provider  = (try? c.decode(String.self, forKey: .provider)) ?? ""
+        score     = (try? c.decode(Double.self, forKey: .score)) ?? 0
+        tps       = (try? c.decode(Double.self, forKey: .tps)) ?? 0
     }
     private enum CodingKeys: String, CodingKey {
-        case name, repo_id, filename, format, size_gb, quant, context, why, fit_level, use_case, provider
+        case name, repo_id, filename, format, size_gb, quant, context, why, fit_level, use_case, provider, score, tps
     }
 
     var id: String { repo_id + (filename ?? "") }

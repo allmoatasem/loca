@@ -20,6 +20,7 @@ import io
 import json
 import logging
 import os
+import shutil
 import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
@@ -74,8 +75,10 @@ _inference_backend: InferenceBackend | None = None
 _model_manager: ModelManager | None = None
 _orchestrator: Orchestrator | None = None
 
-# In-memory download job tracking: download_id → asyncio.Queue of DownloadProgress
-_download_jobs: dict[str, asyncio.Queue] = {}
+# In-memory download job tracking
+_download_jobs:  dict[str, asyncio.Queue]  = {}   # download_id → progress queue
+_download_tasks: dict[str, asyncio.Task]   = {}   # download_id → running asyncio Task
+_download_meta:  dict[str, dict]           = {}   # download_id → {repo_id, filename, format}
 
 
 @asynccontextmanager
@@ -316,12 +319,20 @@ async def start_download(request: Request) -> JSONResponse:
     download_id = str(uuid.uuid4())
     queue: asyncio.Queue = asyncio.Queue()
     _download_jobs[download_id] = queue
+    _download_meta[download_id] = {"repo_id": repo_id, "filename": filename, "format": fmt}
 
     async def _run_download() -> None:
-        async for progress in _model_manager.download(repo_id, filename, fmt):
-            await queue.put(progress)
+        try:
+            async for progress in _model_manager.download(repo_id, filename, fmt):
+                await queue.put(progress)
+        except asyncio.CancelledError:
+            from .model_manager import DownloadProgress as _DP
+            await queue.put(_DP(0, error="cancelled"))
+        finally:
+            _download_tasks.pop(download_id, None)
 
-    asyncio.create_task(_run_download())
+    task = asyncio.create_task(_run_download())
+    _download_tasks[download_id] = task
     return JSONResponse({"download_id": download_id})
 
 
@@ -345,6 +356,43 @@ async def download_progress(download_id: str) -> StreamingResponse | JSONRespons
                 yield b"data: {\"heartbeat\": true}\n\n"
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
+
+
+@app.post("/api/models/download/{download_id}/cancel")
+async def cancel_download(download_id: str) -> JSONResponse:
+    """Cancel a running download and delete any partial files."""
+    task = _download_tasks.pop(download_id, None)
+    meta = _download_meta.pop(download_id, None)
+    _download_jobs.pop(download_id, None)
+
+    if task and not task.done():
+        task.cancel()
+
+    # Delete partial destination so a future download starts clean
+    if meta and _model_manager:
+        fmt = meta.get("format", "")
+        if fmt == "mlx":
+            dest = _model_manager.mlx_dir / meta["repo_id"].split("/")[-1]
+            if dest.exists():
+                shutil.rmtree(dest, ignore_errors=True)
+        elif meta.get("filename"):
+            dest = _model_manager.gguf_dir / meta["filename"]
+            dest.unlink(missing_ok=True)
+
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/models/download/{download_id}/pause")
+async def pause_download(download_id: str) -> JSONResponse:
+    """Pause a running download. Keeps already-downloaded files so resume can continue."""
+    task = _download_tasks.pop(download_id, None)
+    _download_meta.pop(download_id, None)
+    _download_jobs.pop(download_id, None)
+
+    if task and not task.done():
+        task.cancel()
+
+    return JSONResponse({"ok": True})
 
 
 # ---------------------------------------------------------------------------
@@ -604,6 +652,8 @@ async def api_recommended_models() -> JSONResponse:
                 "fit_level": r.fit_level,
                 "use_case": r.use_case,
                 "provider": r.provider,
+                "score": r.score,
+                "tps": r.tps,
             }
             for r in recs
         ],

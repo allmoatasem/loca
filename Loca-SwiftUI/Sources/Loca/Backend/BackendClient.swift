@@ -67,6 +67,14 @@ actor BackendClient {
         return downloadId
     }
 
+    func pauseDownload(id: String) async throws {
+        _ = try await postRaw("/api/models/download/\(id)/pause", body: [:])
+    }
+
+    func cancelDownload(id: String) async throws {
+        _ = try await postRaw("/api/models/download/\(id)/cancel", body: [:])
+    }
+
     // MARK: - Hardware & recommendations
 
     func fetchHardwareProfile() async throws -> HardwareProfile {
