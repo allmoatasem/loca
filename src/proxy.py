@@ -79,6 +79,8 @@ _orchestrator: Orchestrator | None = None
 _download_jobs:  dict[str, asyncio.Queue]  = {}   # download_id → progress queue
 _download_tasks: dict[str, asyncio.Task]   = {}   # download_id → running asyncio Task
 _download_meta:  dict[str, dict]           = {}   # download_id → {repo_id, filename, format}
+_recs_cache:      dict | None               = None  # cached /api/recommended-models response
+_recs_cache_lock: asyncio.Lock | None      = None  # ensures only one build runs at a time
 
 
 @asynccontextmanager
@@ -102,6 +104,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 logger.warning(f"Could not auto-start inference backend: {e}")
 
     logger.info("Loca proxy started")
+    asyncio.create_task(_build_recs_cache())
     yield
     # Shutdown
     if _inference_backend:
@@ -627,37 +630,66 @@ async def api_install_llmfit() -> JSONResponse:
     return JSONResponse({"ok": False, "error": "Download failed — check logs"}, status_code=500)
 
 
-@app.get("/api/recommended-models")
-async def api_recommended_models() -> JSONResponse:
-    """Return model recommendations from llmfit (or built-in fallback catalog)."""
-    from .hardware_profiler import _llmfit_bin, get_hardware_profile, get_recommendations
-    profile = get_hardware_profile()
-    recs = get_recommendations(profile)
-    # Fetch actual download sizes from HF in parallel (replaces the VRAM-based llmfit estimate)
-    actual_sizes = await _fetch_hf_actual_sizes(recs)
-    return JSONResponse({
-        "total_ram_gb": profile.total_ram_gb,
-        "has_apple_silicon": profile.has_apple_silicon,
-        "llmfit_available": bool(_llmfit_bin()),
-        "recommendations": [
-            {
-                "name": r.name,
-                "repo_id": r.repo_id,
-                "filename": r.filename,
-                "format": r.format,
-                "size_gb": actual_sizes.get(r.repo_id, r.size_gb),
-                "quant": r.quant,
-                "context": r.context,
-                "why": r.why,
-                "fit_level": r.fit_level,
-                "use_case": r.use_case,
-                "provider": r.provider,
-                "score": r.score,
-                "tps": r.tps,
+async def _build_recs_cache(force: bool = False) -> None:
+    """Build the recommendations cache. Uses a lock so concurrent callers wait on the same build
+    instead of spawning duplicate llmfit processes.
+
+    get_hardware_profile / get_recommendations call blocking subprocesses, so they run in a
+    thread executor to keep the asyncio event loop free (uvicorn stays responsive during startup).
+    """
+    global _recs_cache, _recs_cache_lock
+    if _recs_cache_lock is None:
+        _recs_cache_lock = asyncio.Lock()
+
+    async with _recs_cache_lock:
+        # If another task already built the cache while we were waiting, skip.
+        if not force and _recs_cache is not None:
+            return
+        try:
+            from .hardware_profiler import _llmfit_bin, get_hardware_profile, get_recommendations
+            loop = asyncio.get_event_loop()
+            profile = await loop.run_in_executor(None, get_hardware_profile)
+            recs    = await loop.run_in_executor(None, get_recommendations, profile)
+            actual_sizes = await _fetch_hf_actual_sizes(recs)
+            _recs_cache = {
+                "total_ram_gb": profile.total_ram_gb,
+                "has_apple_silicon": profile.has_apple_silicon,
+                "llmfit_available": bool(_llmfit_bin()),
+                "recommendations": [
+                    {
+                        "name": r.name,
+                        "repo_id": r.repo_id,
+                        "filename": r.filename,
+                        "format": r.format,
+                        "size_gb": actual_sizes.get(r.repo_id, r.size_gb),
+                        "quant": r.quant,
+                        "context": r.context,
+                        "why": r.why,
+                        "fit_level": r.fit_level,
+                        "use_case": r.use_case,
+                        "provider": r.provider,
+                        "score": r.score,
+                        "tps": r.tps,
+                    }
+                    for r in recs
+                ],
             }
-            for r in recs
-        ],
-    })
+            logger.info(f"Recommendations cache built: {len(recs)} models")
+        except Exception as e:
+            logger.warning(f"Failed to build recommendations cache: {e}")
+
+
+@app.get("/api/recommended-models")
+async def api_recommended_models(force: bool = False) -> JSONResponse:
+    """Return model recommendations. Cached after first build; ?force=true rebuilds.
+
+    If the background warm-up is still running, this waits on the same lock instead of
+    spawning a second llmfit process.
+    """
+    await _build_recs_cache(force=force)
+    if _recs_cache is not None:
+        return JSONResponse(_recs_cache)
+    return JSONResponse({"total_ram_gb": 0, "has_apple_silicon": False, "llmfit_available": False, "recommendations": []})
 
 
 async def _fetch_hf_actual_sizes(recs: list) -> dict[str, float]:

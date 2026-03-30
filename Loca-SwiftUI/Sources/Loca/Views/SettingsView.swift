@@ -55,7 +55,7 @@ struct SettingsView: View {
         .frame(width: 900, height: 700)
         .onAppear {
             state.reloadLocalModels()
-            state.reloadRecommendations()
+            state.loadRecommendationsIfNeeded()
         }
     }
 }
@@ -178,6 +178,7 @@ private struct DiscoverTab: View {
     @State private var selectedCategory = "all"
     @State private var searchText = ""
     @State private var discoverMode: DiscoverMode = .forYou
+    @State private var forYouFormat = "all"
     @State private var hfFormat = "gguf"
     @State private var hfQuery = ""
     @State private var hfHits: [HFHit] = []
@@ -196,6 +197,9 @@ private struct DiscoverTab: View {
 
     private var filtered: [ModelRecommendation] {
         var result = state.recommendedModels
+        if forYouFormat != "all" {
+            result = result.filter { $0.format == forYouFormat }
+        }
         if selectedCategory != "all" {
             result = result.filter { $0.category == selectedCategory }
         }
@@ -227,6 +231,13 @@ private struct DiscoverTab: View {
 
                 if discoverMode == .forYou {
                     hardwareBadge
+                    Picker("", selection: $forYouFormat) {
+                        Text("All").tag("all")
+                        Text("MLX").tag("mlx")
+                        Text("GGUF").tag("gguf")
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 120)
                     categoryFilter
                 } else {
                     Picker("", selection: $hfFormat) {
@@ -308,8 +319,11 @@ private struct DiscoverTab: View {
                         Image(systemName: "cpu").font(.system(size: 32)).foregroundColor(.secondary)
                         Text(state.recommendedModels.isEmpty
                              ? "No recommendations yet — tap ↺ to scan your hardware."
-                             : "No results for the current filters.")
+                             : forYouFormat == "gguf"
+                                 ? "No GGUF recommendations for your hardware.\nUse Search HF to find GGUF models."
+                                 : "No results for the current filters.")
                             .font(.system(size: 13)).foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
                     }
                     .frame(maxWidth: .infinity)
                     Spacer()
@@ -518,6 +532,7 @@ private struct RecommendationRow: View {
     @EnvironmentObject var state: AppState
     let rec: ModelRecommendation
     @State private var showGGUFPicker = false
+    @State private var showNotesPopover = false
 
     private var alreadyDownloaded: Bool {
         state.localModels.contains(where: { $0.name == (rec.filename ?? rec.repo_id.split(separator: "/").last.map(String.init) ?? rec.name) })
@@ -571,29 +586,44 @@ private struct RecommendationRow: View {
                 HStack(spacing: 5) {
                     if rec.score > 0 {
                         metaPill("\(Int(rec.score))% fit",
-                                 bg: rec.fitColor.opacity(0.12),
-                                 fg: rec.fitColor)
+                                 bg: rec.fitColor.opacity(0.08),
+                                 fg: rec.fitColor.opacity(0.85))
                     }
                     if !rec.provider.isEmpty {
                         metaPill(rec.provider,
-                                 bg: Self.providerColor.opacity(0.1),
-                                 fg: Self.providerColor)
+                                 bg: Self.providerColor.opacity(0.07),
+                                 fg: Self.providerColor.opacity(0.75))
                     }
                     if rec.tps > 0 {
                         metaPill("~\(Int(rec.tps)) tok/s",
-                                 bg: Self.tpsColor.opacity(0.1),
-                                 fg: Self.tpsColor)
+                                 bg: Self.tpsColor.opacity(0.07),
+                                 fg: Self.tpsColor.opacity(0.75))
                     }
                     if !rec.use_case.isEmpty {
-                        metaPill(rec.use_case.capitalized,
-                                 bg: Self.capabilityColor.opacity(0.1),
-                                 fg: Self.capabilityColor)
+                        metaPill(rec.use_case.capitalized
+                                    .components(separatedBy: " ").prefix(3).joined(separator: " "),
+                                 bg: Self.capabilityColor.opacity(0.07),
+                                 fg: Self.capabilityColor.opacity(0.75))
                     }
                     if !rec.why.isEmpty {
-                        Text(rec.why)
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
+                        Button {
+                            showNotesPopover.toggle()
+                        } label: {
+                            Image(systemName: "info.circle")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary.opacity(0.6))
+                        }
+                        .buttonStyle(.plain)
+                        .popover(isPresented: $showNotesPopover, arrowEdge: .bottom) {
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(rec.why)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.primary)
+                                    .multilineTextAlignment(.leading)
+                            }
+                            .padding(14)
+                            .frame(width: 300)
+                        }
                     }
                 }
             }

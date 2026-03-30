@@ -21,7 +21,7 @@ extension AppState {
                     _scheduleStatsPoll()
                     break
                 }
-                try? await Task.sleep(for: .seconds(1.5))
+                try? await Task.sleep(for: .seconds(0.75))
             }
         }
     }
@@ -149,13 +149,13 @@ extension AppState {
 
     // MARK: - Hardware & recommendations
 
-    func _loadRecommendations() async {
+    func _loadRecommendations(force: Bool = false) async {
         isLoadingRecommendations = true
         do {
             let hw = try await BackendClient.shared.fetchHardwareProfile()
             hardwareProfile = hw
             llmfitAvailable = hw.llmfit_available
-            let resp = try await BackendClient.shared.fetchRecommendedModels()
+            let resp = try await BackendClient.shared.fetchRecommendedModels(force: force)
             recommendedModels = resp.recommendations
         } catch {
             // Non-fatal

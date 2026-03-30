@@ -92,8 +92,9 @@ actor BackendClient {
         return try JSONDecoder().decode(HardwareProfile.self, from: data)
     }
 
-    func fetchRecommendedModels() async throws -> RecommendedModelsResponse {
-        let (data, _) = try await get("/api/recommended-models")
+    func fetchRecommendedModels(force: Bool = false) async throws -> RecommendedModelsResponse {
+        let path = force ? "/api/recommended-models?force=true" : "/api/recommended-models"
+        let (data, _) = try await get(path)
         return try JSONDecoder().decode(RecommendedModelsResponse.self, from: data)
     }
 

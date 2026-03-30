@@ -356,7 +356,7 @@ def get_recommendations(profile: HardwareProfile | None = None) -> list[ModelRec
 
     bin_path = _llmfit_bin()
     if bin_path:
-        data = _run_llmfit(["recommend", "--limit", "200"], bin_path)
+        data = _run_llmfit(["recommend", "--limit", "1000"], bin_path)
         # llmfit wraps output in {"models": [...]}
         if data and isinstance(data, dict):
             items = data.get("models", [])
@@ -397,7 +397,11 @@ def get_recommendations(profile: HardwareProfile | None = None) -> list[ModelRec
                 tps = float(item.get("estimated_tps") or 0)
                 use_case = str(item.get("use_case") or item.get("category") or "")
                 # why: plain description only — fit/tps/use_case are shown as separate UI pills
-                why = str(item.get("notes") or item.get("description") or "")
+                raw_notes = item.get("notes") or item.get("description") or ""
+                if isinstance(raw_notes, list):
+                    why = " · ".join(str(n) for n in raw_notes if n)
+                else:
+                    why = str(raw_notes)
 
                 results.append(ModelRecommendation(
                     name=name.split("/")[-1],  # display name: just the model part

@@ -26,6 +26,9 @@ export LOCA_DATA_DIR="$LOCA_SUPPORT/data"
 
 mkdir -p "$LOCA_SUPPORT"
 
+# Reset status file so the app never reads a stale "Ready" from a previous run
+printf '{"stage":"Initialising\u2026","progress":0}\n' > /tmp/loca-startup-status.json
+
 notify() {
     osascript -e "display notification \"$1\" with title \"Loca\" sound name \"Funk\""
 }
