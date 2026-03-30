@@ -1329,20 +1329,28 @@ function selectMode(btn) {
   document.getElementById('model-desc').textContent = MODE_DESCS[currentMode] || '';
 }
 
-// ── Model picker (actual LLM from LM Studio) ──────────────────────────────────
-(async () => {
+// ── Model picker ──────────────────────────────────────────────────────────────
+function _modelBasename(id) {
+  // mlx_lm returns the full filesystem path as model id — show just the name
+  return id.includes('/') ? id.split('/').filter(Boolean).pop() : id;
+}
+
+async function refreshModelPicker() {
   const sel = document.getElementById('model-select');
   try {
-    const { data = [] } = await (await fetch('/api/lm-models')).json();
+    const { data = [] } = await (await fetch('/v1/models')).json();
     if (data.length) {
-      sel.innerHTML = data.map(m => `<option value="${esc(m.id)}">${esc(m.id)}</option>`).join('');
+      sel.innerHTML = data.map(m =>
+        `<option value="${esc(m.id)}">${esc(_modelBasename(m.id))}</option>`
+      ).join('');
     } else {
-      sel.innerHTML = '<option value="">No models loaded in LM Studio</option>';
+      sel.innerHTML = '<option value="">No model loaded</option>';
     }
   } catch (_) {
-    sel.innerHTML = '<option value="">LM Studio unavailable</option>';
+    sel.innerHTML = '<option value="">Backend unavailable</option>';
   }
-})();
+}
+refreshModelPicker();
 
 // initialise mode description
 document.getElementById('model-desc').textContent = MODE_DESCS['general'];
@@ -1733,7 +1741,7 @@ function renderStats(el, { outputTokens, tok_per_sec, ttft_s, ctxTokens, numCtx,
   const pct      = Math.min(100, Math.round((ctxTokens / ctxLimit) * 100));
   const ctxLabel = ctxLimit >= 1000 ? `${Math.round(ctxLimit/1024)}k` : ctxLimit;
   const items = [
-    model ? { text: `model:${model}`, tip: 'The model currently handling this conversation.\nChange it in the model picker above.' } : null,
+    model ? { text: `model:${_modelBasename(model)}`, tip: 'The model currently handling this conversation.\nChange it in the model picker above.' } : null,
     { text: `${outputTokens} tok`, tip: `Completion tokens: the number of tokens\nthe model generated in its response.\n\nPrompt tokens sent: ~${Math.round(ctxTokens - outputTokens)}` },
     { text: `${tok_per_sec} tok/s`, tip: "Tokens per second: the model's generation speed.\nHigher is faster." },
     ttft_s !== null ? { text: `TTFT ${ttft_s}s`, tip: 'Time to first token: how long the model took\nto start responding after receiving your message.' } : null,
@@ -2456,15 +2464,14 @@ async function loadModelFromPanel(name) {
   try {
     await fetch('/api/models/load', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})});
     await renderDownloaded();
-    // refresh model dropdown
-    const sel = document.getElementById('model-select');
-    sel.value = name;
+    await refreshModelPicker();
   } catch(e) {}
 }
 async function ejectModel() {
   try {
     await fetch('/api/models/unload', {method:'POST'});
     await renderDownloaded();
+    await refreshModelPicker();
   } catch(e) {}
 }
 async function deleteModelFromPanel(name, btn) {

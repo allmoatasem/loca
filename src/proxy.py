@@ -46,6 +46,12 @@ from .store import (
 
 logger = logging.getLogger(__name__)
 
+
+def _basename(model_id: str) -> str:
+    """Strip filesystem path from model ID — mlx_lm returns the full path."""
+    return os.path.basename(model_id.rstrip("/")) if "/" in model_id else model_id
+
+
 # ---------------------------------------------------------------------------
 # Config loading
 # ---------------------------------------------------------------------------
@@ -181,7 +187,7 @@ async def _openai_stream_response(
             # Metadata sentinel from orchestrator
             if isinstance(chunk, dict):
                 if "__model__" in chunk:
-                    actual_model = chunk["__model__"]
+                    actual_model = _basename(chunk["__model__"])
                     search_triggered = bool(chunk.get("__search__", False))
                     memory_injected = bool(chunk.get("__memory__", False))
                 continue
