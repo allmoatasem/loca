@@ -433,7 +433,7 @@ struct SidebarFooter: View {
             .buttonStyle(.plain)
             .nativeTooltip("Toggle dark/light theme. Preference is saved locally.")
 
-            Button { state.isMemoryPanelOpen = true } label: {
+            Button { state.isMemoryPanelOpen.toggle() } label: {
                 Image(systemName: "brain")
                     .font(.system(size: 16))
                     .foregroundColor(.secondary)
