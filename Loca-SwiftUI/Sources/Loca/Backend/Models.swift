@@ -185,6 +185,7 @@ struct DownloadProgress: Decodable {
     let eta_s: Double
     let done: Bool
     let error: String?
+    let total_bytes: Int64?
 }
 
 // MARK: - Hardware profiling & recommendations
@@ -236,8 +237,9 @@ struct ModelRecommendation: Decodable, Identifiable {
     var id: String { repo_id + (filename ?? "") }
     var formatLabel: String { format.uppercased() }
     var sizeLabel: String {
-        size_gb >= 1 ? String(format: "%.1f GB", size_gb)
-                     : String(format: "%.0f MB", size_gb * 1024)
+        let s = size_gb >= 1 ? String(format: "%.1f GB", size_gb)
+                             : String(format: "%.0f MB", size_gb * 1024)
+        return "~\(s)"
     }
 
     /// Inferred category key for filter tabs.

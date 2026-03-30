@@ -104,6 +104,7 @@ extension AppState {
                         activeDownload?.percent    = p.percent
                         activeDownload?.speedMbps  = p.speed_mbps
                         activeDownload?.etaSeconds = p.eta_s
+                        if let tb = p.total_bytes, tb > 0 { activeDownload?.totalBytes = tb }
                         if let err = p.error { activeDownload?.error = err; return }
                         if p.done {
                             activeDownload?.done = true

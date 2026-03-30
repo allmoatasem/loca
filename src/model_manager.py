@@ -14,6 +14,7 @@ loaded in InferenceBackend — one model at a time.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 import time
@@ -56,6 +57,7 @@ class DownloadProgress:
     eta_s: float = 0.0
     done: bool = False
     error: str | None = None
+    total_bytes: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -64,6 +66,7 @@ class DownloadProgress:
             "eta_s": round(self.eta_s),
             "done": self.done,
             "error": self.error,
+            "total_bytes": self.total_bytes,
         }
 
 
@@ -285,7 +288,17 @@ class ModelManager:
                     yield DownloadProgress(0, error="Could not fetch file list from Hugging Face API")
                     return
 
-                total_size = sum(s.get("size", 0) for s in siblings)
+                # Build size map from API (may be 0 for repos that omit sizes)
+                actual_sizes: dict[str, int] = {s["rfilename"]: s.get("size", 0) for s in siblings}
+
+                # HEAD any files with missing sizes in parallel before starting
+                missing = [fn for fn, sz in actual_sizes.items() if sz == 0]
+                if missing:
+                    yield DownloadProgress(percent=-1)  # spinner while resolving
+                    resolved = await _resolve_file_sizes(repo_id, missing)
+                    actual_sizes.update(resolved)
+
+                total_size = sum(actual_sizes.values())
 
                 # Disk check
                 if total_size > 0:
@@ -297,43 +310,67 @@ class ModelManager:
                         ))
                         return
 
-                # Stream each file individually — same as GGUF, gives real progress
+                # Parallel download — up to 4 files at once (matches LM Studio behaviour)
                 dest.mkdir(parents=True, exist_ok=True)
-                downloaded_total = 0
+                downloaded_bytes: dict[str, int] = {}  # rfilename → bytes received
                 t0 = time.monotonic()
+                sem = asyncio.Semaphore(4)
+                progress_queue: asyncio.Queue[DownloadProgress] = asyncio.Queue()
 
+                # Pre-credit already-complete files
+                pending: list[dict] = []
                 for sib in siblings:
-                    rfilename: str = sib["rfilename"]
-                    file_size: int = sib.get("size", 0)
+                    rfilename = sib["rfilename"]
+                    file_size = actual_sizes.get(rfilename, 0)
+                    file_dest = dest / rfilename
+                    if file_dest.exists() and file_size > 0 and file_dest.stat().st_size == file_size:
+                        downloaded_bytes[rfilename] = file_size
+                    else:
+                        downloaded_bytes[rfilename] = 0
+                        pending.append(sib)
+
+                async def _download_file(sib: dict) -> None:
+                    rfilename = sib["rfilename"]
                     file_dest = dest / rfilename
                     file_dest.parent.mkdir(parents=True, exist_ok=True)
-
-                    # Skip already-complete files (resume support)
-                    if file_dest.exists() and file_dest.stat().st_size == file_size:
-                        downloaded_total += file_size
-                        continue
-
                     hf_url = f"https://huggingface.co/{repo_id}/resolve/main/{rfilename}"
-                    async with httpx.AsyncClient(timeout=None, follow_redirects=True) as client:
-                        async with client.stream("GET", hf_url) as resp:
-                            resp.raise_for_status()
-                            try:
-                                with open(file_dest, "wb") as f:
-                                    async for chunk in resp.aiter_bytes(1024 * 1024):
-                                        f.write(chunk)
-                                        downloaded_total += len(chunk)
-                                        elapsed = time.monotonic() - t0 or 0.001
-                                        speed = downloaded_total / elapsed
-                                        pct = (downloaded_total / total_size * 100) if total_size else -1
-                                        eta = ((total_size - downloaded_total) / speed) if speed > 0 else 0
-                                        yield DownloadProgress(
-                                            percent=min(pct, 99.0),
-                                            speed_mbps=round(speed / 1e6, 2),
-                                            eta_s=round(eta),
-                                        )
-                            except Exception:
-                                file_dest.unlink(missing_ok=True)
-                                raise
+                    async with sem:
+                        async with httpx.AsyncClient(timeout=None, follow_redirects=True) as client:
+                            async with client.stream("GET", hf_url) as resp:
+                                resp.raise_for_status()
+                                try:
+                                    with open(file_dest, "wb") as f:
+                                        async for chunk in resp.aiter_bytes(1024 * 1024):
+                                            f.write(chunk)
+                                            downloaded_bytes[rfilename] += len(chunk)
+                                            total_done = sum(downloaded_bytes.values())
+                                            elapsed = time.monotonic() - t0 or 0.001
+                                            speed = total_done / elapsed
+                                            pct = (total_done / total_size * 100) if total_size else -1
+                                            eta = ((total_size - total_done) / speed) if (total_size and speed > 0) else 0
+                                            await progress_queue.put(DownloadProgress(
+                                                percent=min(pct, 99.0) if pct >= 0 else -1,
+                                                speed_mbps=round(speed / 1e6, 2),
+                                                eta_s=round(eta),
+                                                total_bytes=total_size,
+                                            ))
+                                except Exception:
+                                    file_dest.unlink(missing_ok=True)
+                                    raise
+
+                download_task = asyncio.gather(*[_download_file(s) for s in pending])
+
+                while not download_task.done():
+                    try:
+                        prog = progress_queue.get_nowait()
+                        yield prog
+                    except asyncio.QueueEmpty:
+                        await asyncio.sleep(0.1)
+
+                await download_task  # re-raises any exception from a worker
+                # Drain any remaining progress events
+                while not progress_queue.empty():
+                    yield progress_queue.get_nowait()
 
                 yield DownloadProgress(100, done=True)
 
@@ -372,6 +409,26 @@ class ModelManager:
     def _ensure_dirs(self) -> None:
         self.gguf_dir.mkdir(parents=True, exist_ok=True)
         self.mlx_dir.mkdir(parents=True, exist_ok=True)
+
+
+async def _resolve_file_sizes(repo_id: str, filenames: list[str]) -> dict[str, int]:
+    """HEAD all files in parallel to get accurate Content-Length for each."""
+    import httpx
+
+    async def _head(client: httpx.AsyncClient, fn: str) -> tuple[str, int]:
+        try:
+            r = await client.head(
+                f"https://huggingface.co/{repo_id}/resolve/main/{fn}",
+                follow_redirects=True,
+                timeout=15,
+            )
+            return fn, int(r.headers.get("content-length", 0))
+        except Exception:
+            return fn, 0
+
+    async with httpx.AsyncClient() as client:
+        results = await asyncio.gather(*[_head(client, fn) for fn in filenames])
+    return {fn: size for fn, size in results if size > 0}
 
 
 def _dir_size_gb(path: Path) -> float:

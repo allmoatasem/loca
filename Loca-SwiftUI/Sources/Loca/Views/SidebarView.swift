@@ -441,6 +441,31 @@ struct SidebarFooter: View {
             }
             .buttonStyle(.plain)
             .nativeTooltip("Memories — facts extracted from your conversations and injected into every new chat. Click to view and manage them.")
+
+            if let dl = state.activeDownload, !dl.done, dl.error == nil {
+                Button { state.isSettingsOpen = true } label: {
+                    ZStack(alignment: .bottomTrailing) {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.system(size: 16))
+                            .foregroundColor(.accentColor)
+                            .frame(width: 28, height: 28)
+                            .symbolEffect(.pulse)
+                        if dl.percent >= 0 {
+                            Text("\(Int(dl.percent))%")
+                                .font(.system(size: 7, weight: .bold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 2)
+                                .background(Color.accentColor)
+                                .clipShape(Capsule())
+                                .offset(x: 6, y: 4)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .nativeTooltip(dl.percent >= 0
+                    ? "Downloading \(dl.repoId.split(separator: "/").last.map(String.init) ?? "") · \(Int(dl.percent))%"
+                    : "Download in progress — click to open Manage Models")
+            }
         }
     }
 }

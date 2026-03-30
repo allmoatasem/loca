@@ -48,6 +48,12 @@ struct SettingsView: View {
             case .discover:   DiscoverTab()
             case .settings:   ModelSettingsTab()
             }
+
+            // ── Download status bar (persistent across all tabs) ──────────
+            if let dl = state.activeDownload {
+                Divider()
+                DownloadStatusBar(dl: dl)
+            }
         }
         .frame(width: 900, height: 700)
         .onAppear {
@@ -275,11 +281,6 @@ private struct DiscoverTab: View {
                 }
             }
 
-            // ── Download status bar ───────────────────────────────────────
-            if let dl = state.activeDownload {
-                Divider()
-                DownloadStatusBar(dl: dl)
-            }
         }
     }
 
@@ -476,6 +477,13 @@ private struct DownloadStatusBar: View {
                         HStack(spacing: 8) {
                             if dl.percent >= 0 {
                                 Text(String(format: "%.1f%%", dl.percent))
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                            }
+                            if dl.totalBytes > 0 && dl.percent >= 0 {
+                                let downloaded = Double(dl.totalBytes) * dl.percent / 100
+                                let total = Double(dl.totalBytes)
+                                Text(String(format: "%.1f / %.1f GB", downloaded / 1e9, total / 1e9))
                                     .font(.system(size: 11, design: .monospaced))
                                     .foregroundColor(.secondary)
                             }
