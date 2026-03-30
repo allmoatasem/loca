@@ -185,6 +185,7 @@ struct DownloadProgress: Decodable {
     let eta_s: Double
     let done: Bool
     let error: String?
+    let total_bytes: Int64?
 }
 
 // MARK: - Hardware profiling & recommendations

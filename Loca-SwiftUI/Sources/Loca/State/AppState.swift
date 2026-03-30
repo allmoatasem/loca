@@ -94,6 +94,7 @@ final class AppState: ObservableObject {
         var percent: Double       // -1 = indeterminate
         var speedMbps: Double = 0
         var etaSeconds: Double = 0
+        var totalBytes: Int64 = 0
         var done: Bool = false
         var error: String?
     }

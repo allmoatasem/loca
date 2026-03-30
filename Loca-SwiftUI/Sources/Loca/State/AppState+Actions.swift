@@ -90,8 +90,13 @@ extension AppState {
 
     func _pollDownload(_ dlId: String) async {
         guard let url = URL(string: "http://localhost:8000/api/models/download/\(dlId)/progress") else { return }
+        // Use a long-lived session so the SSE stream doesn't time out during large downloads
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest  = 3600    // wait up to 1h between bytes
+        config.timeoutIntervalForResource = 86400   // allow up to 24h total
+        let session = URLSession(configuration: config)
         do {
-            let (bytes, _) = try await URLSession.shared.bytes(from: url)
+            let (bytes, _) = try await session.bytes(from: url)
             var buffer = ""
             for try await byte in bytes {
                 buffer += String(bytes: [byte], encoding: .utf8) ?? ""
@@ -104,6 +109,7 @@ extension AppState {
                         activeDownload?.percent    = p.percent
                         activeDownload?.speedMbps  = p.speed_mbps
                         activeDownload?.etaSeconds = p.eta_s
+                        if let tb = p.total_bytes, tb > 0 { activeDownload?.totalBytes = tb }
                         if let err = p.error { activeDownload?.error = err; return }
                         if p.done {
                             activeDownload?.done = true
@@ -115,7 +121,11 @@ extension AppState {
                 }
             }
         } catch {
-            activeDownload?.error = error.localizedDescription
+            // The server closes the SSE connection after sending done=true, which can cause
+            // URLSession to throw a network error. Only surface it if we didn't already succeed.
+            if activeDownload?.done != true {
+                activeDownload?.error = error.localizedDescription
+            }
         }
     }
 
