@@ -15,15 +15,15 @@ Run with: pytest tests/test_hardware_profiler.py -v
 
 import os
 import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 from src.hardware_profiler import (
     HardwareProfile,
-    ModelRecommendation,
     _asset_name,
     _fallback_recommendations,
     _infer_provider,
@@ -32,7 +32,6 @@ from src.hardware_profiler import (
     get_hardware_profile,
     get_recommendations,
 )
-
 
 # ---------------------------------------------------------------------------
 # Provider inference
@@ -205,7 +204,7 @@ class TestGetHardwareProfile:
                 has_apple_silicon=False, has_nvidia_gpu=False,
                 supports_mlx=False, llmfit_available=False,
             )
-            profile = get_hardware_profile()
+            get_hardware_profile()
 
         mock_fallback.assert_called_once()
 

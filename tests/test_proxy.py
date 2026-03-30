@@ -7,17 +7,15 @@ All external calls (model manager, orchestrator, hardware profiler) are mocked.
 Run with: pytest tests/test_proxy.py -v
 """
 
-import asyncio
-import json
 import os
 import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 
 # ---------------------------------------------------------------------------
 # App fixture — patch everything that touches disk/network at startup

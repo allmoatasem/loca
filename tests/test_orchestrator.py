@@ -13,15 +13,14 @@ Covers:
 Run with: pytest tests/test_orchestrator.py -v
 """
 
-import asyncio
-import json
 import os
 import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.orchestrator import (
     Orchestrator,
@@ -32,7 +31,6 @@ from src.orchestrator import (
     _prepend_system,
 )
 from src.router import Model
-
 
 # ---------------------------------------------------------------------------
 # Helpers
