@@ -271,7 +271,8 @@ class ModelManager:
                     yield DownloadProgress(100, done=True)
                     return
 
-                # Pre-flight disk check via HF API (best-effort)
+                # Query HF API: disk check + get total size for progress tracking
+                total_size: int = 0
                 try:
                     import httpx
                     async with httpx.AsyncClient(timeout=10) as client:
@@ -299,9 +300,25 @@ class ModelManager:
                     )
 
                 task = loop.run_in_executor(None, _snapshot)
+                t0 = time.monotonic()
+                prev_bytes = 0
                 while not task.done():
-                    yield DownloadProgress(percent=-1)
                     await asyncio.sleep(1.0)
+                    if total_size > 0 and dest.exists():
+                        current = _dir_size_bytes(dest)
+                        pct = min(current / total_size * 100, 99.0)
+                        elapsed = time.monotonic() - t0 or 0.001
+                        delta = current - prev_bytes
+                        speed_mb = delta / 1e6  # bytes in last second → MB/s
+                        eta = ((total_size - current) / (current / elapsed)) if current > 0 else 0
+                        prev_bytes = current
+                        yield DownloadProgress(
+                            percent=pct,
+                            speed_mbps=round(speed_mb, 2),
+                            eta_s=round(eta),
+                        )
+                    else:
+                        yield DownloadProgress(percent=-1)
                 await task
                 yield DownloadProgress(100, done=True)
 
@@ -343,8 +360,11 @@ class ModelManager:
 
 
 def _dir_size_gb(path: Path) -> float:
-    total = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
-    return total / 1_073_741_824
+    return _dir_size_bytes(path) / 1_073_741_824
+
+
+def _dir_size_bytes(path: Path) -> int:
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
 
 def _extract_param_label(name: str) -> str | None:
