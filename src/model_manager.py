@@ -225,38 +225,70 @@ class ModelManager:
                     yield DownloadProgress(100, done=True)
                     return
 
-                # Stream download directly with real progress tracking
                 import httpx
                 hf_url = f"https://huggingface.co/{repo_id}/resolve/main/{filename}"
                 async with httpx.AsyncClient(timeout=None, follow_redirects=True) as client:
                     async with client.stream("GET", hf_url) as resp:
                         resp.raise_for_status()
                         total = int(resp.headers.get("content-length", 0))
+
+                        # Pre-flight disk check
+                        if total > 0:
+                            free = shutil.disk_usage(target_dir).free
+                            if total > free:
+                                yield DownloadProgress(0, error=(
+                                    f"Not enough disk space: model is {total/1e9:.1f} GB "
+                                    f"but only {free/1e9:.1f} GB free"
+                                ))
+                                return
+
                         downloaded = 0
                         t0 = time.monotonic()
-                        with open(dest, "wb") as f:
-                            async for chunk in resp.aiter_bytes(1024 * 1024):
-                                f.write(chunk)
-                                downloaded += len(chunk)
-                                elapsed = time.monotonic() - t0 or 0.001
-                                speed = downloaded / elapsed  # bytes/s
-                                speed_mb = speed / 1e6
-                                pct = (downloaded / total * 100) if total else -1
-                                eta = ((total - downloaded) / speed) if (total and speed > 0) else 0
-                                yield DownloadProgress(
-                                    percent=pct,
-                                    speed_mbps=round(speed_mb, 2),
-                                    eta_s=round(eta),
-                                )
+                        try:
+                            with open(dest, "wb") as f:
+                                async for chunk in resp.aiter_bytes(1024 * 1024):
+                                    f.write(chunk)
+                                    downloaded += len(chunk)
+                                    elapsed = time.monotonic() - t0 or 0.001
+                                    speed = downloaded / elapsed  # bytes/s
+                                    speed_mb = speed / 1e6
+                                    pct = (downloaded / total * 100) if total else -1
+                                    eta = ((total - downloaded) / speed) if (total and speed > 0) else 0
+                                    yield DownloadProgress(
+                                        percent=pct,
+                                        speed_mbps=round(speed_mb, 2),
+                                        eta_s=round(eta),
+                                    )
+                        except Exception:
+                            dest.unlink(missing_ok=True)
+                            raise
                 yield DownloadProgress(100, done=True)
 
             elif target_format == "mlx":
-                # snapshot_download fetches all files; target is a directory
                 model_dir_name = repo_id.split("/")[-1]
                 dest = target_dir / model_dir_name
                 if dest.exists() and (dest / "config.json").exists():
                     yield DownloadProgress(100, done=True)
                     return
+
+                # Pre-flight disk check via HF API (best-effort)
+                try:
+                    import httpx
+                    async with httpx.AsyncClient(timeout=10) as client:
+                        r = await client.get(f"https://huggingface.co/api/models/{repo_id}")
+                        if r.status_code == 200:
+                            siblings = r.json().get("siblings", [])
+                            total_size = sum(s.get("size", 0) for s in siblings if s.get("size"))
+                            if total_size > 0:
+                                free = shutil.disk_usage(target_dir).free
+                                if total_size > free:
+                                    yield DownloadProgress(0, error=(
+                                        f"Not enough disk space: model is {total_size/1e9:.1f} GB "
+                                        f"but only {free/1e9:.1f} GB free"
+                                    ))
+                                    return
+                except Exception:
+                    pass  # best-effort — proceed if API call fails
 
                 loop = asyncio.get_event_loop()
 
