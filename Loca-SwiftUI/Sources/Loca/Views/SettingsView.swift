@@ -184,6 +184,7 @@ private struct DiscoverTab: View {
     @State private var hfHits: [HFHit] = []
     @State private var hfSearchTask: Task<Void, Never>?
     @State private var isSearchingHF = false
+    @State private var displayLimit = 50
 
     enum DiscoverMode { case forYou, search }
 
@@ -299,7 +300,7 @@ private struct DiscoverTab: View {
                     legendDot(.secondary, "Unknown")
                     Spacer()
                     if !state.recommendedModels.isEmpty {
-                        Text("\(filtered.count) of \(state.recommendedModels.count)")
+                        Text("\(min(displayLimit, filtered.count)) of \(filtered.count)")
                             .font(.system(size: 11)).foregroundColor(.secondary)
                     }
                 }
@@ -330,12 +331,21 @@ private struct DiscoverTab: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 6) {
-                            ForEach(filtered) { rec in
+                            ForEach(filtered.prefix(displayLimit)) { rec in
                                 RecommendationRow(rec: rec)
+                            }
+                            if displayLimit < filtered.count {
+                                ProgressView()
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                                    .onAppear { displayLimit += 50 }
                             }
                         }
                         .padding(16)
                     }
+                    .onChange(of: selectedCategory) { _ in displayLimit = 50 }
+                    .onChange(of: forYouFormat)     { _ in displayLimit = 50 }
+                    .onChange(of: searchText)       { _ in displayLimit = 50 }
                 }
             } else {
                 if hfHits.isEmpty && !isSearchingHF {
