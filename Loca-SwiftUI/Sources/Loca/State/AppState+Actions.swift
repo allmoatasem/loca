@@ -51,6 +51,15 @@ extension AppState {
         isLoadingModel = false
     }
 
+    func _unloadModel() async {
+        do {
+            try await BackendClient.shared.unloadModel()
+            await _loadLocalModels()
+        } catch {
+            modelLoadError = error.localizedDescription
+        }
+    }
+
     func _deleteModel(_ name: String) async {
         do {
             try await BackendClient.shared.deleteModel(name: name)

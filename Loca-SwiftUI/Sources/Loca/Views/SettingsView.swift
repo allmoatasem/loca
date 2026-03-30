@@ -133,7 +133,15 @@ private struct DownloadedModelsTab: View {
                     .buttonStyle(.bordered)
                     .help("Load this model into the inference backend")
             } else {
-                Text("Active").font(.system(size: 11)).foregroundColor(.green)
+                Button {
+                    state.unloadModel()
+                } label: {
+                    Label("Eject", systemImage: "eject")
+                        .font(.system(size: 11))
+                }
+                .controlSize(.small)
+                .buttonStyle(.bordered)
+                .help("Stop inference server and free RAM/GPU memory")
             }
 
             Button(role: .destructive) {

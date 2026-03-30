@@ -244,6 +244,14 @@ async def local_models() -> JSONResponse:
     return JSONResponse({"models": [m.to_dict() for m in _model_manager.list_local()]})
 
 
+@app.post("/api/models/unload")
+async def unload_model() -> JSONResponse:
+    """Stop the inference backend and free GPU/RAM."""
+    assert _inference_backend is not None
+    await _inference_backend.stop()
+    return JSONResponse({"ok": True})
+
+
 @app.get("/api/models/active")
 async def active_model() -> JSONResponse:
     """Return info about the currently loaded model."""
