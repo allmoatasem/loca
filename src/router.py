@@ -7,8 +7,7 @@ Priority (first match wins):
   2. Explicit /command override → that model
   3. High-complexity code task  → code
   4. Reasoning/planning task    → reason
-  5. Creative/writing task      → write
-  6. Default                    → general
+  5. Default                    → general
 """
 
 import re
@@ -20,7 +19,6 @@ class Model(str, Enum):
     GENERAL = "general"
     REASON = "reason"
     CODE = "code"
-    WRITE = "write"
 
 
 @dataclass
@@ -61,18 +59,6 @@ _REASON_KEYWORDS = [
     r"\bmath\b", r"\bequation\b", r"\bprove\b", r"\bproof\b",
     r"\bsolve\b", r"\bpuzzle\b", r"\blogic\b", r"\bdeduction\b",
     r"\banalyze\b", r"\banalysis\b", r"\bbreakdown\b",
-]
-
-_WRITE_KEYWORDS = [
-    r"\bwrite (a|an|me|the)\b", r"\bdraft\b", r"\bcompose\b",
-    r"\bcover letter\b", r"\bresume\b", r"\bemail\b", r"\bblog post\b",
-    r"\barticle\b", r"\bessay\b", r"\bstory\b", r"\bpoem\b", r"\blyrics\b",
-    r"\bsummariz", r"\bsummary\b", r"\bparaphrase\b", r"\brewrite\b",
-    r"\bimprove (my |the )?(writing|text|prose|copy)\b",
-    r"\bmake (this|it) (more |)(professional|formal|casual|concise|engaging)\b",
-    r"\bedit (this|my)\b", r"\bproofread\b",
-    r"\bpress release\b", r"\bproposal\b", r"\breport\b", r"\bdocumentation\b",
-    r"\breadme\b", r"\bcreative\b",
 ]
 
 _SEARCH_KEYWORDS = [
@@ -149,7 +135,6 @@ _OVERRIDE_MAP = {
     "/code": Model.CODE,
     "/reason": Model.REASON,
     "/general": Model.GENERAL,
-    "/write": Model.WRITE,
 }
 
 
@@ -185,7 +170,6 @@ _MODEL_HINT_MAP = {
     "reason": Model.REASON,
     "thinking": Model.REASON,   # capability alias
     "code": Model.CODE,
-    "write": Model.WRITE,
     "vision": Model.GENERAL,    # vision models use general system prompt
 }
 
@@ -284,16 +268,7 @@ def route(
             search_query=search_query,
         )
 
-    # 7. Creative/writing task signals
-    if _any_match(message_clean, _WRITE_KEYWORDS):
-        return RouteResult(
-            model=Model.WRITE,
-            reason="Creative/writing task detected",
-            search_triggered=search_triggered,
-            search_query=search_query,
-        )
-
-    # 8. Default
+    # 7. Default
     return RouteResult(
         model=Model.GENERAL,
         reason="Default routing",

@@ -38,8 +38,21 @@ struct ChatView: View {
                 onSend: sendIfReady
             )
         }
-        .sheet(isPresented: $state.isMemoryPanelOpen) {
-            MemoryPanel().environmentObject(state)
+        .overlay {
+            if state.isMemoryPanelOpen {
+                ZStack {
+                    Color.black.opacity(0.3)
+                        .ignoresSafeArea()
+                        .onTapGesture { state.isMemoryPanelOpen = false }
+                    MemoryPanel().environmentObject(state)
+                        .frame(width: 460, height: 400)
+                        .background(.ultraThickMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .shadow(radius: 20)
+                }
+                .transition(.opacity)
+                .animation(.easeInOut(duration: 0.2), value: state.isMemoryPanelOpen)
+            }
         }
         .toolbar {
             ToolbarItem(placement: .automatic) {
@@ -928,12 +941,42 @@ struct MemoryPanel: View {
     @EnvironmentObject var state: AppState
 
     var body: some View {
-        NavigationStack {
-            List {
-                if let err = state.memoryExtractionError {
-                    Text("Extraction failed: \(err)")
-                        .font(.caption).foregroundColor(.red)
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Text("Memories (\(state.memories.count))")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    state.extractMemories()
+                } label: {
+                    if state.isExtractingMemories {
+                        ProgressView().scaleEffect(0.7)
+                    } else {
+                        Text("Extract from chat")
+                    }
                 }
+                .controlSize(.small)
+                .buttonStyle(.bordered)
+                .disabled(state.messages.isEmpty || state.isExtractingMemories)
+
+                Button("Done") { state.isMemoryPanelOpen = false }
+                    .controlSize(.small)
+                    .keyboardShortcut(.escape, modifiers: [])
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider()
+
+            // Content
+            if let err = state.memoryExtractionError {
+                Text("Extraction failed: \(err)")
+                    .font(.caption).foregroundColor(.red)
+                    .padding(.horizontal, 16).padding(.top, 8)
+            }
+
+            List {
                 ForEach(state.memories) { memory in
                     VStack(alignment: .leading, spacing: 4) {
                         Text(memory.content).font(.system(size: 13)).textSelection(.enabled)
@@ -948,26 +991,7 @@ struct MemoryPanel: View {
                     for id in ids { Task { try? await BackendClient.shared.deleteMemory(id) } }
                 }
             }
-            .navigationTitle("Memories (\(state.memories.count))")
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        state.extractMemories()
-                    } label: {
-                        if state.isExtractingMemories {
-                            ProgressView().scaleEffect(0.7)
-                        } else {
-                            Text("Extract from chat")
-                        }
-                    }
-                    .disabled(state.messages.isEmpty || state.isExtractingMemories)
-                }
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { state.isMemoryPanelOpen = false }
-                }
-            }
         }
-        .frame(minWidth: 420, minHeight: 320)
         .onAppear { state.loadMemories() }
     }
 }

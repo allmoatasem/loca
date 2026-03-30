@@ -22,9 +22,8 @@ def test_default_routes_to_general():
 
 def test_simple_code_routes_to_non_specialist():
     # Quick/simple code tasks should not route to the CODE specialist
-    # They may go to GENERAL or WRITE depending on phrasing
     r = route("Write a Python function to reverse a string")
-    assert r.model in (Model.GENERAL, Model.CODE, Model.WRITE)
+    assert r.model in (Model.GENERAL, Model.CODE)
     # Should NOT go to CODE specialist (no complexity signals)
     assert r.model != Model.CODE or r.reason != "Code specialist triggered"
 

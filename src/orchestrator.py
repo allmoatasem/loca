@@ -2,7 +2,7 @@
 Orchestrator — the main request loop.
 
 Flow per turn:
-  1. Route the message to a mode (general/code/reason/write) for system prompt selection
+  1. Route the message to a mode (general/code/reason) for system prompt selection
   2. Optionally trigger web search and inject results as system context
   3. Inject memories from the memory store into the system prompt
   4. Call the inference backend via OpenAI-compatible /v1/chat/completions
@@ -321,7 +321,6 @@ def _load_system_prompt(model: Model) -> str:
         Model.GENERAL: "system_general.md",
         Model.REASON: "system_reason.md",
         Model.CODE: "system_code.md",
-        Model.WRITE: "system_write.md",
     }[model]
     path = os.path.join(prompts_dir, filename)
     try:

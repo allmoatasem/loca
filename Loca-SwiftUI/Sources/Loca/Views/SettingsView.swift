@@ -120,6 +120,9 @@ private struct DownloadedModelsTab: View {
                           bg: m.format == "mlx" ? Color.purple.opacity(0.12) : Color.blue.opacity(0.1),
                           fg: m.format == "mlx" ? .purple : .blue)
                     Text(m.sizeLabel).font(.system(size: 11)).foregroundColor(.secondary)
+                    if let ctx = m.contextLabel {
+                        Text(ctx).font(.system(size: 10)).foregroundColor(.secondary)
+                    }
                 }
             }
 
@@ -170,7 +173,7 @@ private struct DiscoverTab: View {
     @State private var selectedCategory = "all"
     @State private var searchText = ""
 
-    private let categories = ["all", "general", "code", "reasoning", "vision", "writing"]
+    private let categories = ["all", "general", "code", "reasoning", "vision"]
 
     private var filtered: [ModelRecommendation] {
         var result = state.recommendedModels
