@@ -4,7 +4,6 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
-    @Environment(\.dismiss) private var dismiss
 
     enum Tab: String, CaseIterable {
         case downloaded = "Downloaded"
@@ -35,7 +34,7 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 300)
                 Spacer()
-                Button("Done") { dismiss() }
+                Button("Done") { state.isSettingsOpen = false }
                     .keyboardShortcut(.return)
             }
             .padding(.horizontal, 20)
@@ -119,7 +118,13 @@ private struct DownloadedModelsTab: View {
                     modelBadge(m.formatLabel,
                           bg: m.format == "mlx" ? Color.purple.opacity(0.12) : Color.blue.opacity(0.1),
                           fg: m.format == "mlx" ? .purple : .blue)
+                    if let p = m.param_label {
+                        Text(p).font(.system(size: 11, weight: .medium)).foregroundColor(.secondary)
+                    }
                     Text(m.sizeLabel).font(.system(size: 11)).foregroundColor(.secondary)
+                    if let ctx = m.contextLabel {
+                        Text(ctx).font(.system(size: 10)).foregroundColor(.secondary)
+                    }
                 }
             }
 
@@ -133,7 +138,15 @@ private struct DownloadedModelsTab: View {
                     .buttonStyle(.bordered)
                     .help("Load this model into the inference backend")
             } else {
-                Text("Active").font(.system(size: 11)).foregroundColor(.green)
+                Button {
+                    state.unloadModel()
+                } label: {
+                    Label("Eject", systemImage: "eject")
+                        .font(.system(size: 11))
+                }
+                .controlSize(.small)
+                .buttonStyle(.bordered)
+                .help("Stop inference server and free RAM/GPU memory")
             }
 
             Button(role: .destructive) {
@@ -162,7 +175,7 @@ private struct DiscoverTab: View {
     @State private var selectedCategory = "all"
     @State private var searchText = ""
 
-    private let categories = ["all", "general", "code", "reasoning", "vision", "writing"]
+    private let categories = ["all", "general", "code", "reasoning", "vision"]
 
     private var filtered: [ModelRecommendation] {
         var result = state.recommendedModels

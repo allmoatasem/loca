@@ -38,6 +38,14 @@ actor BackendClient {
         }
     }
 
+    func unloadModel() async throws {
+        struct NoBody: Encodable {}
+        let (_, resp) = try await post("/api/models/unload", body: NoBody())
+        if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
+            throw BackendError.http(http.statusCode)
+        }
+    }
+
     func deleteModel(name: String) async throws {
         let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
         _ = try await delete("/api/models/\(encoded)")

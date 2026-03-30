@@ -83,10 +83,6 @@ struct SidebarView: View {
                 .help("Deep Research uses a headless browser (Playwright) to fully render pages and extract content, instead of reading raw HTML. Much more accurate for dynamic sites. Slower.")
         }
         .padding(12)
-        .sheet(isPresented: $state.isSettingsOpen) {
-            SettingsView()
-                .environmentObject(state)
-        }
     }
 
     private var localModelPicker: some View {
@@ -437,7 +433,7 @@ struct SidebarFooter: View {
             .buttonStyle(.plain)
             .nativeTooltip("Toggle dark/light theme. Preference is saved locally.")
 
-            Button { state.isMemoryPanelOpen = true } label: {
+            Button { state.isMemoryPanelOpen.toggle() } label: {
                 Image(systemName: "brain")
                     .font(.system(size: 16))
                     .foregroundColor(.secondary)

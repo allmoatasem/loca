@@ -46,6 +46,12 @@ from .store import (
 
 logger = logging.getLogger(__name__)
 
+
+def _basename(model_id: str) -> str:
+    """Strip filesystem path from model ID — mlx_lm returns the full path."""
+    return os.path.basename(model_id.rstrip("/")) if "/" in model_id else model_id
+
+
 # ---------------------------------------------------------------------------
 # Config loading
 # ---------------------------------------------------------------------------
@@ -181,7 +187,7 @@ async def _openai_stream_response(
             # Metadata sentinel from orchestrator
             if isinstance(chunk, dict):
                 if "__model__" in chunk:
-                    actual_model = chunk["__model__"]
+                    actual_model = _basename(chunk["__model__"])
                     search_triggered = bool(chunk.get("__search__", False))
                     memory_injected = bool(chunk.get("__memory__", False))
                 continue
@@ -242,6 +248,14 @@ async def local_models() -> JSONResponse:
     """Return all downloaded models with format, size, and loaded status."""
     assert _model_manager is not None
     return JSONResponse({"models": [m.to_dict() for m in _model_manager.list_local()]})
+
+
+@app.post("/api/models/unload")
+async def unload_model() -> JSONResponse:
+    """Stop the inference backend and free GPU/RAM."""
+    assert _inference_backend is not None
+    await _inference_backend.stop()
+    return JSONResponse({"ok": True})
 
 
 @app.get("/api/models/active")

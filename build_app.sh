@@ -1,6 +1,9 @@
 #!/bin/bash
-# Builds the Loca SwiftUI app (Loca-SwiftUI/ SPM package) and installs it.
-# Run once after cloning, and again whenever Swift source files change.
+# Builds the Loca SwiftUI app (Loca-SwiftUI/ SPM package) and installs a
+# fully self-contained .app bundle to ~/Applications/Loca.app.
+#
+# The bundle includes all Python source so it runs without the repo present.
+# User data (SQLite DB, venv) lives in ~/Library/Application Support/Loca/.
 #
 # Requires: Xcode (not just Command Line Tools)
 #   Install from the App Store, then run this script.
@@ -12,7 +15,7 @@ BUNDLE="$DIR/Loca.app"
 MACOS="$BUNDLE/Contents/MacOS"
 RESOURCES="$BUNDLE/Contents/Resources"
 
-# ── 1. Build ──────────────────────────────────────────────────────────────────
+# ── 1. Build Swift binary ─────────────────────────────────────────────────────
 
 if [ -x "/Applications/Xcode.app/Contents/Developer/usr/bin/swift" ]; then
     SWIFT="/Applications/Xcode.app/Contents/Developer/usr/bin/swift"
@@ -37,14 +40,35 @@ fi
 
 mkdir -p "$MACOS" "$RESOURCES"
 
-# Remove old AppKit binary if it's still there
+# Swift binary
 rm -f "$MACOS/LocalAI"
-
 cp "$BINARY" "$MACOS/Loca"
 chmod +x "$MACOS/Loca"
 
+# Startup script
 cp "$DIR/start_services.sh" "$RESOURCES/start_services.sh"
 chmod +x "$RESOURCES/start_services.sh"
+
+# Python backend — copy everything needed to run without the repo
+echo "Bundling Python backend…"
+rm -rf "$RESOURCES/src" "$RESOURCES/prompts"
+cp -R "$DIR/src"     "$RESOURCES/src"
+cp -R "$DIR/prompts" "$RESOURCES/prompts"
+cp    "$DIR/requirements.txt"       "$RESOURCES/requirements.txt"
+cp    "$DIR/config.yaml"            "$RESOURCES/config.yaml"
+# SearXNG settings (both filenames used by different versions)
+for f in searxng-settings.yml searxng-settings.yaml; do
+    [ -f "$DIR/$f" ] && cp "$DIR/$f" "$RESOURCES/$f"
+done
+# Remove __pycache__ dirs to keep the bundle clean
+find "$RESOURCES/src" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+
+# Icon
+if [ -f "$DIR/Loca-SwiftUI/Sources/Loca/Assets.xcassets/AppIcon.appiconset/loca.icns" ]; then
+    cp "$DIR/Loca-SwiftUI/Sources/Loca/Assets.xcassets/AppIcon.appiconset/loca.icns" "$RESOURCES/loca.icns"
+elif [ -f "$RESOURCES/loca.icns" ]; then
+    : # already there
+fi
 
 # ── 3. Sign ───────────────────────────────────────────────────────────────────
 
@@ -54,20 +78,10 @@ echo "Built and signed: $BUNDLE"
 # ── 4. Sync to ~/Applications ─────────────────────────────────────────────────
 
 DEST="$HOME/Applications/Loca.app"
-mkdir -p "$DEST/Contents/MacOS" "$DEST/Contents/Resources"
+echo "Installing to $DEST…"
 
-cp "$MACOS/Loca"                       "$DEST/Contents/MacOS/Loca"
-cp "$BUNDLE/Contents/Info.plist"       "$DEST/Contents/Info.plist"
-cp "$RESOURCES/start_services.sh"      "$DEST/Contents/Resources/start_services.sh"
-chmod +x "$DEST/Contents/MacOS/Loca" "$DEST/Contents/Resources/start_services.sh"
-
-# Copy icon if present
-if [ -f "$RESOURCES/loca.icns" ]; then
-    cp "$RESOURCES/loca.icns" "$DEST/Contents/Resources/loca.icns"
-fi
-
-# Write project path so AppDelegate can find start_services.sh at runtime
-echo "$DIR" > "$DEST/Contents/Resources/project_path.txt"
+# Full rsync so Python source, prompts, etc. are all in sync
+rsync -a --delete "$BUNDLE/" "$DEST/"
 
 codesign --sign - --force --deep "$DEST"
 echo "Updated ~/Applications/Loca.app"

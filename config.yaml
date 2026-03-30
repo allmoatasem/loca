@@ -33,14 +33,6 @@ models:
     display_name: Code
     capabilities:
     - code
-  write:
-    display_name: Write
-    capabilities:
-    - creative_writing
-    - summarization
-    - drafting
-    - instruction_following
-
 routing:
   default_model: general
   code_complexity_threshold: multi-file or >100 lines or architecture

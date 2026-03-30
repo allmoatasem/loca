@@ -145,6 +145,8 @@ struct LocalModel: Decodable, Identifiable {
     let format: String     // "gguf" or "mlx"
     let size_gb: Double
     let is_loaded: Bool
+    let context_length: Int?
+    let param_label: String?
 
     var id: String { name }
 
@@ -153,6 +155,11 @@ struct LocalModel: Decodable, Identifiable {
     var sizeLabel: String {
         size_gb >= 1 ? String(format: "%.1f GB", size_gb)
                      : String(format: "%.0f MB", size_gb * 1024)
+    }
+
+    var contextLabel: String? {
+        guard let ctx = context_length, ctx > 0 else { return nil }
+        return ctx >= 1024 ? "\(ctx / 1024)K ctx" : "\(ctx) ctx"
     }
 }
 
@@ -239,7 +246,6 @@ struct ModelRecommendation: Decodable, Identifiable {
         if src.contains("code") || src.contains("coder")               { return "code" }
         if src.contains("vision") || src.contains("-vl") || src.contains("llava") { return "vision" }
         if src.contains("reason") || src.contains("think") || src.contains("-r1") { return "reasoning" }
-        if src.contains("writ") || src.contains("creative")            { return "writing" }
         return "general"
     }
 

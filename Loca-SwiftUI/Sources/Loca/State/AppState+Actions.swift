@@ -51,6 +51,15 @@ extension AppState {
         isLoadingModel = false
     }
 
+    func _unloadModel() async {
+        do {
+            try await BackendClient.shared.unloadModel()
+            await _loadLocalModels()
+        } catch {
+            modelLoadError = error.localizedDescription
+        }
+    }
+
     func _deleteModel(_ name: String) async {
         do {
             try await BackendClient.shared.deleteModel(name: name)
@@ -215,9 +224,23 @@ extension AppState {
     func _send(_ text: String, attachments: [UploadResult] = []) async {
         guard !isStreaming else { return }
 
+        // Guard: reject images for non-vision models
+        let imageAttachments = attachments.filter { $0.type == "image" }
+        if !imageAttachments.isEmpty {
+            let modelId = (activeModelName ?? selectedModelId ?? "").lowercased()
+            let isVision = LMModel(id: modelId).capabilities.contains(.vision)
+            if !isVision {
+                let errorMsg = ChatMessage(
+                    role: "assistant",
+                    content: .text("⚠️ The current model (**\(activeModelName ?? "unknown")**) does not support images. Please load a vision model (e.g. one containing \"llava\", \"-vl\", or \"minicpm-v\" in the name) and try again.")
+                )
+                messages.append(errorMsg)
+                return
+            }
+        }
+
         // Build message content (text + images)
         let content: MessageContent
-        let imageAttachments = attachments.filter { $0.type == "image" }
         let textAttachments  = attachments.filter { $0.type != "image" }
         let textPrefix = textAttachments
             .compactMap { a -> String? in
