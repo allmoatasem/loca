@@ -4,7 +4,6 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
-    @Environment(\.dismiss) private var dismiss
 
     enum Tab: String, CaseIterable {
         case downloaded = "Downloaded"
@@ -35,7 +34,7 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 300)
                 Spacer()
-                Button("Done") { dismiss() }
+                Button("Done") { state.isSettingsOpen = false }
                     .keyboardShortcut(.return)
             }
             .padding(.horizontal, 20)
