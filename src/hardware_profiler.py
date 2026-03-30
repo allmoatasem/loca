@@ -375,8 +375,15 @@ def get_recommendations(profile: HardwareProfile | None = None) -> list[ModelRec
                 if fmt == "gguf":
                     sources = item.get("gguf_sources") or []
                     repo = sources[0].get("repo", name) if sources else name
+                    # Try to extract the recommended file from source metadata
+                    src_file = None
+                    if sources:
+                        src_file = (sources[0].get("file") or sources[0].get("filename")
+                                    or sources[0].get("gguf_file") or sources[0].get("path"))
+                    gguf_filename: str | None = str(src_file) if src_file else None
                 else:
                     repo = name  # MLX: name IS the HF repo
+                    gguf_filename = None
 
                 # Only include entries that look like valid HF repos
                 if "/" not in repo:
@@ -395,7 +402,7 @@ def get_recommendations(profile: HardwareProfile | None = None) -> list[ModelRec
                 results.append(ModelRecommendation(
                     name=name.split("/")[-1],  # display name: just the model part
                     repo_id=repo,
-                    filename=None,             # MLX: snapshot; GGUF: no specific file
+                    filename=gguf_filename,    # MLX: None (full repo); GGUF: from llmfit if available
                     format=fmt,
                     size_gb=size,
                     quant=quant,

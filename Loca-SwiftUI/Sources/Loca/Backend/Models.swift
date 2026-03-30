@@ -287,6 +287,26 @@ struct RecommendedModelsResponse: Decodable {
     let recommendations: [ModelRecommendation]
 }
 
+struct RepoFile: Decodable, Identifiable {
+    var id: String { name }
+    let name: String
+    let size_gb: Double
+
+    var sizeLabel: String {
+        size_gb >= 1 ? String(format: "%.1f GB", size_gb)
+                     : String(format: "%.0f MB", size_gb * 1024)
+    }
+
+    /// E.g. "Q4_K_M" extracted from "Qwen2.5-7B-Instruct-Q4_K_M.gguf"
+    var quantLabel: String? {
+        let upper = name.uppercased()
+        for q in ["Q4_K_M","Q5_K_M","Q4_K_S","Q6_K","Q8_0","IQ4_XS","Q3_K_M","Q2_K","F16","BF16"] {
+            if upper.contains(q) { return q }
+        }
+        return nil
+    }
+}
+
 // MARK: - Models (legacy, kept for capability detection logic)
 
 struct LMModel: Decodable, Identifiable {

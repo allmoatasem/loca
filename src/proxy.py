@@ -744,6 +744,39 @@ async def api_hf_search(q: str = "", format: str = "gguf", limit: int = 8) -> JS
         return JSONResponse({"models": [], "error": str(e)})
 
 
+@app.get("/api/repo-files")
+async def api_repo_files(repo_id: str = "", format: str = "gguf") -> JSONResponse:
+    """Return downloadable files for a HF repo, sorted with recommended quants first."""
+    if not repo_id.strip():
+        return JSONResponse({"files": []})
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"https://huggingface.co/api/models/{repo_id}")
+            r.raise_for_status()
+            siblings = r.json().get("siblings", [])
+        ext = ".gguf" if format == "gguf" else ".safetensors"
+        files = [
+            {"name": s["rfilename"],
+             "size_gb": round(s.get("size", 0) / 1_073_741_824, 2)}
+            for s in siblings
+            if s["rfilename"].lower().endswith(ext)
+            and not s["rfilename"].startswith(".")
+        ]
+        if format == "gguf":
+            quant_order = ["Q4_K_M", "Q5_K_M", "Q4_K_S", "Q6_K", "Q8_0", "IQ4_XS", "Q3_K_M", "Q2_K", "F16", "BF16"]
+            def _quant_rank(fname: str) -> int:
+                upper = fname.upper()
+                for i, q in enumerate(quant_order):
+                    if q in upper:
+                        return i
+                return 99
+            files.sort(key=lambda f: _quant_rank(f["name"]))
+        return JSONResponse({"files": files})
+    except Exception as e:
+        return JSONResponse({"files": [], "error": str(e)})
+
+
 @app.post("/api/extract-memories")
 async def api_extract_memories(request: Request) -> JSONResponse:
     """Run three-pass memory extraction on the given messages and persist results."""
