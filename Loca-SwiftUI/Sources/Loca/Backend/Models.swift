@@ -262,6 +262,17 @@ struct ModelRecommendation: Decodable, Identifiable {
     var fitLabel: String {
         fit_level.isEmpty ? "" : fit_level
     }
+
+    /// Extract parameter count from model name, e.g. "7B", "80B", "122B".
+    /// For MoE names like "80B-A3B" returns only the total ("80B").
+    var paramLabel: String? {
+        let pattern = #"(\d+(?:\.\d+)?B)(?:-A\d+(?:\.\d+)?B)?"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+              let match = regex.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)),
+              let range = Range(match.range(at: 1), in: name)
+        else { return nil }
+        return String(name[range]).uppercased()
+    }
 }
 
 struct RecommendedModelsResponse: Decodable {

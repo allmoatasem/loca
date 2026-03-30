@@ -2438,6 +2438,7 @@ function renderDiscover() {
       <div class="model-card-info">
         <div class="model-card-name" style="display:flex;align-items:center;gap:6px">
           ${esc(r.name)}
+          ${extractParamLabel(r.name) ? `<span style="font-size:11px;font-weight:600;color:var(--text-muted)">${extractParamLabel(r.name)}</span>` : ''}
           <span class="badge ${r.format === 'mlx' ? 'badge-mlx' : 'badge-gguf'}">${r.format.toUpperCase()}</span>
           ${r.provider ? `<span style="font-size:10px;color:var(--text-muted)">${esc(r.provider)}</span>` : ''}
         </div>
@@ -2451,6 +2452,11 @@ function renderDiscover() {
       <button class="model-action-btn primary" onclick='startDownloadFromPanel(${JSON.stringify(r)})'>Get</button>`;
     body.appendChild(card);
   }
+}
+
+function extractParamLabel(name) {
+  const m = name.match(/(\d+(?:\.\d+)?B)(?:-A\d+(?:\.\d+)?B)?/i);
+  return m ? m[1].toUpperCase() : null;
 }
 
 function inferCategory(r) {

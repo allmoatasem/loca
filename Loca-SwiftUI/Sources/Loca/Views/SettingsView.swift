@@ -386,6 +386,11 @@ private struct RecommendationRow: View {
                         Text(rec.name)
                             .font(.system(size: 12, weight: .medium))
                             .lineLimit(1)
+                        if let p = rec.paramLabel {
+                            Text(p)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.secondary)
+                        }
                         modelBadge(rec.formatLabel,
                               bg: rec.format == "mlx" ? Color.purple.opacity(0.12) : Color.blue.opacity(0.1),
                               fg: rec.format == "mlx" ? .purple : .blue)
