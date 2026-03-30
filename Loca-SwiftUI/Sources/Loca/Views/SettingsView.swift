@@ -372,79 +372,107 @@ private struct RecommendationRow: View {
             && state.activeDownload?.error == nil
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
-                // Fitness indicator
-                Circle()
-                    .fill(rec.fitColor)
-                    .frame(width: 9, height: 9)
-                    .help(rec.fitLabel.isEmpty ? "Fit unknown" : rec.fitLabel)
+    // MARK: – Brand colour palette
+    // Purple/blue are already used for format badges; these three complement them.
+    private static let providerColor:    Color = .indigo   // brand / origin
+    private static let tpsColor:         Color = .teal     // performance metric
+    private static let capabilityColor:  Color = .orange   // model function / use-case
 
-                // Model info
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(rec.name)
-                            .font(.system(size: 12, weight: .medium))
-                            .lineLimit(1)
-                        if let p = rec.paramLabel {
-                            Text(p)
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(.secondary)
-                        }
-                        modelBadge(rec.formatLabel,
-                              bg: rec.format == "mlx" ? Color.purple.opacity(0.12) : Color.blue.opacity(0.1),
-                              fg: rec.format == "mlx" ? .purple : .blue)
-                        if !rec.provider.isEmpty {
-                            Text(rec.provider)
-                                .font(.system(size: 9))
-                                .foregroundColor(.secondary)
-                                .padding(.horizontal, 4).padding(.vertical, 2)
-                                .background(Color.secondary.opacity(0.08))
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                        }
-                        Text(rec.sizeLabel)
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                        Text(rec.quant)
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
-                        Text("\(rec.context / 1024)K ctx")
-                            .font(.system(size: 10))
+    var body: some View {
+        HStack(spacing: 10) {
+            // Fitness indicator dot
+            Circle()
+                .fill(rec.fitColor)
+                .frame(width: 9, height: 9)
+                .help(rec.fitLabel.isEmpty ? "Fit unknown" : rec.fitLabel)
+
+            // Model info
+            VStack(alignment: .leading, spacing: 4) {
+                // ── Row 1: name + format + size ──────────────────────────
+                HStack(spacing: 6) {
+                    Text(rec.name)
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                    if let p = rec.paramLabel {
+                        Text(p)
+                            .font(.system(size: 10, weight: .bold))
                             .foregroundColor(.secondary)
                     }
-                    Text(rec.why)
+                    modelBadge(rec.formatLabel,
+                          bg: rec.format == "mlx" ? Color.purple.opacity(0.12) : Color.blue.opacity(0.1),
+                          fg: rec.format == "mlx" ? .purple : .blue)
+                    Text(rec.sizeLabel)
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
-                        .lineLimit(1)
+                    Text(rec.quant)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                    Text("\(rec.context / 1024)K ctx")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
                 }
 
-                Spacer()
-
-                // Action
-                if alreadyDownloaded {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
-                        .font(.system(size: 16))
-                        .help("Already downloaded")
-                } else if isThisDownloading {
-                    ProgressView().scaleEffect(0.65)
-                } else {
-                    Button {
-                        state.startModelDownload(
-                            repoId: rec.repo_id,
-                            filename: rec.filename,
-                            format: rec.format
-                        )
-                    } label: {
-                        Label("Get", systemImage: "arrow.down.circle")
-                            .font(.system(size: 11))
+                // ── Row 2: coloured metadata pills ───────────────────────
+                HStack(spacing: 5) {
+                    // Fit score (indigo-tinted fit colour)
+                    if rec.score > 0 {
+                        metaPill("\(Int(rec.score))% fit",
+                                 bg: rec.fitColor.opacity(0.12),
+                                 fg: rec.fitColor)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-                    .disabled(isAnyDownloading)
-                    .help("Download \(rec.name)")
+                    // Provider  – indigo
+                    if !rec.provider.isEmpty {
+                        metaPill(rec.provider,
+                                 bg: Self.providerColor.opacity(0.1),
+                                 fg: Self.providerColor)
+                    }
+                    // tok/s  – teal
+                    if rec.tps > 0 {
+                        metaPill("~\(Int(rec.tps)) tok/s",
+                                 bg: Self.tpsColor.opacity(0.1),
+                                 fg: Self.tpsColor)
+                    }
+                    // Capabilities  – orange
+                    if !rec.use_case.isEmpty {
+                        metaPill(rec.use_case.capitalized,
+                                 bg: Self.capabilityColor.opacity(0.1),
+                                 fg: Self.capabilityColor)
+                    }
+                    // Fallback description (only when no llmfit data fills row 2)
+                    if !rec.why.isEmpty {
+                        Text(rec.why)
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
                 }
+            }
+
+            Spacer()
+
+            // Action button
+            if alreadyDownloaded {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.green)
+                    .font(.system(size: 16))
+                    .help("Already downloaded")
+            } else if isThisDownloading {
+                ProgressView().scaleEffect(0.65)
+            } else {
+                Button {
+                    state.startModelDownload(
+                        repoId: rec.repo_id,
+                        filename: rec.filename,
+                        format: rec.format
+                    )
+                } label: {
+                    Label("Get", systemImage: "arrow.down.circle")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .disabled(isAnyDownloading)
+                .help("Download \(rec.name)")
             }
         }
         .padding(.horizontal, 12)
@@ -452,28 +480,51 @@ private struct RecommendationRow: View {
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 7))
     }
+
+    /// Small coloured pill badge used in row 2.
+    private func metaPill(_ text: String, bg: Color, fg: Color) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .medium))
+            .foregroundColor(fg)
+            .padding(.horizontal, 5).padding(.vertical, 2)
+            .background(bg)
+            .clipShape(Capsule())
+    }
 }
 
 // MARK: - Download Status Bar
 
 private struct DownloadStatusBar: View {
+    @EnvironmentObject var state: AppState
     let dl: AppState.ActiveDownload
+
+    private var modelName: String {
+        dl.repoId.split(separator: "/").last.map(String.init) ?? dl.repoId
+    }
 
     var body: some View {
         VStack(spacing: 5) {
             HStack(spacing: 8) {
+                // Left: icon + status text
                 if dl.done {
                     Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
-                    Text("Download complete: \(dl.repoId.split(separator: "/").last.map(String.init) ?? dl.repoId)")
-                        .font(.system(size: 12))
+                    Text("Downloaded \(modelName)").font(.system(size: 12))
                 } else if let err = dl.error {
                     Image(systemName: "xmark.circle.fill").foregroundColor(.red)
                     Text(err).font(.system(size: 11)).foregroundColor(.red).lineLimit(1)
+                } else if dl.paused {
+                    Image(systemName: "pause.circle.fill").foregroundColor(.orange)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Paused — \(modelName)").font(.system(size: 12))
+                        if dl.percent >= 0 {
+                            Text(String(format: "%.1f%% complete", dl.percent))
+                                .font(.system(size: 11)).foregroundColor(.secondary)
+                        }
+                    }
                 } else {
                     ProgressView().scaleEffect(0.6)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("Downloading \(dl.repoId.split(separator: "/").last.map(String.init) ?? dl.repoId)…")
-                            .font(.system(size: 12))
+                        Text("Downloading \(modelName)…").font(.system(size: 12))
                         HStack(spacing: 8) {
                             if dl.percent >= 0 {
                                 Text(String(format: "%.1f%%", dl.percent))
@@ -500,11 +551,39 @@ private struct DownloadStatusBar: View {
                         }
                     }
                 }
+
                 Spacer()
+
+                // Right: control buttons
+                if !dl.done, dl.error == nil {
+                    if dl.paused {
+                        Button { state.resumeDownload() } label: {
+                            Label("Resume", systemImage: "play.fill")
+                                .font(.system(size: 11))
+                        }
+                        .buttonStyle(.bordered).controlSize(.mini)
+                        .tint(.green)
+                    } else {
+                        Button { state.pauseDownload() } label: {
+                            Label("Pause", systemImage: "pause.fill")
+                                .font(.system(size: 11))
+                        }
+                        .buttonStyle(.bordered).controlSize(.mini)
+                    }
+                    Button { state.cancelDownload() } label: {
+                        Label("Cancel", systemImage: "xmark")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.bordered).controlSize(.mini)
+                    .tint(.red)
+                }
             }
-            if !dl.done && dl.error == nil && dl.percent >= 0 {
+
+            // Progress bar (hide when paused at 0 or done)
+            if !dl.done, dl.error == nil, dl.percent >= 0 {
                 ProgressView(value: dl.percent, total: 100)
                     .progressViewStyle(.linear)
+                    .tint(dl.paused ? .orange : .accentColor)
             }
         }
         .padding(.horizontal, 20)

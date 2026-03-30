@@ -71,6 +71,20 @@ extension AppState {
 
     // MARK: - Downloads
 
+    func _pauseDownload() async {
+        guard let dl = activeDownload, !dl.done, dl.error == nil else { return }
+        try? await BackendClient.shared.pauseDownload(id: dl.downloadId)
+        activeDownload?.paused = true
+        activeDownload?.speedMbps = 0
+        activeDownload?.etaSeconds = 0
+    }
+
+    func _cancelDownload() async {
+        guard let dl = activeDownload else { return }
+        try? await BackendClient.shared.cancelDownload(id: dl.downloadId)
+        activeDownload = nil
+    }
+
     func _startDownload(repoId: String, filename: String?, format: String) {
         Task {
             do {
@@ -110,7 +124,11 @@ extension AppState {
                         activeDownload?.speedMbps  = p.speed_mbps
                         activeDownload?.etaSeconds = p.eta_s
                         if let tb = p.total_bytes, tb > 0 { activeDownload?.totalBytes = tb }
-                        if let err = p.error { activeDownload?.error = err; return }
+                        if let err = p.error {
+                            // "cancelled" is not an error — it means we paused/cancelled
+                            if err != "cancelled" { activeDownload?.error = err }
+                            return
+                        }
                         if p.done {
                             activeDownload?.done = true
                             activeDownload?.percent = 100
