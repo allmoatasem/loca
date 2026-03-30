@@ -316,10 +316,12 @@ def _dir_size_gb(path: Path) -> float:
 
 
 def _extract_param_label(name: str) -> str | None:
-    """Extract parameter count from model name, e.g. '7B', '70B', '3.8B'."""
+    """Extract parameter count from model name, e.g. '7B', '70B', '3.8B'.
+    For MoE models (e.g. '30B-A3B') returns only the total param count ('30B').
+    """
     import re
-    m = re.search(r'(\d+(?:\.\d+)?B(?:-A\d+(?:\.\d+)?B)?)', name, re.IGNORECASE)
-    return m.group(0).upper() if m else None
+    m = re.search(r'(\d+(?:\.\d+)?B)(?:-A\d+(?:\.\d+)?B)?', name, re.IGNORECASE)
+    return m.group(1).upper() if m else None
 
 
 def _read_context_length(config_path: Path) -> int | None:
