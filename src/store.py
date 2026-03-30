@@ -1,16 +1,29 @@
 """
 SQLite-backed store for conversations and memories.
-DB lives at <project_root>/data/loca.db
+DB lives at $LOCA_DATA_DIR/loca.db, or ~/Library/Application Support/Loca/data/loca.db
+on macOS, or ~/.loca/data/loca.db on Linux/Windows.
 """
 from __future__ import annotations
 
 import json
+import os
+import platform
 import sqlite3
 import time
 import uuid
 from pathlib import Path
 
-_DB_PATH = Path(__file__).parent.parent / "data" / "loca.db"
+
+def _default_data_dir() -> Path:
+    env = os.environ.get("LOCA_DATA_DIR")
+    if env:
+        return Path(env)
+    if platform.system() == "Darwin":
+        return Path.home() / "Library" / "Application Support" / "Loca" / "data"
+    return Path.home() / ".loca" / "data"
+
+
+_DB_PATH = _default_data_dir() / "loca.db"
 
 
 def _conn() -> sqlite3.Connection:

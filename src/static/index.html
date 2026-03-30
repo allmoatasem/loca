@@ -336,6 +336,26 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 /* ── Sidebar bottom ──────────────────────────────────────────────────────── */
 #sidebar-bottom { flex-shrink: 0; }
 
+#sidebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border-light);
+}
+.sidebar-action-btn {
+  display: flex; align-items: center; gap: 5px;
+  background: none; border: none;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 5px 8px;
+  border-radius: 6px;
+  transition: background .1s, color .1s;
+  flex: 1; justify-content: center;
+}
+.sidebar-action-btn:hover { background: var(--border-light); color: var(--text); }
+
 #mem-trigger {
   display: flex;
   align-items: center;
@@ -757,6 +777,151 @@ body.dark #input code { color: #e06c75; }
 .mem-del:hover { color: #c0392b; opacity: 1; }
 #mem-empty { text-align: center; color: var(--text-muted); font-size: 13px; padding: 32px 20px; }
 
+/* ── Models panel ────────────────────────────────────────────────────────── */
+#models-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.4);
+  z-index: 200;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+#models-overlay.open { display: flex; }
+#models-panel {
+  width: 720px;
+  max-width: 95vw;
+  height: 560px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#models-panel-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#models-panel-hdr h3 { font-size: 14px; font-weight: 600; }
+#models-tabs {
+  display: flex; gap: 4px;
+}
+.models-tab {
+  background: none; border: none;
+  padding: 5px 12px;
+  font-size: 12px; font-weight: 500;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background .1s, color .1s;
+}
+.models-tab.active {
+  background: var(--accent);
+  color: #fff;
+}
+.models-tab:hover:not(.active) { background: var(--border-light); color: var(--text); }
+#models-panel-body { flex: 1; overflow-y: auto; }
+#models-panel-body::-webkit-scrollbar { width: 4px; }
+#models-panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.model-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border-light);
+  font-size: 13px;
+}
+.model-card:last-child { border-bottom: none; }
+.model-card-info { flex: 1; min-width: 0; }
+.model-card-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.model-card-meta { font-size: 11px; color: var(--text-dim); margin-top: 2px; display: flex; gap: 8px; flex-wrap: wrap; }
+.model-fit-dot {
+  width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; margin-top: 3px;
+}
+.badge {
+  display: inline-block;
+  font-size: 9px; font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 10px;
+}
+.badge-mlx  { background: rgba(139,92,246,.12); color: #7c3aed; }
+.badge-gguf { background: rgba(59,130,246,.12);  color: #2563eb; }
+.model-action-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 11px; font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .1s, color .1s;
+}
+.model-action-btn:hover { background: var(--border-light); color: var(--text); }
+.model-action-btn.danger { border-color: #e74c3c; color: #e74c3c; }
+.model-action-btn.danger:hover { background: rgba(231,76,60,.08); }
+.model-action-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.model-action-btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.model-loaded-dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; flex-shrink: 0; }
+.model-unloaded-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); flex-shrink: 0; }
+#models-download-bar {
+  padding: 10px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 12px;
+  flex-shrink: 0;
+  display: none;
+}
+#models-download-bar.visible { display: block; }
+#models-download-label { color: var(--text-dim); margin-bottom: 4px; }
+#models-download-progress {
+  width: 100%; height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+#models-download-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width .3s;
+  width: 0%;
+}
+#discover-filters {
+  display: flex;
+  gap: 4px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border-light);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+.disc-filter {
+  background: none; border: 1px solid var(--border);
+  color: var(--text-dim); font-size: 11px; font-weight: 500;
+  padding: 3px 10px; border-radius: 12px; cursor: pointer;
+  transition: background .1s, color .1s, border-color .1s;
+}
+.disc-filter.active {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
+.disc-filter:hover:not(.active) { border-color: var(--text-dim); color: var(--text); }
+#discover-search-row {
+  display: flex; gap: 8px; padding: 8px 20px;
+  border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+#discover-search {
+  flex: 1;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px; font-size: 12px; color: var(--text); outline: none;
+}
+#discover-search:focus { border-color: var(--accent); }
+
 /* ── Tooltip system ──────────────────────────────────────────────────────── */
 [data-tip] { position: relative; }
 [data-tip]::after {
@@ -901,14 +1066,7 @@ code[class*="language-"] {
 <!-- Draggable titlebar -->
 <div id="titlebar">
   <div id="tb-title">Loca</div>
-  <div id="tb-actions">
-    <button class="tb-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle dark/light mode" data-tip="Toggle dark/light theme.&#10;Preference is saved locally.">
-      <svg id="theme-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="12" cy="12" r="5"/>
-        <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
-      </svg>
-    </button>
-  </div>
+  <div id="tb-actions"></div>
 </div>
 
 <div id="layout">
@@ -957,10 +1115,21 @@ code[class*="language-"] {
     </div>
 
     <div id="sidebar-bottom">
-      <div id="mem-trigger" onclick="openMemPanel()"
-           data-tip="Memories are facts extracted from your conversations&#10;and injected into every new chat.&#10;Click to view and manage them.">
-        <span>Memory</span>
-        <span id="mem-count">—</span>
+      <div id="sidebar-actions">
+        <button class="sidebar-action-btn" onclick="openMemPanel()" title="Memories" data-tip="Memories — facts extracted from&#10;your conversations, injected into&#10;every new chat.">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a9 9 0 0 1 9 9c0 4.97-4.03 9-9 9a9 9 0 0 1-9-9c0-4.97 4.03-9 9-9z"/><path d="M12 8v4l3 3"/></svg>
+          <span id="mem-count-label">Memory</span>
+          <span id="mem-count"></span>
+        </button>
+        <button class="sidebar-action-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle dark/light mode" data-tip="Toggle dark/light theme.&#10;Preference is saved locally.">
+          <svg id="theme-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="5"/>
+            <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+          </svg>
+        </button>
+        <button class="sidebar-action-btn" onclick="openModelsPanel()" title="Manage Models" data-tip="Download and manage local models.">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01M6 18h.01"/></svg>
+        </button>
       </div>
       <div id="sidebar-stats">
         <div class="stat-row">
@@ -1046,6 +1215,35 @@ code[class*="language-"] {
 <script src="/assets/prism-c.min.js"></script>
 <script src="/assets/prism-cpp.min.js"></script>
 <script src="/assets/prism-swift.min.js"></script>
+
+<!-- Models panel -->
+<div id="models-overlay" onclick="if(event.target===this)closeModelsPanel()">
+  <div id="models-panel">
+    <div id="models-panel-hdr">
+      <h3>Manage Models</h3>
+      <div id="models-tabs">
+        <button class="models-tab active" data-tab="downloaded" onclick="switchModelsTab(this)">Downloaded</button>
+        <button class="models-tab" data-tab="discover" onclick="switchModelsTab(this)">Discover</button>
+      </div>
+      <button class="panel-close" onclick="closeModelsPanel()">×</button>
+    </div>
+    <div id="discover-filters" style="display:none">
+      <button class="disc-filter active" data-cat="all"       onclick="setDiscCat(this)">All</button>
+      <button class="disc-filter"        data-cat="general"   onclick="setDiscCat(this)">General</button>
+      <button class="disc-filter"        data-cat="code"      onclick="setDiscCat(this)">Code</button>
+      <button class="disc-filter"        data-cat="reasoning" onclick="setDiscCat(this)">Reason</button>
+      <button class="disc-filter"        data-cat="vision"    onclick="setDiscCat(this)">Vision</button>
+    </div>
+    <div id="discover-search-row" style="display:none">
+      <input id="discover-search" type="text" placeholder="Search models…" oninput="filterDiscover()">
+    </div>
+    <div id="models-panel-body"></div>
+    <div id="models-download-bar">
+      <div id="models-download-label">Downloading…</div>
+      <div id="models-download-progress"><div id="models-download-fill"></div></div>
+    </div>
+  </div>
+</div>
 
 <!-- Memory panel -->
 <div id="mem-overlay" onclick="if(event.target===this)closeMemPanel()">
@@ -2108,6 +2306,250 @@ async function loadMemCount() {
       memories.length ? `${memories.length} fact${memories.length > 1 ? 's' : ''}` : 'empty';
     return memories;
   } catch (_) { return []; }
+}
+
+// ── Models panel ──────────────────────────────────────────────────────────────
+let _modelsTab = 'downloaded';
+let _discCat   = 'all';
+let _discQuery = '';
+let _allRecs   = [];
+let _dlPollId  = null;
+
+async function openModelsPanel() {
+  document.getElementById('models-overlay').classList.add('open');
+  await loadModelsTab();
+}
+function closeModelsPanel() {
+  document.getElementById('models-overlay').classList.remove('open');
+  if (_dlPollId) { clearInterval(_dlPollId); _dlPollId = null; }
+}
+function switchModelsTab(btn) {
+  document.querySelectorAll('.models-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  _modelsTab = btn.dataset.tab;
+  const isDisc = _modelsTab === 'discover';
+  document.getElementById('discover-filters').style.display  = isDisc ? 'flex' : 'none';
+  document.getElementById('discover-search-row').style.display = isDisc ? 'flex' : 'none';
+  loadModelsTab();
+}
+function setDiscCat(btn) {
+  document.querySelectorAll('.disc-filter').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  _discCat = btn.dataset.cat;
+  renderDiscover();
+}
+function filterDiscover() {
+  _discQuery = document.getElementById('discover-search').value.toLowerCase();
+  renderDiscover();
+}
+
+async function loadModelsTab() {
+  if (_modelsTab === 'downloaded') {
+    await renderDownloaded();
+  } else {
+    await renderDiscoverTab();
+  }
+}
+
+async function renderDownloaded() {
+  const body = document.getElementById('models-panel-body');
+  body.innerHTML = '<div style="padding:20px;color:var(--text-dim);font-size:13px">Loading…</div>';
+  try {
+    const { models = [] } = await (await fetch('/api/local-models')).json();
+    if (!models.length) {
+      body.innerHTML = '<div style="padding:32px 20px;text-align:center;color:var(--text-muted);font-size:13px">No models downloaded yet.<br>Go to the Discover tab to find models.</div>';
+      return;
+    }
+    body.innerHTML = '';
+    for (const m of models) {
+      const card = document.createElement('div');
+      card.className = 'model-card';
+      const ctx = m.context_length ? formatCtx(m.context_length) : '';
+      card.innerHTML = `
+        <div class="${m.is_loaded ? 'model-loaded-dot' : 'model-unloaded-dot'}" title="${m.is_loaded ? 'Loaded' : 'Not loaded'}"></div>
+        <div class="model-card-info">
+          <div class="model-card-name">${esc(m.name)}</div>
+          <div class="model-card-meta">
+            <span class="badge ${m.format === 'mlx' ? 'badge-mlx' : 'badge-gguf'}">${m.format.toUpperCase()}</span>
+            <span>${fmtGB(m.size_gb)}</span>
+            ${ctx ? `<span>${ctx}</span>` : ''}
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          ${m.is_loaded
+            ? `<button class="model-action-btn" onclick="ejectModel()">Eject</button>`
+            : `<button class="model-action-btn primary" onclick="loadModelFromPanel('${esc(m.name)}')">Load</button>`}
+          <button class="model-action-btn danger" ${m.is_loaded ? 'disabled title="Unload first"' : ''} onclick="deleteModelFromPanel('${esc(m.name)}', this)">Delete</button>
+        </div>`;
+      body.appendChild(card);
+    }
+  } catch(e) {
+    body.innerHTML = '<div style="padding:20px;color:#e74c3c;font-size:13px">Failed to load models.</div>';
+  }
+}
+
+async function renderDiscoverTab() {
+  const body = document.getElementById('models-panel-body');
+  if (!_allRecs.length) {
+    body.innerHTML = '<div style="padding:20px;color:var(--text-dim);font-size:13px">Loading recommendations…</div>';
+    try {
+      const data = await (await fetch('/api/recommended-models')).json();
+      _allRecs = data.recommendations || [];
+    } catch(e) {
+      body.innerHTML = '<div style="padding:20px;color:#e74c3c;font-size:13px">Failed to load recommendations. Is llmfit installed?</div>';
+      return;
+    }
+  }
+  renderDiscover();
+}
+
+function renderDiscover() {
+  const body = document.getElementById('models-panel-body');
+  let recs = _allRecs;
+  if (_discCat !== 'all') recs = recs.filter(r => inferCategory(r) === _discCat);
+  if (_discQuery) recs = recs.filter(r =>
+    r.name.toLowerCase().includes(_discQuery) ||
+    (r.provider||'').toLowerCase().includes(_discQuery) ||
+    (r.use_case||'').toLowerCase().includes(_discQuery));
+  if (!recs.length) {
+    body.innerHTML = '<div style="padding:32px 20px;text-align:center;color:var(--text-muted);font-size:13px">No results.</div>';
+    return;
+  }
+  body.innerHTML = '';
+  for (const r of recs) {
+    const card = document.createElement('div');
+    card.className = 'model-card';
+    const dotColor = r.fit_level
+      ? (r.fit_level.toLowerCase().includes('perfect') ? '#22c55e'
+        : r.fit_level.toLowerCase().includes('good') ? '#eab308'
+        : '#ef4444')
+      : 'var(--border)';
+    card.innerHTML = `
+      <div class="model-fit-dot" style="background:${dotColor}" title="${esc(r.fit_level||'Unknown fit')}"></div>
+      <div class="model-card-info">
+        <div class="model-card-name" style="display:flex;align-items:center;gap:6px">
+          ${esc(r.name)}
+          <span class="badge ${r.format === 'mlx' ? 'badge-mlx' : 'badge-gguf'}">${r.format.toUpperCase()}</span>
+          ${r.provider ? `<span style="font-size:10px;color:var(--text-muted)">${esc(r.provider)}</span>` : ''}
+        </div>
+        <div class="model-card-meta">
+          <span>${fmtGB(r.size_gb)}</span>
+          <span>${r.quant||''}</span>
+          ${r.context ? `<span>${formatCtx(r.context)}</span>` : ''}
+          <span style="color:var(--text-muted)">${esc(r.why||'')}</span>
+        </div>
+      </div>
+      <button class="model-action-btn primary" onclick='startDownloadFromPanel(${JSON.stringify(r)})'>Get</button>`;
+    body.appendChild(card);
+  }
+}
+
+function inferCategory(r) {
+  const s = ((r.use_case||'')+(r.name||'')+(r.repo_id||'')).toLowerCase();
+  if (s.includes('code')||s.includes('coder')) return 'code';
+  if (s.includes('vision')||s.includes('-vl')||s.includes('llava')) return 'vision';
+  if (s.includes('reason')||s.includes('think')||s.includes('-r1')) return 'reasoning';
+  return 'general';
+}
+
+async function loadModelFromPanel(name) {
+  try {
+    await fetch('/api/models/load', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})});
+    await renderDownloaded();
+    // refresh model dropdown
+    const sel = document.getElementById('model-select');
+    sel.value = name;
+  } catch(e) {}
+}
+async function ejectModel() {
+  try {
+    await fetch('/api/models/unload', {method:'POST'});
+    await renderDownloaded();
+  } catch(e) {}
+}
+async function deleteModelFromPanel(name, btn) {
+  if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+  btn.disabled = true; btn.textContent = 'Deleting…';
+  try {
+    await fetch(`/api/models/${encodeURIComponent(name)}`, {method:'DELETE'});
+    await renderDownloaded();
+  } catch(e) { btn.disabled = false; btn.textContent = 'Delete'; }
+}
+
+async function startDownloadFromPanel(rec) {
+  const bar   = document.getElementById('models-download-bar');
+  const label = document.getElementById('models-download-label');
+  const fill  = document.getElementById('models-download-fill');
+  bar.classList.add('visible');
+  label.textContent = `Downloading ${rec.name}…`;
+  fill.style.width = '0%';
+
+  let dlId;
+  try {
+    const res = await fetch('/api/models/download', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({repo_id: rec.repo_id, filename: rec.filename || null, format: rec.format})
+    });
+    const data = await res.json();
+    dlId = data.download_id;
+  } catch(e) {
+    label.textContent = 'Download failed.';
+    return;
+  }
+
+  if (_dlPollId) clearInterval(_dlPollId);
+  _dlPollId = setInterval(async () => {
+    try {
+      const resp = await fetch(`/api/models/download/${dlId}/progress`);
+      if (resp.headers.get('content-type')?.includes('text/event-stream')) {
+        // SSE — read one chunk
+        const reader = resp.body.getReader();
+        const { value } = await reader.read();
+        reader.cancel();
+        const text = new TextDecoder().decode(value);
+        const line = text.split('\n').find(l => l.startsWith('data:'));
+        if (line) {
+          const prog = JSON.parse(line.slice(5));
+          updateDownloadBar(prog, rec.name, bar, label, fill);
+        }
+      } else {
+        const prog = await resp.json();
+        updateDownloadBar(prog, rec.name, bar, label, fill);
+      }
+    } catch(e) {}
+  }, 1500);
+}
+
+function updateDownloadBar(prog, name, bar, label, fill) {
+  if (prog.done) {
+    clearInterval(_dlPollId); _dlPollId = null;
+    label.textContent = `✓ Downloaded ${name}`;
+    fill.style.width = '100%';
+    setTimeout(() => { bar.classList.remove('visible'); fill.style.width='0%'; }, 3000);
+    _allRecs = []; // force refresh next open
+    if (_modelsTab === 'downloaded') renderDownloaded();
+  } else if (prog.error) {
+    clearInterval(_dlPollId); _dlPollId = null;
+    label.textContent = `Error: ${prog.error}`;
+  } else {
+    const pct = prog.percent >= 0 ? prog.percent : null;
+    const spd = prog.speed_mbps > 0 ? ` · ${prog.speed_mbps.toFixed(1)} MB/s` : '';
+    const eta = prog.eta_s > 0 ? ` · ETA ${fmtEta(prog.eta_s)}` : '';
+    label.textContent = `Downloading ${name}${pct !== null ? ` ${pct.toFixed(1)}%` : ''}${spd}${eta}`;
+    fill.style.width = pct !== null ? `${pct}%` : '40%';
+  }
+}
+
+function fmtGB(gb) {
+  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(gb*1024).toFixed(0)} MB`;
+}
+function formatCtx(n) {
+  return n >= 1024 ? `${Math.round(n/1024)}K ctx` : `${n} ctx`;
+}
+function fmtEta(s) {
+  s = Math.round(s);
+  return s < 60 ? `${s}s` : `${Math.floor(s/60)}m ${s%60}s`;
 }
 
 async function openMemPanel() {
