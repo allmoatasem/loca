@@ -701,33 +701,36 @@ async def _fetch_hf_actual_sizes(recs: list) -> dict[str, float]:
     """
     import httpx
 
+    sem = asyncio.Semaphore(10)  # max 10 concurrent HF requests to avoid rate limiting
+
     async def _get_size(client: httpx.AsyncClient, rec) -> tuple[str, float | None]:
-        try:
-            if rec.format == "mlx":
-                r = await client.get(
-                    f"https://huggingface.co/api/models/{rec.repo_id}",
-                    timeout=8,
-                )
-                if r.status_code == 200:
-                    siblings = [
-                        s for s in r.json().get("siblings", [])
-                        if not s["rfilename"].endswith(".gitattributes")
-                    ]
-                    total = sum(s.get("size", 0) for s in siblings)
-                    if total > 0:
-                        return rec.repo_id, total / 1_073_741_824
-            elif rec.filename:
-                r = await client.head(
-                    f"https://huggingface.co/{rec.repo_id}/resolve/main/{rec.filename}",
-                    follow_redirects=True,
-                    timeout=8,
-                )
-                size = int(r.headers.get("content-length", 0))
-                if size > 0:
-                    return rec.repo_id, size / 1_073_741_824
-        except Exception:
-            pass
-        return rec.repo_id, None
+        async with sem:
+            try:
+                if rec.format == "mlx":
+                    r = await client.get(
+                        f"https://huggingface.co/api/models/{rec.repo_id}",
+                        timeout=8,
+                    )
+                    if r.status_code == 200:
+                        siblings = [
+                            s for s in r.json().get("siblings", [])
+                            if not s["rfilename"].endswith(".gitattributes")
+                        ]
+                        total = sum(s.get("size", 0) for s in siblings)
+                        if total > 0:
+                            return rec.repo_id, total / 1_073_741_824
+                elif rec.filename:
+                    r = await client.head(
+                        f"https://huggingface.co/{rec.repo_id}/resolve/main/{rec.filename}",
+                        follow_redirects=True,
+                        timeout=8,
+                    )
+                    size = int(r.headers.get("content-length", 0))
+                    if size > 0:
+                        return rec.repo_id, size / 1_073_741_824
+            except Exception:
+                pass
+            return rec.repo_id, None
 
     async with httpx.AsyncClient() as client:
         results = await asyncio.gather(*[_get_size(client, r) for r in recs])

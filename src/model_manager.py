@@ -270,19 +270,23 @@ class ModelManager:
                 model_dir_name = repo_id.split("/")[-1]
                 dest = target_dir / model_dir_name
 
-                # Get file list + sizes from HF API
+                # Get file list + sizes from HF API (retry once on failure)
                 import httpx
                 siblings: list[dict] = []
-                try:
-                    async with httpx.AsyncClient(timeout=10) as client:
-                        r = await client.get(f"https://huggingface.co/api/models/{repo_id}")
-                        if r.status_code == 200:
-                            siblings = [
-                                s for s in r.json().get("siblings", [])
-                                if not s["rfilename"].endswith(".gitattributes")
-                            ]
-                except Exception as e:
-                    logger.warning(f"HF API unavailable: {e}")
+                for attempt in range(2):
+                    try:
+                        async with httpx.AsyncClient(timeout=15) as client:
+                            r = await client.get(f"https://huggingface.co/api/models/{repo_id}")
+                            if r.status_code == 200:
+                                siblings = [
+                                    s for s in r.json().get("siblings", [])
+                                    if not s["rfilename"].endswith(".gitattributes")
+                                ]
+                                break
+                    except Exception as e:
+                        logger.warning(f"HF API attempt {attempt + 1} failed: {e}")
+                        if attempt == 0:
+                            await asyncio.sleep(2)
 
                 if not siblings:
                     yield DownloadProgress(0, error="Could not fetch file list from Hugging Face API")
