@@ -650,7 +650,8 @@ async def _build_recs_cache(force: bool = False) -> None:
             loop = asyncio.get_event_loop()
             profile = await loop.run_in_executor(None, get_hardware_profile)
             recs    = await loop.run_in_executor(None, get_recommendations, profile)
-            actual_sizes = await _fetch_hf_actual_sizes(recs)
+            # Skip HF API size-fetching here — those requests burn rate-limit budget
+            # that downloads need. llmfit's own estimates are used instead.
             _recs_cache = {
                 "total_ram_gb": profile.total_ram_gb,
                 "has_apple_silicon": profile.has_apple_silicon,
@@ -661,7 +662,7 @@ async def _build_recs_cache(force: bool = False) -> None:
                         "repo_id": r.repo_id,
                         "filename": r.filename,
                         "format": r.format,
-                        "size_gb": actual_sizes.get(r.repo_id, r.size_gb),
+                        "size_gb": r.size_gb,
                         "quant": r.quant,
                         "context": r.context,
                         "why": r.why,
