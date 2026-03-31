@@ -13,6 +13,35 @@ _DEFAULT_TIMEOUT = 30
 _DEFAULT_ALLOWED = {"ls", "cat", "grep", "find", "wc", "head", "tail", "git", "python3", "pwd"}
 _MAX_OUTPUT_CHARS = 8000
 
+# Shell operators that enable command chaining/injection.
+# Checked against raw tokens (after shlex parsing) so quoted content is safe.
+_SHELL_OPERATORS = {";", "|", "&&", "||", "&"}
+# Characters that trigger shell expansion — dangerous even mid-token.
+_SHELL_EXPANSION_CHARS = set("$`")
+
+
+def _validate_command(command: str, tokens: list[str], allowed_commands: set[str]) -> str | None:
+    """Validate command safety. Returns error string if invalid, None if OK."""
+    base_cmd = tokens[0]
+    # Strip path prefixes (e.g. /usr/bin/ls → ls)
+    base_name = base_cmd.split("/")[-1]
+
+    if base_name not in allowed_commands:
+        return f"Command '{base_name}' is not in the allowed list: {sorted(allowed_commands)}"
+
+    # Reject shell operators (chaining) — checked as whole tokens
+    for tok in tokens[1:]:
+        if tok in _SHELL_OPERATORS:
+            return f"Shell operator '{tok}' is not allowed for security reasons"
+
+    # Reject expansion characters anywhere in the raw command.
+    # These are dangerous even inside arguments (e.g. $(cmd), `cmd`).
+    for ch in _SHELL_EXPANSION_CHARS:
+        if ch in command:
+            return f"Shell expansion character '{ch}' is not allowed for security reasons"
+
+    return None
+
 
 async def shell_exec(
     command: str,
@@ -22,7 +51,8 @@ async def shell_exec(
     """
     Run a shell command and return its output.
 
-    Only the base command (first token) is checked against the allowlist.
+    Validates the base command against the allowlist and rejects shell
+    metacharacters to prevent command injection.
 
     Returns:
         {"command": str, "stdout": str, "stderr": str, "returncode": int, "error": str | None}
@@ -38,22 +68,13 @@ async def shell_exec(
     if not tokens:
         return {"command": command, "stdout": "", "stderr": "", "returncode": -1, "error": "Empty command"}
 
-    base_cmd = tokens[0]
-    # Strip path prefixes (e.g. /usr/bin/ls → ls)
-    base_name = base_cmd.split("/")[-1]
-
-    if base_name not in allowed_commands:
-        return {
-            "command": command,
-            "stdout": "",
-            "stderr": "",
-            "returncode": -1,
-            "error": f"Command '{base_name}' is not in the allowed list: {sorted(allowed_commands)}",
-        }
+    error = _validate_command(command, tokens, allowed_commands)
+    if error:
+        return {"command": command, "stdout": "", "stderr": "", "returncode": -1, "error": error}
 
     try:
-        proc = await asyncio.create_subprocess_shell(
-            command,
+        proc = await asyncio.create_subprocess_exec(
+            *tokens,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

@@ -30,7 +30,7 @@ def test_file_read_existing_file():
         result = file_read(path)
         assert result["error"] is None
         assert "hello world" in result["content"]
-        assert result["path"] == path
+        assert result["path"] == os.path.realpath(path)
     finally:
         os.unlink(path)
 

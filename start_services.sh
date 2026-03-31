@@ -26,8 +26,22 @@ export LOCA_DATA_DIR="$LOCA_SUPPORT/data"
 
 mkdir -p "$LOCA_SUPPORT"
 
+# Runtime files in user-owned directory (avoids world-readable /tmp symlink attacks)
+LOCA_RUN="$LOCA_SUPPORT/run"
+mkdir -p "$LOCA_RUN"
+chmod 700 "$LOCA_RUN"
+
+STATUS_FILE="$LOCA_RUN/startup-status.json"
+PROXY_PID="$LOCA_RUN/proxy.pid"
+PROXY_LOG="$LOCA_RUN/proxy.log"
+SEARXNG_PID="$LOCA_RUN/searxng.pid"
+SEARXNG_LOG="$LOCA_RUN/searxng.log"
+
+# Symlink for backward compat with the Swift UI that reads /tmp/loca-startup-status.json
+ln -sf "$STATUS_FILE" /tmp/loca-startup-status.json
+
 # Reset status file so the app never reads a stale "Ready" from a previous run
-printf '{"stage":"Initialising\u2026","progress":0}\n' > /tmp/loca-startup-status.json
+printf '{"stage":"Initialising\u2026","progress":0}\n' > "$STATUS_FILE"
 
 notify() {
     osascript -e "display notification \"$1\" with title \"Loca\" sound name \"Funk\""
@@ -36,14 +50,15 @@ notify() {
 status() {
     local msg="$1"
     local progress="${2:-0}"
-    printf '{"stage":"%s","progress":%d}\n' "$msg" "$progress" > /tmp/loca-startup-status.json
+    printf '{"stage":"%s","progress":%d}\n' "$msg" "$progress" > "$STATUS_FILE"
     notify "$msg"
 }
 
 shutdown() {
     notify "Shutting down Loca..."
-    [ -f /tmp/loca-searxng.pid ] && kill "$(cat /tmp/loca-searxng.pid)" 2>/dev/null || true
-    [ -f /tmp/loca-proxy.pid ]   && kill "$(cat /tmp/loca-proxy.pid)"   2>/dev/null || true
+    [ -f "$SEARXNG_PID" ] && kill "$(cat "$SEARXNG_PID")" 2>/dev/null || true
+    [ -f "$PROXY_PID" ]   && kill "$(cat "$PROXY_PID")"   2>/dev/null || true
+    rm -f "$PROXY_PID" "$SEARXNG_PID" /tmp/loca-startup-status.json
     exit 0
 }
 
@@ -111,13 +126,13 @@ lsof -ti tcp:8000 -sTCP:LISTEN | xargs kill -9 2>/dev/null || true
 cd "$DIR"
 LOCA_DATA_DIR="$LOCA_DATA_DIR" \
 "$VENV/bin/python" -m uvicorn src.proxy:app --host 0.0.0.0 --port 8000 \
-    > /tmp/loca-proxy.log 2>&1 &
-echo $! > /tmp/loca-proxy.pid
+    > "$PROXY_LOG" 2>&1 &
+echo $! > "$PROXY_PID"
 
 for i in $(seq 1 30); do
     sleep 1
     curl -s http://localhost:8000/health > /dev/null 2>&1 && break
-    [ "$i" -eq 30 ] && bail "Proxy didn't start. Check /tmp/loca-proxy.log"
+    [ "$i" -eq 30 ] && bail "Proxy didn't start. Check $PROXY_LOG"
 done
 
 # ── 5. Start SearXNG ─────────────────────────────────────────────────────────
@@ -127,14 +142,14 @@ if [ -n "$PYTHON312" ] && [ -d "$VENV_SEARXNG" ] && [ -d "$SEARXNG_SRC" ]; then
     cd "$SEARXNG_SRC"
     SEARXNG_SETTINGS_PATH="$DIR/searxng-settings.yml" \
     "$VENV_SEARXNG/bin/python" searx/webapp.py \
-        > /tmp/loca-searxng.log 2>&1 &
-    echo $! > /tmp/loca-searxng.pid
+        > "$SEARXNG_LOG" 2>&1 &
+    echo $! > "$SEARXNG_PID"
     cd "$DIR"
 
     for i in $(seq 1 30); do
         sleep 2
         curl -s http://127.0.0.1:8888/ > /dev/null 2>&1 && break
-        [ "$i" -eq 30 ] && bail "SearXNG didn't start. Check /tmp/loca-searxng.log"
+        [ "$i" -eq 30 ] && bail "SearXNG didn't start. Check $SEARXNG_LOG"
     done
 fi
 
@@ -147,21 +162,21 @@ trap shutdown INT TERM EXIT
 while true; do
     sleep 15
 
-    if ! kill -0 "$(cat /tmp/loca-proxy.pid 2>/dev/null)" 2>/dev/null; then
+    if ! kill -0 "$(cat "$PROXY_PID" 2>/dev/null)" 2>/dev/null; then
         cd "$DIR"
         LOCA_DATA_DIR="$LOCA_DATA_DIR" \
         "$VENV/bin/python" -m uvicorn src.proxy:app --host 0.0.0.0 --port 8000 \
-            >> /tmp/loca-proxy.log 2>&1 &
-        echo $! > /tmp/loca-proxy.pid
+            >> "$PROXY_LOG" 2>&1 &
+        echo $! > "$PROXY_PID"
     fi
 
     if [ -n "$PYTHON312" ] && [ -d "$VENV_SEARXNG" ] && [ -d "$SEARXNG_SRC" ]; then
-        if ! kill -0 "$(cat /tmp/loca-searxng.pid 2>/dev/null)" 2>/dev/null; then
+        if ! kill -0 "$(cat "$SEARXNG_PID" 2>/dev/null)" 2>/dev/null; then
             cd "$SEARXNG_SRC"
             SEARXNG_SETTINGS_PATH="$DIR/searxng-settings.yml" \
             "$VENV_SEARXNG/bin/python" searx/webapp.py \
-                >> /tmp/loca-searxng.log 2>&1 &
-            echo $! > /tmp/loca-searxng.pid
+                >> "$SEARXNG_LOG" 2>&1 &
+            echo $! > "$SEARXNG_PID"
             cd "$DIR"
         fi
     fi
