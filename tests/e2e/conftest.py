@@ -4,6 +4,8 @@ Playwright end-to-end test fixtures.
 Starts the real FastAPI app on a background thread with all external
 side-effects mocked (no inference backend, no disk I/O, no network).
 Provides a Playwright `page` fixture pointed at the running server.
+
+Supports pytest-xdist: each worker gets its own port via worker_id.
 """
 
 import os
@@ -18,8 +20,7 @@ from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-E2E_PORT = 18923  # unlikely to collide
-E2E_BASE = f"http://localhost:{E2E_PORT}"
+_BASE_PORT = 18923
 
 # ── Minimal config identical to test_proxy.py ────────────────────────────────
 
@@ -57,11 +58,22 @@ def _make_mocks():
     return mock_backend, mock_mm, mock_orch
 
 
-# ── Session-scoped: one server for all e2e tests ────────────────────────────
+def _worker_port(worker_id):
+    """Derive a unique port per xdist worker (or use base port if not parallel)."""
+    if worker_id == "master" or not worker_id:
+        return _BASE_PORT
+    # worker_id is "gw0", "gw1", etc.
+    return _BASE_PORT + int(worker_id.replace("gw", "")) + 1
+
+
+# ── Session-scoped: one server per worker ────────────────────────────────────
 
 @pytest.fixture(scope="session")
-def _server():
+def _server(worker_id):
     """Start FastAPI on a background thread; tear down after all tests."""
+    port = _worker_port(worker_id)
+    base = f"http://localhost:{port}"
+
     mock_backend, mock_mm, mock_orch = _make_mocks()
 
     with patch("src.proxy._load_config", return_value=_MINIMAL_CONFIG), \
@@ -74,7 +86,7 @@ def _server():
         from src.proxy import app
 
         config = uvicorn.Config(
-            app, host="127.0.0.1", port=E2E_PORT, log_level="warning"
+            app, host="127.0.0.1", port=port, log_level="warning"
         )
         server = uvicorn.Server(config)
         thread = threading.Thread(target=server.run, daemon=True)
@@ -84,21 +96,16 @@ def _server():
         import httpx
         for _ in range(50):
             try:
-                r = httpx.get(f"{E2E_BASE}/health", timeout=1)
+                r = httpx.get(f"{base}/health", timeout=1)
                 if r.status_code == 200:
                     break
             except Exception:
                 pass
             time.sleep(0.1)
         else:
-            raise RuntimeError("E2E server did not start in time")
+            raise RuntimeError(f"E2E server did not start on port {port}")
 
-        yield {
-            "base_url": E2E_BASE,
-            "mock_backend": mock_backend,
-            "mock_mm": mock_mm,
-            "mock_orch": mock_orch,
-        }
+        yield {"base_url": base}
 
         server.should_exit = True
         thread.join(timeout=5)

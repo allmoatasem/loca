@@ -69,7 +69,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           pip install -r requirements.txt
-          pip install pytest pytest-playwright
+          pip install pytest pytest-playwright pytest-xdist
 
       - name: Cache Playwright browsers
         id: pw-cache
@@ -88,7 +88,7 @@ jobs:
 
       - name: Run Playwright tests
         run: |
-          pytest tests/e2e/ -v
+          pytest tests/e2e/ -v -n auto
 
   swift-build:
     name: Swift build (macOS)
