@@ -80,6 +80,7 @@ struct SidebarView: View {
             Toggle("Deep Research", isOn: $state.researchMode)
                 .controlSize(.mini)
                 .toggleStyle(.switch)
+                .disabled(state.lockdownMode)
                 .help("Deep Research uses a headless browser (Playwright) to fully render pages and extract content, instead of reading raw HTML. Much more accurate for dynamic sites. Slower.")
         }
         .padding(12)

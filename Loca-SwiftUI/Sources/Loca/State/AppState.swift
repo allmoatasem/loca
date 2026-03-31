@@ -70,6 +70,7 @@ final class AppState: ObservableObject {
     // MARK: - Research mode
 
     @Published var researchMode = false
+    @Published var lockdownMode = false
 
     // MARK: - System stats
 
