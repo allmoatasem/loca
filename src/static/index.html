@@ -373,6 +373,17 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 #lockdown-btn.lockdown-active { color: #e74c3c; }
 #lockdown-btn.lockdown-active:hover { background: rgba(231,76,60,.12); color: #c0392b; }
 #research-btn:disabled { opacity: .35; cursor: not-allowed; }
+#ack-link-row {
+  padding: 6px 0 8px;
+  text-align: center;
+}
+#ack-link-btn {
+  background: none; border: none; cursor: pointer;
+  font-size: 11px; color: var(--text-muted);
+  padding: 2px 6px; border-radius: 4px;
+  transition: color .15s;
+}
+#ack-link-btn:hover { color: var(--text-dim); }
 
 #mem-trigger {
   display: flex;
@@ -1249,9 +1260,6 @@ code[class*="language-"] {
         <button class="sidebar-action-btn" id="lockdown-btn" onclick="toggleLockdown()" title="Lockdown mode: disable SearXNG / Playwright" data-tip="Lockdown mode — disables all network tools&#10;(SearXNG search and Playwright browser).&#10;No data leaves the local machine.">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
         </button>
-        <button class="sidebar-action-btn" onclick="openAckPanel()" title="Acknowledgments" data-tip="Open source libraries and projects&#10;that Loca is built on.">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
-        </button>
       </div>
       <div id="sidebar-stats">
         <div class="stat-row">
@@ -1266,6 +1274,9 @@ code[class*="language-"] {
           <span>RAM used</span>
           <span class="stat-val" id="stat-ram">—</span>
         </div>
+      </div>
+      <div id="ack-link-row">
+        <button id="ack-link-btn" onclick="openAckPanel()">♥ Acknowledgements</button>
       </div>
     </div>
   </div>
