@@ -263,6 +263,21 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   padding: 0 0 0 2px; flex-shrink: 0;
 }
 .attach-chip .rm-attach:hover { color: #c0392b; }
+.attach-chip--warn {
+  border-color: #e67e22;
+  background: rgba(230,126,34,.08);
+}
+.attach-chip--warn::after {
+  content: ' ⚠️';
+  font-size: 11px;
+}
+#attach-warn {
+  display: none;
+  padding: 4px 16px 6px;
+  font-size: 11px;
+  color: #e67e22;
+}
+#attach-warn.visible { display: block; }
 
 /* ── Conversations list ──────────────────────────────────────────────────── */
 #conv-section {
@@ -355,6 +370,9 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   flex: 1; justify-content: center;
 }
 .sidebar-action-btn:hover { background: var(--border-light); color: var(--text); }
+#lockdown-btn.lockdown-active { color: #e74c3c; }
+#lockdown-btn.lockdown-active:hover { background: rgba(231,76,60,.12); color: #c0392b; }
+#research-btn:disabled { opacity: .35; cursor: not-allowed; }
 
 #mem-trigger {
   display: flex;
@@ -1092,7 +1110,7 @@ code[class*="language-"] {
 
     <div id="model-section" style="border-top:none;padding-top:0">
       <label>Model</label>
-      <select id="model-select" class="model-select">
+      <select id="model-select" class="model-select" onchange="_refreshAttachWarnings()">
         <option value="">Loading…</option>
       </select>
     </div>
@@ -1130,6 +1148,9 @@ code[class*="language-"] {
         <button class="sidebar-action-btn" onclick="openModelsPanel()" title="Manage Models" data-tip="Download and manage local models.">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01M6 18h.01"/></svg>
         </button>
+        <button class="sidebar-action-btn" id="lockdown-btn" onclick="toggleLockdown()" title="Lockdown mode: disable SearXNG / Playwright" data-tip="Lockdown mode — disables all network tools&#10;(SearXNG search and Playwright browser).&#10;No data leaves the local machine.">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        </button>
       </div>
       <div id="sidebar-stats">
         <div class="stat-row">
@@ -1161,6 +1182,7 @@ code[class*="language-"] {
     <div id="input-area">
       <div id="input-box">
         <div id="attach-strip"></div>
+        <div id="attach-warn">⚠️ Current model does not support images — switch to a vision model or remove image attachments.</div>
         <div id="input" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Message input" spellcheck="true"></div>
         <div id="fmt-bar">
           <button class="fmt-btn" onmousedown="event.preventDefault()" onclick="fmt('bold')"      title="Bold (⌘B)"><b>B</b></button>
@@ -1272,6 +1294,7 @@ let streaming      = false;
 let currentConvId  = null;
 let currentModel   = null;
 let researchMode   = false;
+let lockdownMode   = localStorage.getItem('loca-lockdown') === '1';
 
 const MODE_DESCS = {
   general: 'Vision · chat · code · writing · analysis',
@@ -1302,12 +1325,46 @@ function toggleTheme() {
 
 // ── Research mode ─────────────────────────────────────────────────────────────
 function toggleResearch() {
+  if (lockdownMode) return;
   researchMode = !researchMode;
   const btn = document.getElementById('research-btn');
   btn.classList.toggle('active', researchMode);
   btn.title = researchMode
     ? 'Research mode ON — SearXNG + Playwright browser (click to disable)'
     : 'Research mode: uses Playwright browser + SearXNG for deeper search';
+}
+
+// ── Lockdown mode ─────────────────────────────────────────────────────────────
+function toggleLockdown() {
+  lockdownMode = !lockdownMode;
+  localStorage.setItem('loca-lockdown', lockdownMode ? '1' : '0');
+  _applyLockdown();
+}
+
+function _applyLockdown() {
+  const lockBtn = document.getElementById('lockdown-btn');
+  const resBtn  = document.getElementById('research-btn');
+  lockBtn.classList.toggle('lockdown-active', lockdownMode);
+  lockBtn.title = lockdownMode
+    ? 'Lockdown ON — network tools disabled (click to disable)'
+    : 'Lockdown mode: disable SearXNG / Playwright';
+  resBtn.disabled = lockdownMode;
+  if (lockdownMode && researchMode) {
+    researchMode = false;
+    resBtn.classList.remove('active');
+  }
+}
+
+// ── Image attachment warnings ─────────────────────────────────────────────────
+function _refreshAttachWarnings() {
+  const hasImages = attachments.some(a => a && a.type === 'image');
+  const model = document.getElementById('model-select').value || currentMode;
+  const warn = document.getElementById('attach-warn');
+  const show = hasImages && !_isVisionModel(model);
+  warn.classList.toggle('visible', show);
+  document.querySelectorAll('.attach-chip[data-type="image"]').forEach(el => {
+    el.classList.toggle('attach-chip--warn', show);
+  });
 }
 
 function setThemeIcon(dark) {
@@ -1327,6 +1384,7 @@ function selectMode(btn) {
   btn.classList.add('active');
   currentMode = btn.dataset.mode;
   document.getElementById('model-desc').textContent = MODE_DESCS[currentMode] || '';
+  _refreshAttachWarnings();
 }
 
 // ── Model picker ──────────────────────────────────────────────────────────────
@@ -1351,6 +1409,7 @@ async function refreshModelPicker() {
   }
 }
 refreshModelPicker();
+_applyLockdown();
 
 // initialise mode description
 document.getElementById('model-desc').textContent = MODE_DESCS['general'];
@@ -1550,12 +1609,14 @@ async function handleFiles(fileList) {
   }
   strip.classList.add('has-files');
   document.getElementById('file-input').value = '';
+  _refreshAttachWarnings();
 }
 
 function renderAttachChip(strip, info, idx) {
   const chip = document.createElement('div');
   chip.className = 'attach-chip';
   chip.dataset.idx = idx;
+  chip.dataset.type = info.type;
   let thumb = '';
   if (info.type === 'image') thumb = `<img src="${info.data}" alt="">`;
   else if (info.type === 'audio') thumb = '🎵';
@@ -1570,6 +1631,7 @@ function removeAttach(idx) {
   const strip = document.getElementById('attach-strip');
   strip.querySelectorAll(`.attach-chip[data-idx="${idx}"]`).forEach(el => el.remove());
   if (!attachments.some(a => a !== null)) strip.classList.remove('has-files');
+  _refreshAttachWarnings();
 }
 
 function buildUserContent(text) {
@@ -1663,7 +1725,7 @@ async function sendMessage() {
     const resp = await fetch('/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode, model_override: modelOverride, messages: history, stream: true, num_ctx: numCtx, research_mode: researchMode })
+      body: JSON.stringify({ mode, model_override: modelOverride, messages: history, stream: true, num_ctx: numCtx, research_mode: researchMode && !lockdownMode })
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
