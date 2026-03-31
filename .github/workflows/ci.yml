@@ -5,6 +5,10 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     name: Lint (ruff + mypy)
@@ -47,13 +51,49 @@ jobs:
             --cov-report=xml \
             --cov-report=term-missing \
             -v \
-            --ignore=tests/test_tools.py  # network tests skipped in CI
+            --ignore=tests/test_tools.py \
+            --ignore=tests/e2e  # e2e tests run in separate job
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:
           file: coverage.xml
           fail_ci_if_error: false
+
+  e2e:
+    name: E2E tests (Playwright)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-playwright pytest-xdist
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('requirements.txt') }}
+
+      - name: Install Playwright browsers
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: playwright install --with-deps chromium
+
+      - name: Install Playwright system deps
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: playwright install-deps chromium
+
+      - name: Run Playwright tests
+        run: |
+          pytest tests/e2e/ -v -n auto
 
   swift-build:
     name: Swift build (macOS)
