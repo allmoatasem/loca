@@ -4,6 +4,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
+    @Environment(\.openSettings) private var openSettings
 
     enum Tab: String, CaseIterable {
         case downloaded = "Downloaded"
@@ -32,6 +33,16 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 220)
                 Spacer()
+                Button {
+                    state.isSettingsOpen = false
+                    openSettings()
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 13))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Open Preferences (⌘,)")
                 Button("Done") { state.isSettingsOpen = false }
                     .keyboardShortcut(.return)
             }

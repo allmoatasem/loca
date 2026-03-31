@@ -52,13 +52,6 @@ class Orchestrator:
     # Public entrypoint
     # ------------------------------------------------------------------
 
-    @overload
-    async def handle(self, messages: list[dict], *, has_image: bool = ..., stream: Literal[True], model_hint: str | None = ..., model_override: str | None = ..., num_ctx: int | None = ..., research_mode: bool = ...) -> AsyncIterator[str | dict]: ...
-    @overload
-    async def handle(self, messages: list[dict], *, has_image: bool = ..., stream: Literal[False], model_hint: str | None = ..., model_override: str | None = ..., num_ctx: int | None = ..., research_mode: bool = ...) -> dict: ...
-    @overload
-    async def handle(self, messages: list[dict], *, has_image: bool = ..., stream: bool = ..., model_hint: str | None = ..., model_override: str | None = ..., num_ctx: int | None = ..., research_mode: bool = ...) -> dict | AsyncIterator[str | dict]: ...
-
     async def handle(
         self,
         messages: list[dict],
@@ -68,6 +61,12 @@ class Orchestrator:
         model_override: str | None = None,
         num_ctx: int | None = None,
         research_mode: bool = False,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        repeat_penalty: float | None = None,
+        max_tokens: int | None = None,
+        system_prompt_override: str | None = None,
     ) -> dict | AsyncIterator[str | dict]:
         user_message = _last_user_content(messages)
         result: RouteResult = route(user_message, has_image=has_image, model_hint=model_hint)
@@ -77,7 +76,10 @@ class Orchestrator:
         )
 
         model_name, api_base = await self.mm.ensure_loaded(result.model, model_name_override=model_override)
-        system_prompt = _build_system_prompt(result.model, model_name, self._hw)
+        if system_prompt_override:
+            system_prompt = system_prompt_override
+        else:
+            system_prompt = _build_system_prompt(result.model, model_name, self._hw)
         mem_ctx = get_memories_context()
         if mem_ctx:
             system_prompt = f"{system_prompt}\n\n{mem_ctx}"
@@ -90,14 +92,21 @@ class Orchestrator:
 
         full_messages = _prepend_system(augmented_messages, system_prompt)
 
+        inf_kwargs = dict(
+            temperature=temperature, top_p=top_p, top_k=top_k,
+            repeat_penalty=repeat_penalty, max_tokens=max_tokens,
+        )
+
         if stream:
             return self._stream_with_tools(
                 model_name, api_base, full_messages, result,
                 num_ctx=num_ctx, research_mode=research_mode,
-                memory_injected=bool(mem_ctx),
+                memory_injected=bool(mem_ctx), **inf_kwargs,
             )
 
-        return await self._call_with_tools(model_name, api_base, full_messages, result, num_ctx=num_ctx)
+        return await self._call_with_tools(
+            model_name, api_base, full_messages, result, num_ctx=num_ctx, **inf_kwargs,
+        )
 
     # ------------------------------------------------------------------
     # Internal: model calls + tool loop
@@ -110,12 +119,21 @@ class Orchestrator:
         messages: list[dict],
         route_result: RouteResult,
         num_ctx: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        repeat_penalty: float | None = None,
+        max_tokens: int | None = None,
     ) -> dict:
         """Call model, handle tool calls, return final response."""
         tool_call_count = 0
+        inf_kwargs = dict(
+            temperature=temperature, top_p=top_p, top_k=top_k,
+            repeat_penalty=repeat_penalty, max_tokens=max_tokens,
+        )
 
         while tool_call_count <= self._max_tool_calls:
-            response = await self._chat(model_name, api_base, messages, stream=False, num_ctx=num_ctx)
+            response = await self._chat(model_name, api_base, messages, stream=False, num_ctx=num_ctx, **inf_kwargs)
             assistant_text: str = _extract_content(response)
 
             tool_call = _extract_tool_call(assistant_text)
@@ -134,7 +152,7 @@ class Orchestrator:
             ]
             tool_call_count += 1
 
-        return await self._chat(model_name, api_base, messages, stream=False, num_ctx=num_ctx)
+        return await self._chat(model_name, api_base, messages, stream=False, num_ctx=num_ctx, **inf_kwargs)
 
     async def _stream_with_tools(
         self,
@@ -145,10 +163,19 @@ class Orchestrator:
         num_ctx: int | None = None,
         research_mode: bool = False,
         memory_injected: bool = False,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        repeat_penalty: float | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[str | dict[str, Any]]:
         """Streaming: collects full response (for tool-call simplicity), yields in chunks.
         Yields a metadata dict first so the proxy can forward the actual model name."""
-        response = await self._call_with_tools(model_name, api_base, messages, route_result, num_ctx=num_ctx)
+        response = await self._call_with_tools(
+            model_name, api_base, messages, route_result, num_ctx=num_ctx,
+            temperature=temperature, top_p=top_p, top_k=top_k,
+            repeat_penalty=repeat_penalty, max_tokens=max_tokens,
+        )
         actual_model = response.get("model", model_name)
         yield {
             "__model__": actual_model,
@@ -167,12 +194,27 @@ class Orchestrator:
         messages: list[dict],
         stream: bool = False,
         num_ctx: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        repeat_penalty: float | None = None,
+        max_tokens: int | None = None,
     ) -> dict:
         """Call an OpenAI-compatible /v1/chat/completions endpoint with retry on 400/503."""
         base = api_base.rstrip("/")
         payload: dict = {"model": model, "messages": messages, "stream": stream}
         if num_ctx:
             payload["num_ctx"] = num_ctx
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if top_p is not None:
+            payload["top_p"] = top_p
+        if top_k is not None:
+            payload["top_k"] = top_k
+        if repeat_penalty is not None:
+            payload["repeat_penalty"] = repeat_penalty
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
         last_exc: Exception | None = None
 
         for attempt in range(3):

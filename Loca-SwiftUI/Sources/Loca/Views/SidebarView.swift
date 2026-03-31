@@ -418,15 +418,15 @@ struct SidebarFooter: View {
             }
             Spacer()
             Button {
-                state.isDarkMode.toggle()
+                state.themeMode = state.themeMode == .dark ? .light : .dark
             } label: {
-                Image(systemName: state.isDarkMode ? "sun.max" : "moon")
+                Image(systemName: state.themeMode == .dark ? "sun.max" : "moon")
                     .font(.system(size: 16))
                     .foregroundColor(.secondary)
                     .frame(width: 28, height: 28)
             }
             .buttonStyle(.plain)
-            .nativeTooltip("Toggle dark/light theme. Preference is saved locally.")
+            .nativeTooltip("Toggle dark/light theme. Use Preferences (⌘,) to follow the system theme.")
 
             Button { state.isMemoryPanelOpen.toggle() } label: {
                 Image(systemName: "brain")

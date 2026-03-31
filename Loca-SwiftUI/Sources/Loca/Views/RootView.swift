@@ -5,6 +5,14 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject var state: AppState
 
+    private func applyTheme(_ mode: ThemeMode) {
+        switch mode {
+        case .system: NSApp.appearance = nil
+        case .light:  NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark:   NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
+    }
+
     var body: some View {
         Group {
             if let err = state.startupError {
@@ -18,11 +26,10 @@ struct RootView: View {
         .frame(minWidth: 900, minHeight: 620)
         .onAppear {
             state.startHealthPolling()
-            NSApp.appearance = NSAppearance(named: state.isDarkMode ? .darkAqua : .aqua)
+            applyTheme(state.themeMode)
         }
-        .onChange(of: state.isDarkMode) {
-            NSApp.appearance = NSAppearance(named: state.isDarkMode ? .darkAqua : .aqua)
-            UserDefaults.standard.set(state.isDarkMode, forKey: "isDarkMode")
+        .onChange(of: state.themeMode) {
+            applyTheme(state.themeMode)
         }
     }
 }

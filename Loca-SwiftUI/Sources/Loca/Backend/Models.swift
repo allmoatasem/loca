@@ -10,6 +10,57 @@ struct ChatRequest: Encodable {
     let stream: Bool
     let num_ctx: Int
     let research_mode: Bool
+    // Inference preferences
+    let temperature: Double?
+    let top_p: Double?
+    let top_k: Int?
+    let repeat_penalty: Double?
+    let max_tokens: Int?
+    let system_prompt_override: String?
+}
+
+// MARK: - Preferences
+
+enum ThemeMode: String, CaseIterable {
+    case system, light, dark
+
+    var label: String {
+        switch self {
+        case .system: return "System"
+        case .light:  return "Light"
+        case .dark:   return "Dark"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .system: return "circle.lefthalf.filled"
+        case .light:  return "sun.max"
+        case .dark:   return "moon"
+        }
+    }
+}
+
+struct InferenceRecipe: Identifiable, Equatable {
+    let name: String
+    let temperature: Double
+    let topP: Double
+    let topK: Int
+    let repeatPenalty: Double
+    let maxTokens: Int
+    var id: String { name }
+
+    static let all: [InferenceRecipe] = [
+        InferenceRecipe(name: "Balanced",  temperature: 0.70, topP: 0.90, topK: 40, repeatPenalty: 1.10, maxTokens: 2048),
+        InferenceRecipe(name: "Creative",  temperature: 1.00, topP: 0.95, topK: 50, repeatPenalty: 1.00, maxTokens: 2048),
+        InferenceRecipe(name: "Precise",   temperature: 0.20, topP: 0.80, topK: 20, repeatPenalty: 1.15, maxTokens: 2048),
+        InferenceRecipe(name: "Fast",      temperature: 0.70, topP: 0.90, topK: 40, repeatPenalty: 1.10, maxTokens: 512),
+        InferenceRecipe(name: "Custom",    temperature: 0.70, topP: 0.90, topK: 40, repeatPenalty: 1.10, maxTokens: 2048),
+    ]
+
+    static func named(_ name: String) -> InferenceRecipe {
+        all.first { $0.name == name } ?? all[0]
+    }
 }
 
 struct ChatMessage: Codable, Identifiable, Equatable {
