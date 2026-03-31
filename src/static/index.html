@@ -805,6 +805,104 @@ body.dark #input code { color: #e06c75; }
   justify-content: center;
 }
 #models-overlay.open { display: flex; }
+
+/* ── Acknowledgments panel ───────────────────────────────────────────────── */
+#ack-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.4);
+  z-index: 200;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+#ack-overlay.open { display: flex; }
+#ack-panel {
+  width: 560px;
+  max-width: 95vw;
+  max-height: 85vh;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 40px rgba(0,0,0,.25);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#ack-panel-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#ack-panel-hdr h3 { font-size: 14px; font-weight: 600; }
+#ack-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 18px 20px;
+}
+#ack-panel-body::-webkit-scrollbar { width: 4px; }
+#ack-panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.ack-section {
+  margin-bottom: 20px;
+}
+.ack-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.ack-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border-light);
+}
+.ack-item:last-child { border-bottom: none; }
+.ack-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+}
+.ack-author {
+  font-size: 12px;
+  color: var(--text-dim);
+  flex: 1;
+  min-width: 0;
+}
+.ack-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.ack-license {
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+.ack-link {
+  font-size: 11px;
+  color: var(--accent);
+  text-decoration: none;
+}
+.ack-link:hover { text-decoration: underline; }
+#ack-footer {
+  padding: 12px 18px;
+  border-top: 1px solid var(--border-light);
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
 #models-panel {
   width: 720px;
   max-width: 95vw;
@@ -1151,6 +1249,9 @@ code[class*="language-"] {
         <button class="sidebar-action-btn" id="lockdown-btn" onclick="toggleLockdown()" title="Lockdown mode: disable SearXNG / Playwright" data-tip="Lockdown mode — disables all network tools&#10;(SearXNG search and Playwright browser).&#10;No data leaves the local machine.">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
         </button>
+        <button class="sidebar-action-btn" onclick="openAckPanel()" title="Acknowledgments" data-tip="Open source libraries and projects&#10;that Loca is built on.">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+        </button>
       </div>
       <div id="sidebar-stats">
         <div class="stat-row">
@@ -1283,6 +1384,121 @@ code[class*="language-"] {
       ✦ Extract memories from current conversation
     </button>
     <div id="mem-list"></div>
+  </div>
+</div>
+
+<!-- Acknowledgments panel -->
+<div id="ack-overlay" onclick="if(event.target===this)closeAckPanel()">
+  <div id="ack-panel">
+    <div id="ack-panel-hdr">
+      <h3>Acknowledgments</h3>
+      <button class="panel-close" onclick="closeAckPanel()">×</button>
+    </div>
+    <div id="ack-panel-body">
+
+      <div class="ack-section">
+        <div class="ack-section-title">Inference</div>
+        <div class="ack-item">
+          <span class="ack-name">mlx-lm</span>
+          <span class="ack-author">Apple</span>
+          <div class="ack-right"><span class="ack-license">MIT</span><a class="ack-link" href="https://github.com/ml-explore/mlx-lm" target="_blank">GitHub</a></div>
+        </div>
+        <div class="ack-item">
+          <span class="ack-name">llama.cpp</span>
+          <span class="ack-author">Georgi Gerganov</span>
+          <div class="ack-right"><span class="ack-license">MIT</span><a class="ack-link" href="https://github.com/ggml-org/llama.cpp" target="_blank">GitHub</a></div>
+        </div>
+        <div class="ack-item">
+          <span class="ack-name">Ollama</span>
+          <span class="ack-author">Jeffrey Morgan &amp; contributors</span>
+          <div class="ack-right"><span class="ack-license">MIT</span><a class="ack-link" href="https://github.com/ollama/ollama" target="_blank">GitHub</a></div>
+        </div>
+      </div>
+
+      <div class="ack-section">
+        <div class="ack-section-title">Python Backend</div>
+        <div class="ack-item">
+          <span class="ack-name">FastAPI</span>
+          <span class="ack-author">Sebastián Ramírez</span>
+          <div class="ack-right"><span class="ack-license">MIT</span><a class="ack-link" href="https://github.com/fastapi/fastapi" target="_blank">GitHub</a></div>
+        </div>
+        <div class="ack-item">
+          <span class="ack-name">Uvicorn</span>
+          <span class="ack-author">Encode</span>
+          <div class="ack-right"><span class="ack-license">BSD-3</span><a class="ack-link" href="https://github.com/encode/uvicorn" target="_blank">GitHub</a></div>
+        </div>
+        <div class="ack-item">
+          <span class="ack-name">httpx</span>
+          <span class="ack-author">Encode</span>
+          <div class="ack-right"><span class="ack-license">BSD-3</span><a class="ack-link" href="https://github.com/encode/httpx" target="_blank">GitHub</a></div>
+        </div>
+        <div class="ack-item">
+          <span class="ack-name">Pydantic</span>
+          <span class="ack-author">Samuel Colvin &amp; contributors</span>
+          <div class="ack-right"><span class="ack-license">MIT</span><a class="ack-link" href="https://github.com/pydantic/pydantic" target="_blank">GitHub</a></div>
+        </div>
+        <div class="ack-item">
+          <span class="ack-name">trafilatura</span>
+          <span class="ack-author">Adrien Barbaresi</span>
+          <div class="ack-right"><span class="ack-license">Apache 2.0</span><a class="ack-link" href="https://github.com/adbar/trafilatura" target="_blank">GitHub</a></div>
+        </div>
+        <div class="ack-item">
+          <span class="ack-name">pypdf</span>
+          <span class="ack-author">Mathieu Fenniak &amp; contributors</span>
+          <div class="ack-right"><span class="ack-license">BSD-3</span><a class="ack-link" href="https://github.com/py-pdf/pypdf" target="_blank">GitHub</a></div>
+        </div>
+        <div class="ack-item">
+          <span class="ack-name">huggingface_hub</span>
+          <span class="ack-author">Hugging Face</span>
+          <div class="ack-right"><span class="ack-license">Apache 2.0</span><a class="ack-link" href="https://github.com/huggingface/huggingface_hub" target="_blank">GitHub</a></div>
+        </div>
+        <div class="ack-item">
+          <span class="ack-name">PyYAML</span>
+          <span class="ack-author">Kirill Simonov</span>
+          <div class="ack-right"><span class="ack-license">MIT</span><a class="ack-link" href="https://github.com/yaml/pyyaml" target="_blank">GitHub</a></div>
+        </div>
+        <div class="ack-item">
+          <span class="ack-name">python-multipart</span>
+          <span class="ack-author">Andrew Dunham &amp; contributors</span>
+          <div class="ack-right"><span class="ack-license">Apache 2.0</span><a class="ack-link" href="https://github.com/Kludex/python-multipart" target="_blank">GitHub</a></div>
+        </div>
+        <div class="ack-item">
+          <span class="ack-name">Playwright</span>
+          <span class="ack-author">Microsoft</span>
+          <div class="ack-right"><span class="ack-license">Apache 2.0</span><a class="ack-link" href="https://github.com/microsoft/playwright-python" target="_blank">GitHub</a></div>
+        </div>
+      </div>
+
+      <div class="ack-section">
+        <div class="ack-section-title">Tools &amp; Services</div>
+        <div class="ack-item">
+          <span class="ack-name">llmfit</span>
+          <span class="ack-author">Alex Jones</span>
+          <div class="ack-right"><span class="ack-license">MIT</span><a class="ack-link" href="https://github.com/AlexsJones/llmfit" target="_blank">GitHub</a></div>
+        </div>
+        <div class="ack-item">
+          <span class="ack-name">SearXNG</span>
+          <span class="ack-author">SearXNG contributors</span>
+          <div class="ack-right"><span class="ack-license">AGPL-3.0</span><a class="ack-link" href="https://github.com/searxng/searxng" target="_blank">GitHub</a></div>
+        </div>
+        <div class="ack-item">
+          <span class="ack-name">Hugging Face</span>
+          <span class="ack-author">Hugging Face</span>
+          <div class="ack-right"><a class="ack-link" href="https://huggingface.co" target="_blank">Website</a></div>
+        </div>
+      </div>
+
+      <div class="ack-section">
+        <div class="ack-section-title">Frontend</div>
+        <div class="ack-item">
+          <span class="ack-name">Prism.js</span>
+          <span class="ack-author">Lea Verou &amp; contributors</span>
+          <div class="ack-right"><span class="ack-license">MIT</span><a class="ack-link" href="https://github.com/PrismJS/prism" target="_blank">GitHub</a></div>
+        </div>
+      </div>
+
+    </div>
+    <div id="ack-footer">Loca is built on the shoulders of these open source projects. Thank you.</div>
   </div>
 </div>
 
@@ -2635,6 +2851,14 @@ async function openMemPanel() {
 
 function closeMemPanel() {
   document.getElementById('mem-overlay').classList.remove('open');
+}
+
+// ── Acknowledgments panel ─────────────────────────────────────────────────────
+function openAckPanel() {
+  document.getElementById('ack-overlay').classList.add('open');
+}
+function closeAckPanel() {
+  document.getElementById('ack-overlay').classList.remove('open');
 }
 
 async function renderMemList() {
