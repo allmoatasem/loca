@@ -907,6 +907,12 @@ body.dark #input code { color: #e06c75; }
   text-decoration: none;
 }
 .ack-link:hover { text-decoration: underline; }
+#ack-version {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 16px;
+}
 #ack-footer {
   padding: 12px 18px;
   border-top: 1px solid var(--border-light);
@@ -1406,6 +1412,8 @@ code[class*="language-"] {
       <button class="panel-close" onclick="closeAckPanel()">×</button>
     </div>
     <div id="ack-panel-body">
+
+      <div id="ack-version">Loca v0.9.5</div>
 
       <div class="ack-section">
         <div class="ack-section-title">Inference</div>

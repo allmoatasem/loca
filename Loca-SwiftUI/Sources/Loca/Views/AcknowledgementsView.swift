@@ -27,6 +27,10 @@ struct AcknowledgementsView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
+                    Text("Loca v0.9.5")
+                        .font(.system(size: 22, weight: .bold))
+                        .padding(.bottom, 4)
+
                     AckSection(title: "Inference", items: [
                         AckItem(name: "mlx-lm",    author: "Apple",                         license: "MIT",        url: "https://github.com/ml-explore/mlx-lm"),
                         AckItem(name: "llama.cpp",  author: "Georgi Gerganov",               license: "MIT",        url: "https://github.com/ggml-org/llama.cpp"),
