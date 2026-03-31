@@ -15,7 +15,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any, AsyncIterator, Literal, overload
+from typing import Any, AsyncIterator
 
 import httpx
 
