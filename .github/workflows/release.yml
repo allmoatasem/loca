@@ -27,9 +27,8 @@ jobs:
       # -- 1. Build Swift binary -----------------------------------------------
       - name: Build Swift package (release)
         run: |
-          SWIFT="/Applications/Xcode.app/Contents/Developer/usr/bin/swift"
-          DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-            "$SWIFT" build -c release --package-path Loca-SwiftUI
+
+          swift build -c release --package-path Loca-SwiftUI
 
       # -- 2. Assemble .app bundle ---------------------------------------------
       - name: Assemble Loca.app bundle
