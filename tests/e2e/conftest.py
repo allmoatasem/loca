@@ -22,8 +22,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 _BASE_PORT = 18923
 
-# ── Minimal config identical to test_proxy.py ────────────────────────────────
-
 _MINIMAL_CONFIG = {
     "inference": {"models_dir": "/tmp/loca-e2e-models", "active_model": None},
     "routing": {"max_tool_calls_per_turn": 5},
@@ -62,11 +60,8 @@ def _worker_port(worker_id):
     """Derive a unique port per xdist worker (or use base port if not parallel)."""
     if worker_id == "master" or not worker_id:
         return _BASE_PORT
-    # worker_id is "gw0", "gw1", etc.
     return _BASE_PORT + int(worker_id.replace("gw", "")) + 1
 
-
-# ── Session-scoped: one server per worker ────────────────────────────────────
 
 @pytest.fixture(scope="session")
 def _server(worker_id):
@@ -92,7 +87,6 @@ def _server(worker_id):
         thread = threading.Thread(target=server.run, daemon=True)
         thread.start()
 
-        # Wait until the server is accepting connections
         import httpx
         for _ in range(50):
             try:
@@ -120,31 +114,48 @@ def _browser():
         browser.close()
 
 
-# Override pytest-playwright's base_url at session scope to avoid ScopeMismatch
 @pytest.fixture(scope="session")
 def base_url(_server):
     return _server["base_url"]
 
 
 def _setup_default_routes(pg, base):
-    """Intercept API calls that the JS fires on page load."""
-    pg.route(f"{base}/v1/models", lambda route: route.fulfill(
-        status=200, content_type="application/json", body='{"data": []}',
-    ))
-    pg.route(f"{base}/api/conversations", lambda route: (
+    """
+    Intercept API calls that the JS fires on page load.
+
+    Uses route.fallback() so test-specific routes layered on top
+    via page.route() take priority without needing page.unroute().
+    """
+    def _handle_models(route):
+        route.fulfill(status=200, content_type="application/json", body='{"data": []}')
+
+    def _handle_conversations(route):
+        if route.request.method == "GET":
+            route.fulfill(status=200, content_type="application/json",
+                          body='{"conversations": []}')
+        else:
+            route.fallback()
+
+    def _handle_memories(route):
+        if route.request.method == "GET":
+            route.fulfill(status=200, content_type="application/json",
+                          body='{"memories": []}')
+        else:
+            route.fallback()
+
+    def _handle_stats(route):
         route.fulfill(status=200, content_type="application/json",
-                      body='{"conversations": []}')
-        if route.request.method == "GET" else route.continue_()
-    ))
-    pg.route(f"{base}/api/memories", lambda route: (
+                      body='{"ram_used_gb": 8.2, "ram_total_gb": 32.0}')
+
+    def _handle_extract(route):
         route.fulfill(status=200, content_type="application/json",
                       body='{"memories": []}')
-        if route.request.method == "GET" else route.continue_()
-    ))
-    pg.route(f"{base}/system-stats", lambda route: route.fulfill(
-        status=200, content_type="application/json",
-        body='{"ram_used_gb": 8.2, "ram_total_gb": 32.0}',
-    ))
+
+    pg.route(f"{base}/v1/models", _handle_models)
+    pg.route(f"{base}/api/conversations", _handle_conversations)
+    pg.route(f"{base}/api/memories", _handle_memories)
+    pg.route(f"{base}/system-stats", _handle_stats)
+    pg.route(f"{base}/api/extract-memories", _handle_extract)
 
 
 @pytest.fixture()
@@ -152,14 +163,15 @@ def page(_server, _browser):
     """Fresh browser context + page for each test."""
     context = _browser.new_context()
     pg = context.new_page()
-    _setup_default_routes(pg, _server["base_url"])
-    pg.goto(_server["base_url"])
-    pg.wait_for_load_state("domcontentloaded")
+    base = _server["base_url"]
+    _setup_default_routes(pg, base)
+    pg.goto(base)
+    # Wait for JS to execute — the inline script sets model-desc text
+    pg.wait_for_function("document.getElementById('model-desc')?.textContent?.length > 0")
     yield pg
     context.close()
 
 
 @pytest.fixture()
 def server_url(_server):
-    """The server base URL for use in test route interceptions."""
     return _server["base_url"]

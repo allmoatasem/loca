@@ -31,7 +31,7 @@ class TestConversationList:
         page.route(f"{base_url}/api/conversations", lambda route: (
             route.fulfill(status=200, content_type="application/json",
                           body=json.dumps({"conversations": convs}))
-            if route.request.method == "GET" else route.continue_()
+            if route.request.method == "GET" else route.fallback()
         ))
         page.evaluate("loadConvList()")
         page.wait_for_selector(".conv-item")
@@ -58,7 +58,7 @@ class TestLoadConversation:
         page.route(f"{base_url}/api/conversations", lambda route: (
             route.fulfill(status=200, content_type="application/json",
                           body=json.dumps({"conversations": convs}))
-            if route.request.method == "GET" else route.continue_()
+            if route.request.method == "GET" else route.fallback()
         ))
 
         page.evaluate("loadConvList()")
@@ -111,7 +111,7 @@ class TestNewConversation:
         page.route(f"{base_url}/api/conversations", lambda route: (
             route.fulfill(status=200, content_type="application/json",
                           body='{"id": "cx", "ok": true}')
-            if route.request.method == "POST" else route.continue_()
+            if route.request.method == "POST" else route.fallback()
         ))
         page.route(f"{base_url}/api/extract-memories", lambda route: route.fulfill(
             status=200, content_type="application/json", body='{"memories": []}',

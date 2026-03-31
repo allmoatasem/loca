@@ -27,7 +27,7 @@ def _setup_chat(page, base_url, response="Hello!", model="test-model", conv_id="
     page.route(f"{base_url}/api/conversations", lambda route: (
         route.fulfill(status=200, content_type="application/json",
                       body=json.dumps({"id": conv_id, "ok": True}))
-        if route.request.method == "POST" else route.continue_()
+        if route.request.method == "POST" else route.fallback()
     ))
     page.route(f"{base_url}/api/extract-memories", lambda route: route.fulfill(
         status=200, content_type="application/json", body='{"memories": []}',
