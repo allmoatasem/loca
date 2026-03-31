@@ -19,6 +19,7 @@ from typing import Any, AsyncIterator, Literal, overload
 
 import httpx
 
+from .hardware_profiler import get_hardware_profile
 from .memory_extractor import extract_memories
 from .model_manager import ModelManager
 from .router import Model, RouteResult, route
@@ -45,6 +46,7 @@ class Orchestrator:
         self._routing_cfg = config.get("routing", {})
         self._tools_cfg = config.get("tools", {})
         self._max_tool_calls: int = self._routing_cfg.get("max_tool_calls_per_turn", 5)
+        self._hw = get_hardware_profile()
 
     # ------------------------------------------------------------------
     # Public entrypoint
@@ -75,7 +77,7 @@ class Orchestrator:
         )
 
         model_name, api_base = await self.mm.ensure_loaded(result.model, model_name_override=model_override)
-        system_prompt = _load_system_prompt(result.model)
+        system_prompt = _build_system_prompt(result.model, model_name, self._hw)
         mem_ctx = get_memories_context()
         if mem_ctx:
             system_prompt = f"{system_prompt}\n\n{mem_ctx}"
@@ -312,6 +314,24 @@ def _last_user_content(messages: list[dict]) -> str:
                 )
             return str(content)
     return ""
+
+
+def _build_system_prompt(model: Model, model_name: str, hw) -> str:
+    base = _load_system_prompt(model)
+    # Build a concise hardware description from real profiler data
+    if hw.has_apple_silicon:
+        hw_desc = f"{hw.cpu_name}, {hw.total_ram_gb:.0f} GB unified memory"
+    elif hw.has_nvidia_gpu:
+        hw_desc = f"{hw.cpu_name}, {hw.total_ram_gb:.0f} GB RAM (NVIDIA GPU)"
+    else:
+        hw_desc = f"{hw.cpu_name}, {hw.total_ram_gb:.0f} GB RAM"
+    identity = (
+        f"Your name is Loca. You are a private, offline AI assistant running locally on this machine "
+        f"({hw_desc}). The loaded model is {model_name}. "
+        f"When asked to identify yourself, say you are Loca and mention the model and hardware. "
+        f"Do not refer to any external AI company or platform as your origin."
+    )
+    return f"{identity}\n\n{base}"
 
 
 def _load_system_prompt(model: Model) -> str:
