@@ -4,7 +4,6 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
-    @Environment(\.openSettings) private var openSettings
 
     enum Tab: String, CaseIterable {
         case downloaded = "Downloaded"
@@ -35,7 +34,7 @@ struct SettingsView: View {
                 Spacer()
                 Button {
                     state.isSettingsOpen = false
-                    openSettings()
+                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
                 } label: {
                     Image(systemName: "gearshape")
                         .font(.system(size: 13))
