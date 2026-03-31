@@ -28,6 +28,7 @@ from typing import AsyncIterator
 import yaml
 from fastapi import FastAPI, File, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from .inference_backend import InferenceBackend
 from .model_manager import ModelManager
@@ -112,6 +113,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Local AI Orchestrator Proxy", lifespan=lifespan)
+
+
+class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        return response
+
+
+app.add_middleware(_SecurityHeadersMiddleware)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
 
@@ -470,7 +484,10 @@ async def health() -> JSONResponse:
 @app.get("/assets/{file_path:path}")
 async def serve_asset(file_path: str) -> Response:
     """Serve static assets (JS, CSS) bundled with the app."""
-    full = os.path.join(_STATIC, "assets", file_path)
+    base = os.path.realpath(os.path.join(_STATIC, "assets"))
+    full = os.path.realpath(os.path.join(base, file_path))
+    if not full.startswith(base + os.sep) and full != base:
+        return Response(status_code=404)
     if os.path.isfile(full):
         return FileResponse(full)
     return Response(status_code=404)
