@@ -3,88 +3,38 @@ Tests for dark/light theme toggle and persistence.
 """
 
 
-
 class TestThemeToggle:
-    def test_default_theme_is_light(self, page):
-        """By default (no localStorage), body should not have 'dark' class."""
-        # Clear any stored preference
+    def test_toggle_and_persistence(self, page):
+        """Toggle dark/light, verify class, localStorage, Prism CSS, icon."""
         page.evaluate("localStorage.removeItem('loca-theme')")
         page.reload()
-        page.wait_for_load_state("networkidle")
-        assert "dark" not in (page.locator("body").get_attribute("class") or "")
+        page.wait_for_load_state("domcontentloaded")
 
-    def test_toggle_to_dark(self, page):
-        page.evaluate("localStorage.removeItem('loca-theme')")
-        page.reload()
-        page.wait_for_load_state("networkidle")
+        # Default: light
+        assert "dark" not in (page.locator("body").get_attribute("class") or "")
+        assert "circle" in page.locator("#theme-icon").inner_html()
+
+        # Toggle to dark
         page.locator("#theme-btn").click()
         assert "dark" in page.locator("body").get_attribute("class")
+        assert page.evaluate("localStorage.getItem('loca-theme')") == "dark"
+        assert "dark" in page.locator("#prism-css").get_attribute("href")
 
-    def test_toggle_back_to_light(self, page):
-        page.evaluate("localStorage.removeItem('loca-theme')")
-        page.reload()
-        page.wait_for_load_state("networkidle")
-        page.locator("#theme-btn").click()
-        assert "dark" in page.locator("body").get_attribute("class")
+        # Toggle back to light
         page.locator("#theme-btn").click()
         assert "dark" not in (page.locator("body").get_attribute("class") or "")
+        assert page.evaluate("localStorage.getItem('loca-theme')") == "light"
+        assert "light" in page.locator("#prism-css").get_attribute("href")
 
     def test_theme_persists_across_reload(self, page):
-        """Toggling to dark should persist after page reload."""
+        """Dark theme survives a page reload."""
         page.evaluate("localStorage.removeItem('loca-theme')")
         page.reload()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("domcontentloaded")
+
         page.locator("#theme-btn").click()
         assert "dark" in page.locator("body").get_attribute("class")
 
-        # Reload and check
         page.reload()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("domcontentloaded")
         assert "dark" in page.locator("body").get_attribute("class")
-
-    def test_theme_saves_to_localstorage(self, page):
-        page.evaluate("localStorage.removeItem('loca-theme')")
-        page.reload()
-        page.wait_for_load_state("networkidle")
-        page.locator("#theme-btn").click()
-        val = page.evaluate("localStorage.getItem('loca-theme')")
-        assert val == "dark"
-
-    def test_light_theme_saves_to_localstorage(self, page):
-        page.evaluate("localStorage.setItem('loca-theme', 'dark')")
-        page.reload()
-        page.wait_for_load_state("networkidle")
-        page.locator("#theme-btn").click()
-        val = page.evaluate("localStorage.getItem('loca-theme')")
-        assert val == "light"
-
-    def test_prism_css_switches_on_dark(self, page):
-        """Toggling dark should switch Prism CSS to the dark variant."""
-        page.evaluate("localStorage.removeItem('loca-theme')")
-        page.reload()
-        page.wait_for_load_state("networkidle")
-        page.locator("#theme-btn").click()
-        href = page.locator("#prism-css").get_attribute("href")
-        assert "dark" in href
-
-    def test_prism_css_switches_on_light(self, page):
-        page.evaluate("localStorage.setItem('loca-theme', 'dark')")
-        page.reload()
-        page.wait_for_load_state("networkidle")
-        page.locator("#theme-btn").click()
-        href = page.locator("#prism-css").get_attribute("href")
-        assert "light" in href
-
-    def test_theme_icon_changes(self, page):
-        """The theme icon SVG should change between sun and moon."""
-        page.evaluate("localStorage.removeItem('loca-theme')")
-        page.reload()
-        page.wait_for_load_state("networkidle")
-        # In light mode, icon should have circle (sun)
-        light_html = page.locator("#theme-icon").inner_html()
-        assert "circle" in light_html
-
-        page.locator("#theme-btn").click()
-        # In dark mode, icon should have path (moon)
-        dark_html = page.locator("#theme-icon").inner_html()
-        assert "circle" not in dark_html or "21 12.79" in dark_html

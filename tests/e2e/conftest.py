@@ -119,57 +119,36 @@ def base_url(_server):
     return _server["base_url"]
 
 
-@pytest.fixture()
-def page(_server, _browser):
-    """
-    Fresh browser context + page for each test.
-    Intercepts API calls that the UI fires on load so the page renders cleanly.
-    """
-    context = _browser.new_context()
-    pg = context.new_page()
-
-    base = _server["base_url"]
-
-    # Intercept endpoints that the JS calls on page load so the UI
-    # doesn't stall waiting for backends that aren't running.
-
-    # /v1/models → empty model list
+def _setup_default_routes(pg, base):
+    """Intercept API calls that the JS fires on page load."""
     pg.route(f"{base}/v1/models", lambda route: route.fulfill(
-        status=200,
-        content_type="application/json",
-        body='{"data": []}',
+        status=200, content_type="application/json", body='{"data": []}',
     ))
-
-    # /api/conversations → empty list
     pg.route(f"{base}/api/conversations", lambda route: (
-        route.fulfill(
-            status=200,
-            content_type="application/json",
-            body='{"conversations": []}',
-        ) if route.request.method == "GET" else route.continue_()
+        route.fulfill(status=200, content_type="application/json",
+                      body='{"conversations": []}')
+        if route.request.method == "GET" else route.continue_()
     ))
-
-    # /api/memories → empty list
     pg.route(f"{base}/api/memories", lambda route: (
-        route.fulfill(
-            status=200,
-            content_type="application/json",
-            body='{"memories": []}',
-        ) if route.request.method == "GET" else route.continue_()
+        route.fulfill(status=200, content_type="application/json",
+                      body='{"memories": []}')
+        if route.request.method == "GET" else route.continue_()
     ))
-
-    # /system-stats → fake RAM stats
     pg.route(f"{base}/system-stats", lambda route: route.fulfill(
-        status=200,
-        content_type="application/json",
+        status=200, content_type="application/json",
         body='{"ram_used_gb": 8.2, "ram_total_gb": 32.0}',
     ))
 
-    pg.goto(base)
-    pg.wait_for_load_state("networkidle")
 
+@pytest.fixture()
+def page(_server, _browser):
+    """Fresh browser context + page for each test."""
+    context = _browser.new_context()
+    pg = context.new_page()
+    _setup_default_routes(pg, _server["base_url"])
+    pg.goto(_server["base_url"])
+    pg.wait_for_load_state("domcontentloaded")
     yield pg
-
     context.close()
 
 
