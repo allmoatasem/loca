@@ -25,5 +25,10 @@ struct LocaApp: App {
                 .keyboardShortcut("n")
             }
         }
+
+        Settings {
+            PreferencesView()
+                .environmentObject(AppState.shared)
+        }
     }
 }

@@ -312,7 +312,13 @@ extension AppState {
             messages:       messages.dropLast().map { $0 },   // don't send the empty placeholder
             stream:         true,
             num_ctx:        contextWindow,
-            research_mode:  researchMode && !lockdownMode
+            research_mode:  researchMode && !lockdownMode,
+            temperature:    temperature,
+            top_p:          topP,
+            top_k:          topK,
+            repeat_penalty: repeatPenalty,
+            max_tokens:     maxTokens,
+            system_prompt_override: systemPromptOverride.isEmpty ? nil : systemPromptOverride
         )
 
         var full = ""

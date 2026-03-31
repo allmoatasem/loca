@@ -113,8 +113,62 @@ final class AppState: ObservableObject {
 
     // MARK: - Settings
 
-    @Published var contextWindow: Int  = 32768
-    @Published var isDarkMode: Bool    = UserDefaults.standard.bool(forKey: "isDarkMode")
+    @Published var themeMode: ThemeMode = {
+        let raw = UserDefaults.standard.string(forKey: "themeMode") ?? "system"
+        return ThemeMode(rawValue: raw) ?? .system
+    }() {
+        didSet { UserDefaults.standard.set(themeMode.rawValue, forKey: "themeMode") }
+    }
+
+    @Published var contextWindow: Int = {
+        let v = UserDefaults.standard.integer(forKey: "contextWindow")
+        return v > 0 ? v : 32768
+    }() {
+        didSet { UserDefaults.standard.set(contextWindow, forKey: "contextWindow") }
+    }
+
+    @Published var temperature: Double = {
+        let v = UserDefaults.standard.double(forKey: "temperature")
+        return v > 0 ? v : 0.7
+    }() {
+        didSet { UserDefaults.standard.set(temperature, forKey: "temperature") }
+    }
+
+    @Published var topP: Double = {
+        let v = UserDefaults.standard.double(forKey: "topP")
+        return v > 0 ? v : 0.9
+    }() {
+        didSet { UserDefaults.standard.set(topP, forKey: "topP") }
+    }
+
+    @Published var topK: Int = {
+        let v = UserDefaults.standard.integer(forKey: "topK")
+        return v > 0 ? v : 40
+    }() {
+        didSet { UserDefaults.standard.set(topK, forKey: "topK") }
+    }
+
+    @Published var repeatPenalty: Double = {
+        let v = UserDefaults.standard.double(forKey: "repeatPenalty")
+        return v > 0 ? v : 1.1
+    }() {
+        didSet { UserDefaults.standard.set(repeatPenalty, forKey: "repeatPenalty") }
+    }
+
+    @Published var maxTokens: Int = {
+        let v = UserDefaults.standard.integer(forKey: "maxTokens")
+        return v > 0 ? v : 2048
+    }() {
+        didSet { UserDefaults.standard.set(maxTokens, forKey: "maxTokens") }
+    }
+
+    @Published var selectedRecipe: String = UserDefaults.standard.string(forKey: "selectedRecipe") ?? "Balanced" {
+        didSet { UserDefaults.standard.set(selectedRecipe, forKey: "selectedRecipe") }
+    }
+
+    @Published var systemPromptOverride: String = UserDefaults.standard.string(forKey: "systemPromptOverride") ?? "" {
+        didSet { UserDefaults.standard.set(systemPromptOverride, forKey: "systemPromptOverride") }
+    }
 
     // MARK: - Conversation search
 

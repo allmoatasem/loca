@@ -23,7 +23,7 @@ import os
 import shutil
 import uuid
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import AsyncIterator, cast
 
 import yaml
 from fastapi import FastAPI, File, Request, Response, UploadFile
@@ -142,22 +142,34 @@ async def openai_chat(request: Request) -> Response:
     model_override: str | None = body.get("model_override")
     num_ctx: int | None = body.get("num_ctx")
     research_mode: bool = body.get("research_mode", False)
+    temperature: float | None = body.get("temperature")
+    top_p: float | None = body.get("top_p")
+    top_k: int | None = body.get("top_k")
+    repeat_penalty: float | None = body.get("repeat_penalty")
+    max_tokens: int | None = body.get("max_tokens")
+    system_prompt_override: str | None = body.get("system_prompt_override") or None
 
     assert _orchestrator is not None
 
     if stream:
         return StreamingResponse(
             _openai_stream_response(
-                _orchestrator, messages, has_image, mode_hint, model_override, num_ctx, research_mode
+                _orchestrator, messages, has_image, mode_hint, model_override, num_ctx, research_mode,
+                temperature=temperature, top_p=top_p, top_k=top_k,
+                repeat_penalty=repeat_penalty, max_tokens=max_tokens,
+                system_prompt_override=system_prompt_override,
             ),
             media_type="text/event-stream",
         )
 
-    response_data = await _orchestrator.handle(
+    response_data = cast(dict, await _orchestrator.handle(
         messages, has_image=has_image, stream=False,
         model_hint=mode_hint, model_override=model_override,
         num_ctx=num_ctx, research_mode=research_mode,
-    )
+        temperature=temperature, top_p=top_p, top_k=top_k,
+        repeat_penalty=repeat_penalty, max_tokens=max_tokens,
+        system_prompt_override=system_prompt_override,
+    ))
     # response_data is already an OpenAI-shaped dict from LM Studio — pass it through
     content = ""
     try:
@@ -188,17 +200,26 @@ async def _openai_stream_response(
     model_override: str | None = None,
     num_ctx: int | None = None,
     research_mode: bool = False,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    top_k: int | None = None,
+    repeat_penalty: float | None = None,
+    max_tokens: int | None = None,
+    system_prompt_override: str | None = None,
 ) -> AsyncIterator[bytes]:
     output_chars = 0
     actual_model = model_override or model_hint or "local"
     search_triggered = False
     memory_injected = False
     try:
-        gen = await orchestrator.handle(
+        gen = cast(AsyncIterator[str | dict], await orchestrator.handle(
             messages, has_image=has_image, stream=True,
             model_hint=model_hint, model_override=model_override,
             num_ctx=num_ctx, research_mode=research_mode,
-        )
+            temperature=temperature, top_p=top_p, top_k=top_k,
+            repeat_penalty=repeat_penalty, max_tokens=max_tokens,
+            system_prompt_override=system_prompt_override,
+        ))
         async for chunk in gen:
             # Metadata sentinel from orchestrator
             if isinstance(chunk, dict):

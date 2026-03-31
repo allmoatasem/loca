@@ -72,6 +72,9 @@ fi
 
 # ── 3. Sign ───────────────────────────────────────────────────────────────────
 
+# Strip iCloud/Finder extended attributes that block ad-hoc signing
+xattr -cr "$BUNDLE" 2>/dev/null || true
+
 codesign --sign - --force --deep "$BUNDLE"
 echo "Built and signed: $BUNDLE"
 

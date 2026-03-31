@@ -177,7 +177,7 @@ class TestOrchestratorHandleNonStreaming:
         expected = _make_response("Sure!")
         captured_messages: list = []
 
-        async def _fake_chat(model, api_base, messages, stream=False, num_ctx=None):
+        async def _fake_chat(model, api_base, messages, stream=False, num_ctx=None, **kwargs):
             captured_messages.extend(messages)
             return expected
 
@@ -194,7 +194,7 @@ class TestOrchestratorHandleNonStreaming:
         expected = _make_response("Hello!")
         captured_messages: list = []
 
-        async def _fake_chat(model, api_base, messages, stream=False, num_ctx=None):
+        async def _fake_chat(model, api_base, messages, stream=False, num_ctx=None, **kwargs):
             captured_messages.extend(messages)
             return expected
 
@@ -212,7 +212,7 @@ class TestOrchestratorHandleNonStreaming:
         expected = _make_response("The weather is sunny.")
         captured_messages: list = []
 
-        async def _fake_chat(model, api_base, messages, stream=False, num_ctx=None):
+        async def _fake_chat(model, api_base, messages, stream=False, num_ctx=None, **kwargs):
             captured_messages.extend(messages)
             return expected
 
@@ -262,7 +262,7 @@ class TestToolCallLoop:
         final_response = _make_response("The answer is 42.")
         call_count = 0
 
-        async def _fake_chat(model, api_base, messages, stream=False, num_ctx=None):
+        async def _fake_chat(model, api_base, messages, stream=False, num_ctx=None, **kwargs):
             nonlocal call_count
             call_count += 1
             return tool_response if call_count == 1 else final_response
@@ -283,7 +283,7 @@ class TestToolCallLoop:
         tool_response = _make_response('{"tool": "web_search", "args": {"query": "x"}}')
         call_count = 0
 
-        async def _fake_chat(model, api_base, messages, stream=False, num_ctx=None):
+        async def _fake_chat(model, api_base, messages, stream=False, num_ctx=None, **kwargs):
             nonlocal call_count
             call_count += 1
             return tool_response  # always returns a tool call
