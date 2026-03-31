@@ -354,8 +354,8 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 #sidebar-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 6px 10px;
+  gap: 4px;
+  padding: 6px 12px;
   border-top: 1px solid var(--border-light);
 }
 .sidebar-action-btn {
@@ -364,10 +364,17 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   color: var(--text-dim);
   font-size: 12px;
   cursor: pointer;
-  padding: 5px 8px;
+  padding: 5px 7px;
   border-radius: 6px;
   transition: background .1s, color .1s;
-  flex: 1; justify-content: center;
+  justify-content: center;
+}
+.sidebar-action-btn:not(#mem-trigger-btn) {
+  width: 32px;
+  flex-shrink: 0;
+}
+#mem-trigger-btn {
+  flex: 1;
 }
 .sidebar-action-btn:hover { background: var(--border-light); color: var(--text); }
 #lockdown-btn.lockdown-active { color: #e74c3c; }
@@ -1259,7 +1266,7 @@ code[class*="language-"] {
 
     <div id="sidebar-bottom">
       <div id="sidebar-actions">
-        <button class="sidebar-action-btn" onclick="openMemPanel()" title="Memories" data-tip="Memories — facts extracted from&#10;your conversations, injected into&#10;every new chat.">
+        <button class="sidebar-action-btn" id="mem-trigger-btn" onclick="openMemPanel()" title="Memories" data-tip="Memories — facts extracted from&#10;your conversations, injected into&#10;every new chat.">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a9 9 0 0 1 9 9c0 4.97-4.03 9-9 9a9 9 0 0 1-9-9c0-4.97 4.03-9 9-9z"/><path d="M12 8v4l3 3"/></svg>
           <span id="mem-count-label">Memory</span>
           <span id="mem-count"></span>

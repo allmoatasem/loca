@@ -80,7 +80,16 @@ struct SidebarView: View {
             Toggle("Deep Research", isOn: $state.researchMode)
                 .controlSize(.mini)
                 .toggleStyle(.switch)
+                .disabled(state.lockdownMode)
                 .help("Deep Research uses a headless browser (Playwright) to fully render pages and extract content, instead of reading raw HTML. Much more accurate for dynamic sites. Slower.")
+
+            Toggle("Lockdown", isOn: $state.lockdownMode)
+                .controlSize(.mini)
+                .toggleStyle(.switch)
+                .onChange(of: state.lockdownMode) {
+                    if state.lockdownMode { state.researchMode = false }
+                }
+                .help("Lockdown mode — disables all network tools (SearXNG and Playwright). No data leaves the local machine.")
         }
         .padding(12)
     }
