@@ -1,20 +1,15 @@
 name: Release
 
 # Triggered by pushing a tag like v1.0.0
-# Builds a signed (ad-hoc) macOS app + Python backend zip and attaches it
-# to a GitHub Release as a downloadable asset.
+# Builds a signed (ad-hoc) macOS .dmg and attaches it to a GitHub Release.
 #
 # Requirements for downloaders:
-#   - Apple Silicon Mac (M1/M2/M3)
-#   - Python 3.12  (brew install python@3.12)
-#   - Homebrew mlx_lm  (pip install mlx-lm)  — optional, for MLX models
-#   - llama-server  (brew install llama.cpp)  — optional, for GGUF models
+#   - Apple Silicon Mac (M1/M2/M3/M4)
+#   - Python 3 (brew install python@3.12 recommended)
+#   - For MLX models: pip install mlx-lm
+#   - For GGUF models: brew install llama.cpp
 #
-# After downloading, run:
-#   unzip Loca-macos-arm64.zip
-#   cd Loca-macos-arm64
-#   bash install.sh
-#   open Loca.app
+# Install: open the DMG, drag Loca.app to Applications, launch.
 
 on:
   push:
@@ -29,14 +24,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ── 1. Build Swift binary ───────────────────────────────────────────
+      # -- 1. Build Swift binary -----------------------------------------------
       - name: Build Swift package (release)
         run: |
           SWIFT="/Applications/Xcode.app/Contents/Developer/usr/bin/swift"
           DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
             "$SWIFT" build -c release --package-path Loca-SwiftUI
 
-      # ── 2. Assemble .app bundle ─────────────────────────────────────────
+      # -- 2. Assemble .app bundle ---------------------------------------------
       - name: Assemble Loca.app bundle
         run: |
           BUNDLE="Loca.app"
@@ -44,120 +39,66 @@ jobs:
           RESOURCES="$BUNDLE/Contents/Resources"
           mkdir -p "$MACOS" "$RESOURCES"
 
+          # Swift binary
           cp Loca-SwiftUI/.build/release/Loca "$MACOS/Loca"
           chmod +x "$MACOS/Loca"
+
+          # Startup script
           cp start_services.sh "$RESOURCES/start_services.sh"
           chmod +x "$RESOURCES/start_services.sh"
 
-          # Info.plist (copy from existing bundle if present, else create minimal one)
-          if [ -f "Loca.app.bak/Contents/Info.plist" ]; then
-            cp "Loca.app.bak/Contents/Info.plist" "$BUNDLE/Contents/Info.plist"
-          elif [ -f "Loca-SwiftUI/Sources/Loca/Info.plist" ]; then
+          # Python backend — bundled inside the app so it runs from /Applications
+          cp -R src     "$RESOURCES/src"
+          cp -R prompts "$RESOURCES/prompts"
+          cp requirements.txt "$RESOURCES/requirements.txt"
+          cp config.yaml      "$RESOURCES/config.yaml"
+          for f in searxng-settings.yml searxng-settings.yaml; do
+            [ -f "$f" ] && cp "$f" "$RESOURCES/$f"
+          done
+          find "$RESOURCES/src" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+
+          # Info.plist
+          if [ -f "Loca-SwiftUI/Sources/Loca/Info.plist" ]; then
             cp "Loca-SwiftUI/Sources/Loca/Info.plist" "$BUNDLE/Contents/Info.plist"
           else
-            python3 -c "
-          import sys
-          plist = '''<?xml version=\"1.0\" encoding=\"UTF-8\"?>
-          <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
-          <plist version=\"1.0\">
-          <dict>
-            <key>CFBundleIdentifier</key><string>com.loca.app</string>
-            <key>CFBundleName</key><string>Loca</string>
-            <key>CFBundleExecutable</key><string>Loca</string>
-            <key>CFBundlePackageType</key><string>APPL</string>
-            <key>CFBundleShortVersionString</key><string>${{ github.ref_name }}</string>
-            <key>LSMinimumSystemVersion</key><string>14.0</string>
-            <key>NSHighResolutionCapable</key><true/>
-            <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
-          </dict>
-          </plist>'''
-          with open(sys.argv[1], 'w') as f:
-              f.write(plist)
-          " "$BUNDLE/Contents/Info.plist"
+            printf '%s\n' \
+              '<?xml version="1.0" encoding="UTF-8"?>' \
+              '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+              '<plist version="1.0"><dict>' \
+              '  <key>CFBundleIdentifier</key><string>com.loca.app</string>' \
+              '  <key>CFBundleName</key><string>Loca</string>' \
+              '  <key>CFBundleExecutable</key><string>Loca</string>' \
+              '  <key>CFBundlePackageType</key><string>APPL</string>' \
+              '  <key>LSMinimumSystemVersion</key><string>14.0</string>' \
+              '  <key>NSHighResolutionCapable</key><true/>' \
+              '  <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>' \
+              '</dict></plist>' \
+              > "$BUNDLE/Contents/Info.plist"
           fi
 
-          # Ad-hoc signature — works on the user's own machine after right-click → Open
+          # Ad-hoc signature
           codesign --sign - --force --deep "$BUNDLE"
           echo "Bundle assembled and signed."
 
-      # ── 3. Package distribution zip ─────────────────────────────────────
-      - name: Create distribution zip
+      # -- 3. Create DMG -------------------------------------------------------
+      - name: Create DMG
         run: |
-          DIST="Loca-macos-arm64"
-          mkdir -p "$DIST"
+          STAGING="$(mktemp -d)/Loca"
+          mkdir -p "$STAGING"
+          cp -r Loca.app "$STAGING/"
+          ln -s /Applications "$STAGING/Applications"
 
-          # App bundle
-          cp -r Loca.app "$DIST/"
+          hdiutil create \
+            -volname "Loca" \
+            -srcfolder "$STAGING" \
+            -ov \
+            -format UDZO \
+            -o Loca-macos-arm64.dmg
 
-          # Python backend
-          cp -r src "$DIST/src"
-          cp requirements.txt "$DIST/"
-          cp config.yaml "$DIST/config.yaml.example"
-          cp start_services.sh "$DIST/"
+          echo "Created Loca-macos-arm64.dmg"
+          ls -lh Loca-macos-arm64.dmg
 
-          # install.sh — run once after unzipping
-          python3 -c "
-          import sys, textwrap
-          script = textwrap.dedent('''
-          #!/bin/bash
-          # Loca install script — run once after downloading and unzipping.
-          # Sets up the Python virtual environment and configures the app.
-          set -e
-
-          DIR=\"\$(cd \"\$(dirname \"\$0\")\" && pwd)\"
-          echo \"Installing Loca in: \$DIR\"
-
-          # Find Python 3.12
-          PYTHON=\"\"
-          for p in python3.12 /opt/homebrew/bin/python3.12 /usr/local/bin/python3.12; do
-              if command -v \"\$p\" &>/dev/null 2>&1 || [ -f \"\$p\" ]; then
-                  PYTHON=\"\$p\"
-                  break
-              fi
-          done
-
-          if [ -z \"\$PYTHON\" ]; then
-              echo \"Error: Python 3.12 not found.\"
-              echo \"Install it with: brew install python@3.12\"
-              exit 1
-          fi
-
-          echo \"Using Python: \$(\$PYTHON --version)\"
-
-          # Create virtual environment
-          if [ ! -d \"\$DIR/.venv\" ]; then
-              \"\$PYTHON\" -m venv \"\$DIR/.venv\"
-          fi
-          \"\$DIR/.venv/bin/pip\" install -q --upgrade pip
-          \"\$DIR/.venv/bin/pip\" install -q -r \"\$DIR/requirements.txt\"
-          echo \"Python dependencies installed.\"
-
-          # Write project_path.txt so start_services.sh can find the backend
-          echo \"\$DIR\" > \"\$DIR/Loca.app/Contents/Resources/project_path.txt\"
-
-          # Copy config if not present
-          if [ ! -f \"\$DIR/config.yaml\" ]; then
-              cp \"\$DIR/config.yaml.example\" \"\$DIR/config.yaml\"
-              echo \"Created config.yaml — edit it to customise settings.\"
-          fi
-
-          echo \"\"
-          echo \"Installation complete!\"
-          echo \"Open Loca.app to start.\"
-          echo \"\"
-          echo \"Note: first launch will show 'Developer cannot be verified'.\"
-          echo \"Right-click Loca.app → Open → Open to bypass Gatekeeper once.\"
-          ''').lstrip()
-          with open(sys.argv[1], 'w') as f:
-              f.write(script)
-          " "$DIST/install.sh"
-          chmod +x "$DIST/install.sh"
-
-          zip -r "$DIST.zip" "$DIST/"
-          echo "Created $DIST.zip"
-          ls -lh "$DIST.zip"
-
-      # ── 4. Publish GitHub Release ───────────────────────────────────────
+      # -- 4. Publish GitHub Release -------------------------------------------
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -167,23 +108,17 @@ jobs:
 
             ### Download & Install
 
-            1. Download `Loca-macos-arm64.zip`
-            2. Unzip it
-            3. Run `bash install.sh` (sets up Python venv, ~30 seconds)
-            4. Open `Loca.app`
+            1. Download `Loca-macos-arm64.dmg`
+            2. Open the DMG and drag **Loca.app** to **Applications**
+            3. Launch Loca — it sets up its Python environment automatically on first run (~1 min)
 
             > **First launch:** macOS Gatekeeper will warn "Developer cannot be verified" because this is an ad-hoc signed build (no paid Apple Developer ID). Right-click → Open → Open to bypass it once.
 
             ### Prerequisites
             - Apple Silicon Mac (M1 / M2 / M3 / M4)
-            - Python 3.12 (`brew install python@3.12`)
+            - Python 3 (`brew install python@3.12` recommended)
             - For MLX models: `pip install mlx-lm`
             - For GGUF models: `brew install llama.cpp`
-
-            ### What's included
-            - `Loca.app` — native macOS SwiftUI app
-            - `src/` — Python inference proxy (FastAPI + uvicorn)
-            - `install.sh` — one-time setup script
-          files: Loca-macos-arm64.zip
+          files: Loca-macos-arm64.dmg
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
