@@ -69,15 +69,35 @@ bail() {
 
 # ── 1. Check inference backend binaries ──────────────────────────────────────
 if ! command -v llama-server > /dev/null 2>&1; then
-    bail "llama-server not found. Install llama.cpp via Homebrew:
-  brew install llama.cpp
-Then relaunch Loca."
+    BREW=""
+    for _b in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+        [ -x "$_b" ] && BREW="$_b" && break
+    done
+    if [ -n "$BREW" ]; then
+        status "Installing llama.cpp…" 5
+        "$BREW" install llama.cpp || bail "Failed to install llama.cpp via Homebrew."
+    else
+        bail "llama-server not found and Homebrew is not installed. Install Homebrew first: https://brew.sh"
+    fi
 fi
 
 # ── 2. Python venv ────────────────────────────────────────────────────────────
+# Prefer Python 3.10+ (required for X | Y union syntax); fall back to python3.
+PYTHON3=""
+for _p in /opt/homebrew/bin/python3 /usr/local/bin/python3 python3; do
+    if command -v "$_p" > /dev/null 2>&1; then
+        _ver=$("$_p" -c "import sys; print(sys.version_info >= (3,10))" 2>/dev/null)
+        if [ "$_ver" = "True" ]; then
+            PYTHON3="$_p"
+            break
+        fi
+    fi
+done
+[ -z "$PYTHON3" ] && bail "Python 3.10 or later is required. Install via Homebrew: brew install python3"
+
 _venv_ok=0
 if [ -d "$VENV" ] \
-   && "$VENV/bin/python" -c "import sys" 2>/dev/null \
+   && "$VENV/bin/python" -c "import sys; assert sys.version_info >= (3,10)" 2>/dev/null \
    && "$VENV/bin/pip" --version > /dev/null 2>&1; then
     _venv_ok=1
 fi
@@ -85,7 +105,7 @@ fi
 if [ "$_venv_ok" -eq 0 ]; then
     status "Setting up Python environment…" 10
     rm -rf "$VENV"
-    python3 -m venv "$VENV" || bail "Failed to create Python venv."
+    "$PYTHON3" -m venv "$VENV" || bail "Failed to create Python venv."
     status "Installing dependencies…" 20
     "$VENV/bin/pip" install -r "$DIR/requirements.txt" -q || bail "Failed to install dependencies."
 elif [ "$DIR/requirements.txt" -nt "$VENV/bin/pip" ]; then
