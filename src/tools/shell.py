@@ -13,23 +13,32 @@ _DEFAULT_TIMEOUT = 30
 _DEFAULT_ALLOWED = {"ls", "cat", "grep", "find", "wc", "head", "tail", "git", "python3", "pwd"}
 _MAX_OUTPUT_CHARS = 8000
 
-# Shell metacharacters that could be used for command injection
-_SHELL_METACHAR_RE_CHARS = set(";|&$`\\!><()")
+# Shell operators that enable command chaining/injection.
+# Checked against raw tokens (after shlex parsing) so quoted content is safe.
+_SHELL_OPERATORS = {";", "|", "&&", "||", "&"}
+# Characters that trigger shell expansion — dangerous even mid-token.
+_SHELL_EXPANSION_CHARS = set("$`")
 
 
 def _validate_command(command: str, tokens: list[str], allowed_commands: set[str]) -> str | None:
     """Validate command safety. Returns error string if invalid, None if OK."""
-    # Reject shell metacharacters that enable chaining/injection
-    for ch in _SHELL_METACHAR_RE_CHARS:
-        if ch in command:
-            return f"Shell metacharacter '{ch}' is not allowed for security reasons"
-
     base_cmd = tokens[0]
     # Strip path prefixes (e.g. /usr/bin/ls → ls)
     base_name = base_cmd.split("/")[-1]
 
     if base_name not in allowed_commands:
         return f"Command '{base_name}' is not in the allowed list: {sorted(allowed_commands)}"
+
+    # Reject shell operators (chaining) — checked as whole tokens
+    for tok in tokens[1:]:
+        if tok in _SHELL_OPERATORS:
+            return f"Shell operator '{tok}' is not allowed for security reasons"
+
+    # Reject expansion characters anywhere in the raw command.
+    # These are dangerous even inside arguments (e.g. $(cmd), `cmd`).
+    for ch in _SHELL_EXPANSION_CHARS:
+        if ch in command:
+            return f"Shell expansion character '{ch}' is not allowed for security reasons"
 
     return None
 

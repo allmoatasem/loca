@@ -55,29 +55,32 @@ jobs:
           elif [ -f "Loca-SwiftUI/Sources/Loca/Info.plist" ]; then
             cp "Loca-SwiftUI/Sources/Loca/Info.plist" "$BUNDLE/Contents/Info.plist"
           else
-            cat > "$BUNDLE/Contents/Info.plist" << 'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleIdentifier</key><string>com.loca.app</string>
-  <key>CFBundleName</key><string>Loca</string>
-  <key>CFBundleExecutable</key><string>Loca</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>${{ github.ref_name }}</string>
-  <key>LSMinimumSystemVersion</key><string>14.0</string>
-  <key>NSHighResolutionCapable</key><true/>
-  <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
-</dict>
-</plist>
-PLIST
+            python3 -c "
+          import sys
+          plist = '''<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+          <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
+          <plist version=\"1.0\">
+          <dict>
+            <key>CFBundleIdentifier</key><string>com.loca.app</string>
+            <key>CFBundleName</key><string>Loca</string>
+            <key>CFBundleExecutable</key><string>Loca</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>${{ github.ref_name }}</string>
+            <key>LSMinimumSystemVersion</key><string>14.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+            <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
+          </dict>
+          </plist>'''
+          with open(sys.argv[1], 'w') as f:
+              f.write(plist)
+          " "$BUNDLE/Contents/Info.plist"
           fi
 
           # Ad-hoc signature — works on the user's own machine after right-click → Open
           codesign --sign - --force --deep "$BUNDLE"
           echo "Bundle assembled and signed."
 
-      # ── 3. Package distribution zip ────────────────────────────────────
+      # ── 3. Package distribution zip ─────────────────────────────────────
       - name: Create distribution zip
         run: |
           DIST="Loca-macos-arm64"
@@ -93,56 +96,61 @@ PLIST
           cp start_services.sh "$DIST/"
 
           # install.sh — run once after unzipping
-          cat > "$DIST/install.sh" << 'INSTALL'
-#!/bin/bash
-# Loca install script — run once after downloading and unzipping.
-# Sets up the Python virtual environment and configures the app.
-set -e
+          python3 -c "
+          import sys, textwrap
+          script = textwrap.dedent('''
+          #!/bin/bash
+          # Loca install script — run once after downloading and unzipping.
+          # Sets up the Python virtual environment and configures the app.
+          set -e
 
-DIR="$(cd "$(dirname "$0")" && pwd)"
-echo "Installing Loca in: $DIR"
+          DIR=\"\$(cd \"\$(dirname \"\$0\")\" && pwd)\"
+          echo \"Installing Loca in: \$DIR\"
 
-# Find Python 3.12
-PYTHON=""
-for p in python3.12 /opt/homebrew/bin/python3.12 /usr/local/bin/python3.12; do
-    if command -v "$p" &>/dev/null 2>&1 || [ -f "$p" ]; then
-        PYTHON="$p"
-        break
-    fi
-done
+          # Find Python 3.12
+          PYTHON=\"\"
+          for p in python3.12 /opt/homebrew/bin/python3.12 /usr/local/bin/python3.12; do
+              if command -v \"\$p\" &>/dev/null 2>&1 || [ -f \"\$p\" ]; then
+                  PYTHON=\"\$p\"
+                  break
+              fi
+          done
 
-if [ -z "$PYTHON" ]; then
-    echo "Error: Python 3.12 not found."
-    echo "Install it with: brew install python@3.12"
-    exit 1
-fi
+          if [ -z \"\$PYTHON\" ]; then
+              echo \"Error: Python 3.12 not found.\"
+              echo \"Install it with: brew install python@3.12\"
+              exit 1
+          fi
 
-echo "Using Python: $($PYTHON --version)"
+          echo \"Using Python: \$(\$PYTHON --version)\"
 
-# Create virtual environment
-if [ ! -d "$DIR/.venv" ]; then
-    "$PYTHON" -m venv "$DIR/.venv"
-fi
-"$DIR/.venv/bin/pip" install -q --upgrade pip
-"$DIR/.venv/bin/pip" install -q -r "$DIR/requirements.txt"
-echo "Python dependencies installed."
+          # Create virtual environment
+          if [ ! -d \"\$DIR/.venv\" ]; then
+              \"\$PYTHON\" -m venv \"\$DIR/.venv\"
+          fi
+          \"\$DIR/.venv/bin/pip\" install -q --upgrade pip
+          \"\$DIR/.venv/bin/pip\" install -q -r \"\$DIR/requirements.txt\"
+          echo \"Python dependencies installed.\"
 
-# Write project_path.txt so start_services.sh can find the backend
-echo "$DIR" > "$DIR/Loca.app/Contents/Resources/project_path.txt"
+          # Write project_path.txt so start_services.sh can find the backend
+          echo \"\$DIR\" > \"\$DIR/Loca.app/Contents/Resources/project_path.txt\"
 
-# Copy config if not present
-if [ ! -f "$DIR/config.yaml" ]; then
-    cp "$DIR/config.yaml.example" "$DIR/config.yaml"
-    echo "Created config.yaml — edit it to customise settings."
-fi
+          # Copy config if not present
+          if [ ! -f \"\$DIR/config.yaml\" ]; then
+              cp \"\$DIR/config.yaml.example\" \"\$DIR/config.yaml\"
+              echo \"Created config.yaml — edit it to customise settings.\"
+          fi
 
-echo ""
-echo "Installation complete!"
-echo "Open Loca.app to start."
-echo ""
-echo "Note: first launch will show 'Developer cannot be verified'."
-echo "Right-click Loca.app → Open → Open to bypass Gatekeeper once."
-INSTALL
+          echo \"\"
+          echo \"Installation complete!\"
+          echo \"Open Loca.app to start.\"
+          echo \"\"
+          echo \"Note: first launch will show 'Developer cannot be verified'.\"
+          echo \"Right-click Loca.app → Open → Open to bypass Gatekeeper once.\"
+          ''').lstrip()
+          with open(sys.argv[1], 'w') as f:
+              f.write(script)
+          " "$DIST/install.sh"
           chmod +x "$DIST/install.sh"
 
           zip -r "$DIST.zip" "$DIST/"
