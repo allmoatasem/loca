@@ -47,13 +47,34 @@ jobs:
             --cov-report=xml \
             --cov-report=term-missing \
             -v \
-            --ignore=tests/test_tools.py  # network tests skipped in CI
+            --ignore=tests/test_tools.py \
+            --ignore=tests/e2e  # e2e tests run in separate job
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:
           file: coverage.xml
           fail_ci_if_error: false
+
+  e2e:
+    name: E2E tests (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-playwright
+          playwright install --with-deps chromium
+
+      - name: Run Playwright tests
+        run: |
+          pytest tests/e2e/ -v
 
   swift-build:
     name: Swift build (macOS)
