@@ -75,8 +75,7 @@ def _server(worker_id):
          patch("src.proxy.InferenceBackend", return_value=mock_backend), \
          patch("src.proxy.ModelManager", return_value=mock_mm), \
          patch("src.proxy.Orchestrator", return_value=mock_orch), \
-         patch("src.proxy._build_recs_cache", new_callable=AsyncMock), \
-         patch("asyncio.create_task"):
+         patch("src.proxy._build_recs_cache", new_callable=AsyncMock):
 
         from src.proxy import app
 
@@ -127,29 +126,44 @@ def _setup_default_routes(pg, base):
     via page.route() take priority without needing page.unroute().
     """
     def _handle_models(route):
-        route.fulfill(status=200, content_type="application/json", body='{"data": []}')
+        try:
+            route.fulfill(status=200, content_type="application/json", body='{"data": []}')
+        except Exception:
+            pass
 
     def _handle_conversations(route):
-        if route.request.method == "GET":
-            route.fulfill(status=200, content_type="application/json",
-                          body='{"conversations": []}')
-        else:
-            route.fallback()
+        try:
+            if route.request.method == "GET":
+                route.fulfill(status=200, content_type="application/json",
+                              body='{"conversations": []}')
+            else:
+                route.fallback()
+        except Exception:
+            pass
 
     def _handle_memories(route):
-        if route.request.method == "GET":
-            route.fulfill(status=200, content_type="application/json",
-                          body='{"memories": []}')
-        else:
-            route.fallback()
+        try:
+            if route.request.method == "GET":
+                route.fulfill(status=200, content_type="application/json",
+                              body='{"memories": []}')
+            else:
+                route.fallback()
+        except Exception:
+            pass
 
     def _handle_stats(route):
-        route.fulfill(status=200, content_type="application/json",
-                      body='{"ram_used_gb": 8.2, "ram_total_gb": 32.0}')
+        try:
+            route.fulfill(status=200, content_type="application/json",
+                          body='{"ram_used_gb": 8.2, "ram_total_gb": 32.0}')
+        except Exception:
+            pass
 
     def _handle_extract(route):
-        route.fulfill(status=200, content_type="application/json",
-                      body='{"memories": []}')
+        try:
+            route.fulfill(status=200, content_type="application/json",
+                          body='{"memories": []}')
+        except Exception:
+            pass
 
     pg.route(f"{base}/v1/models", _handle_models)
     pg.route(f"{base}/api/conversations", _handle_conversations)
