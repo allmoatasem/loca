@@ -92,20 +92,19 @@ class Orchestrator:
 
         full_messages = _prepend_system(augmented_messages, system_prompt)
 
-        inf_kwargs = dict(
-            temperature=temperature, top_p=top_p, top_k=top_k,
-            repeat_penalty=repeat_penalty, max_tokens=max_tokens,
-        )
-
         if stream:
             return self._stream_with_tools(
                 model_name, api_base, full_messages, result,
                 num_ctx=num_ctx, research_mode=research_mode,
-                memory_injected=bool(mem_ctx), **inf_kwargs,
+                memory_injected=bool(mem_ctx),
+                temperature=temperature, top_p=top_p, top_k=top_k,
+                repeat_penalty=repeat_penalty, max_tokens=max_tokens,
             )
 
         return await self._call_with_tools(
-            model_name, api_base, full_messages, result, num_ctx=num_ctx, **inf_kwargs,
+            model_name, api_base, full_messages, result, num_ctx=num_ctx,
+            temperature=temperature, top_p=top_p, top_k=top_k,
+            repeat_penalty=repeat_penalty, max_tokens=max_tokens,
         )
 
     # ------------------------------------------------------------------
@@ -127,13 +126,13 @@ class Orchestrator:
     ) -> dict:
         """Call model, handle tool calls, return final response."""
         tool_call_count = 0
-        inf_kwargs = dict(
-            temperature=temperature, top_p=top_p, top_k=top_k,
-            repeat_penalty=repeat_penalty, max_tokens=max_tokens,
-        )
 
         while tool_call_count <= self._max_tool_calls:
-            response = await self._chat(model_name, api_base, messages, stream=False, num_ctx=num_ctx, **inf_kwargs)
+            response = await self._chat(
+                model_name, api_base, messages, stream=False, num_ctx=num_ctx,
+                temperature=temperature, top_p=top_p, top_k=top_k,
+                repeat_penalty=repeat_penalty, max_tokens=max_tokens,
+            )
             assistant_text: str = _extract_content(response)
 
             tool_call = _extract_tool_call(assistant_text)
@@ -152,7 +151,11 @@ class Orchestrator:
             ]
             tool_call_count += 1
 
-        return await self._chat(model_name, api_base, messages, stream=False, num_ctx=num_ctx, **inf_kwargs)
+        return await self._chat(
+            model_name, api_base, messages, stream=False, num_ctx=num_ctx,
+            temperature=temperature, top_p=top_p, top_k=top_k,
+            repeat_penalty=repeat_penalty, max_tokens=max_tokens,
+        )
 
     async def _stream_with_tools(
         self,
