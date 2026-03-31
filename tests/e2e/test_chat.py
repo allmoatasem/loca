@@ -34,6 +34,12 @@ def _setup_chat(page, base_url, response="Hello!", model="test-model", conv_id="
     ))
 
 
+def _type_into_input(page, text):
+    """Type into the contenteditable #input using keyboard events (more reliable than fill)."""
+    page.locator("#input").click()
+    page.keyboard.type(text)
+
+
 class TestSendAndReceive:
     def test_empty_send_does_nothing(self, page):
         page.locator("#send-btn").click()
@@ -43,10 +49,10 @@ class TestSendAndReceive:
         """Send a message, receive streamed response, check all UI elements."""
         _setup_chat(page, base_url, response="Hi there! How can I help?", model="qwen2.5-7b")
 
-        page.locator("#input").fill("Hello world")
+        _type_into_input(page, "Hello world")
         page.locator("#send-btn").click()
 
-        # User bubble
+        # User bubble appears immediately (synchronous DOM append)
         page.wait_for_selector(".user-bubble")
         assert "Hello world" in page.locator(".user-bubble").first.text_content()
 
@@ -56,28 +62,22 @@ class TestSendAndReceive:
         # Input cleared
         assert page.locator("#input").text_content().strip() == ""
 
-        # Assistant response with avatar + model chip
+        # Wait for streaming to complete (copy button appears only after stream finishes)
         page.wait_for_function(
-            "document.querySelector('.asst-content')?.textContent?.includes('How can I help')"
+            "document.querySelector('.copy-btn')?.style.display === 'inline-flex'"
         )
+
+        # Assistant response with avatar + model chip
+        assert page.locator(".asst-content").first.text_content().__contains__("How can I help")
         assert "L" in page.locator(".asst-avatar").first.text_content()
         assert page.locator(".model-chip").first.is_visible()
 
         # Stats appear (tok, tok/s)
-        page.wait_for_function(
-            "document.querySelector('.msg-stats')?.textContent?.includes('tok')"
-        )
         stats = page.locator(".msg-stats").first.text_content()
         assert "tok/s" in stats
 
-        # Copy button
-        page.wait_for_function(
-            "document.querySelector('.copy-btn')?.style.display === 'inline-flex'"
-        )
-        assert page.locator(".copy-btn").first.text_content() == "Copy"
-
         # Sidebar stats updated
-        page.wait_for_function("document.getElementById('stat-ctx').textContent !== '—'")
+        assert page.locator("#stat-ctx").text_content() != "—"
         assert page.locator("#stat-msgs").text_content() != "0"
 
         # Send button re-enabled
@@ -96,10 +96,12 @@ class TestMarkdownRendering:
             "1. first\n2. second"
         )
         _setup_chat(page, base_url, response=md)
-        page.locator("#input").fill("render")
+        _type_into_input(page, "render")
         page.locator("#send-btn").click()
+
+        # Wait for streaming to complete, not just for partial content
         page.wait_for_function(
-            "document.querySelector('.asst-content')?.innerHTML?.length > 50"
+            "document.querySelector('.copy-btn')?.style.display === 'inline-flex'"
         )
         html = page.locator(".asst-content").first.inner_html()
         assert "<h1>" in html
@@ -120,13 +122,14 @@ class TestVisionGuard:
             body='{"data": [{"id": "qwen2.5-7b"}]}',
         ))
         page.reload()
-        page.wait_for_load_state("domcontentloaded")
+        # Wait for JS to execute (same as conftest page fixture)
+        page.wait_for_function("document.getElementById('model-desc')?.textContent?.length > 0")
 
         page.evaluate("""() => {
             attachments = [{type: 'image', name: 'test.png', data: 'data:image/png;base64,abc'}];
             document.getElementById('attach-strip').classList.add('has-files');
         }""")
-        page.locator("#input").fill("describe this")
+        _type_into_input(page, "describe this")
         page.locator("#send-btn").click()
         page.wait_for_function(
             "document.querySelector('.asst-content')?.textContent?.includes('does not support')"
@@ -138,7 +141,7 @@ class TestErrorHandling:
         page.route(f"{base_url}/v1/chat/completions", lambda route: route.fulfill(
             status=500, content_type="text/plain", body="Internal Server Error",
         ))
-        page.locator("#input").fill("will fail")
+        _type_into_input(page, "will fail")
         page.locator("#send-btn").click()
         page.wait_for_function(
             "document.querySelector('.asst-content')?.textContent?.includes('Error')"

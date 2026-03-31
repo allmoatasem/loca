@@ -117,7 +117,8 @@ class TestNewConversation:
             status=200, content_type="application/json", body='{"memories": []}',
         ))
 
-        page.locator("#input").fill("hello")
+        page.locator("#input").click()
+        page.keyboard.type("hello")
         page.locator("#send-btn").click()
         page.wait_for_function("document.getElementById('stat-msgs').textContent !== '0'")
 
