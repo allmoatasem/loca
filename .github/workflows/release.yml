@@ -16,6 +16,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   build-macos:
     name: Build macOS app (Apple Silicon)
