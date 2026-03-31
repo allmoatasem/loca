@@ -128,5 +128,5 @@ def build_icns(output_path):
 
 
 if __name__ == "__main__":
-    out = os.path.join(os.path.dirname(__file__), "Nous.app", "Contents", "Resources", "loca.icns")
+    out = os.path.join(os.path.dirname(__file__), "Loca.app", "Contents", "Resources", "loca.icns")
     build_icns(out)
