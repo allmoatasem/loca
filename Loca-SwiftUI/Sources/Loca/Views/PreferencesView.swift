@@ -2,15 +2,27 @@ import SwiftUI
 
 struct PreferencesView: View {
     @EnvironmentObject var state: AppState
+    @State private var selectedTab = 0
 
     var body: some View {
-        TabView {
-            GeneralPrefsTab()
-                .tabItem { Label("General", systemImage: "gearshape") }
-            InferencePrefsTab()
-                .tabItem { Label("Inference", systemImage: "cpu") }
-            SystemPromptPrefsTab()
-                .tabItem { Label("System Prompt", systemImage: "text.bubble") }
+        VStack(spacing: 0) {
+            Picker("", selection: $selectedTab) {
+                Text("General").tag(0)
+                Text("Inference").tag(1)
+                Text("System Prompt").tag(2)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+            .padding(.bottom, 12)
+
+            Divider()
+
+            switch selectedTab {
+            case 1:  InferencePrefsTab()
+            case 2:  SystemPromptPrefsTab()
+            default: GeneralPrefsTab()
+            }
         }
         .frame(width: 540)
         .fixedSize()
@@ -36,12 +48,18 @@ private struct GeneralPrefsTab: View {
             }
 
             Section("Context") {
-                Picker("Default context window", selection: $state.contextWindow) {
-                    ForEach(contextOptions, id: \.self) { n in
-                        Text(ctxLabel(n)).tag(n)
+                HStack {
+                    Text("Default context window")
+                        .lineLimit(1)
+                    Spacer()
+                    Picker("", selection: $state.contextWindow) {
+                        ForEach(contextOptions, id: \.self) { n in
+                            Text(ctxLabel(n)).tag(n)
+                        }
                     }
+                    .labelsHidden()
+                    .fixedSize()
                 }
-                .frame(width: 180)
                 Text("The number of tokens the model keeps in memory per conversation. Higher values use more RAM.")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -64,7 +82,6 @@ private struct InferencePrefsTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Recipe cards
             Text("Recipe")
                 .font(.headline)
                 .padding(.horizontal, 20)
@@ -91,7 +108,6 @@ private struct InferencePrefsTab: View {
             Divider()
                 .padding(.horizontal, 20)
 
-            // Parameter sliders
             Form {
                 Section("Parameters" + (isCustom ? "" : " (select Custom to edit)")) {
                     SliderRow(
@@ -172,17 +188,17 @@ private struct RecipeCard: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("temp \(String(format: "%.1f", recipe.temperature))")
                         Text("top-p \(String(format: "%.2f", recipe.topP))")
-                        if recipe.maxTokens < 2048 {
-                            Text("max \(recipe.maxTokens) tok")
-                        }
+                        // Always render third line to keep equal height
+                        Text(recipe.maxTokens < 2048 ? "max \(recipe.maxTokens) tok" : " ")
                     }
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(.secondary)
                 }
             }
+            Spacer(minLength: 0)
         }
         .padding(12)
-        .frame(width: 110)
+        .frame(width: 110, height: 90)
         .background(isSelected ? Color.accentColor.opacity(0.1) : Color(nsColor: .controlBackgroundColor))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
@@ -280,6 +296,8 @@ private struct SystemPromptPrefsTab: View {
                 Text("Loca's built-in prompts are mode-aware (General, Code, Thinking, Vision) and include hardware context. An override applies to all modes.")
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
 
             if !state.systemPromptOverride.isEmpty {
