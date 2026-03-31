@@ -376,6 +376,16 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 #ack-link-row {
   padding: 6px 0 8px;
   text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+#sidebar-version {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  letter-spacing: .03em;
 }
 #ack-link-btn {
   background: none; border: none; cursor: pointer;
@@ -1282,6 +1292,7 @@ code[class*="language-"] {
         </div>
       </div>
       <div id="ack-link-row">
+        <span id="sidebar-version">v0.9.5</span>
         <button id="ack-link-btn" onclick="openAckPanel()">♥ Acknowledgements</button>
       </div>
     </div>
