@@ -10,9 +10,8 @@ private struct TooltipModifier: ViewModifier {
     let text: String
 
     func body(content: Content) -> some View {
-        // Use background so the NSView is behind the SwiftUI button (won't intercept
-        // clicks), but AppKit can still fire tooltip tracking on mouse-enter.
-        content.background(TooltipView(text: text))
+        // overlay fills the exact content frame; tooltip tracking does not intercept clicks.
+        content.overlay(TooltipView(text: text))
     }
 }
 
@@ -77,10 +76,6 @@ struct SidebarView: View {
                 .frame(width: 80)
             }
 
-            Toggle("Deep Research", isOn: $state.researchMode)
-                .controlSize(.mini)
-                .toggleStyle(.switch)
-                .help("Deep Research uses a headless browser (Playwright) to fully render pages and extract content, instead of reading raw HTML. Much more accurate for dynamic sites. Slower.")
         }
         .padding(12)
     }
