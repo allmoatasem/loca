@@ -32,16 +32,6 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 220)
                 Spacer()
-                Button {
-                    state.isSettingsOpen = false
-                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-                } label: {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 13))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("Open Preferences (⌘,)")
                 Button("Done") { state.isSettingsOpen = false }
                     .keyboardShortcut(.return)
             }
