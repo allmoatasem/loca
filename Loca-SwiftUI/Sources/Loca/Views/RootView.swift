@@ -136,6 +136,22 @@ struct MainLayout: View {
                 .animation(.easeInOut(duration: 0.18), value: state.isSettingsOpen)
             }
         }
+        .overlay {
+            if state.isAcknowledgementsOpen {
+                ZStack {
+                    Color.black.opacity(0.3)
+                        .ignoresSafeArea()
+                        .onTapGesture { state.isAcknowledgementsOpen = false }
+                    AcknowledgementsView()
+                        .environmentObject(state)
+                        .background(.ultraThickMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .shadow(radius: 20)
+                }
+                .transition(.opacity)
+                .animation(.easeInOut(duration: 0.18), value: state.isAcknowledgementsOpen)
+            }
+        }
     }
 }
 

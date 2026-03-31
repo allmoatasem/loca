@@ -442,6 +442,15 @@ struct SidebarFooter: View {
             .buttonStyle(.plain)
             .nativeTooltip("Memories — facts extracted from your conversations and injected into every new chat. Click to view and manage them.")
 
+            Button { state.isAcknowledgementsOpen.toggle() } label: {
+                Image(systemName: "heart")
+                    .font(.system(size: 16))
+                    .foregroundColor(.secondary)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .nativeTooltip("Acknowledgments — open source libraries and projects Loca is built on.")
+
             if let dl = state.activeDownload, !dl.done, dl.error == nil {
                 Button { state.isSettingsOpen = true } label: {
                     ZStack(alignment: .bottomTrailing) {
