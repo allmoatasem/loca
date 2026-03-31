@@ -312,7 +312,7 @@ extension AppState {
             messages:       messages.dropLast().map { $0 },   // don't send the empty placeholder
             stream:         true,
             num_ctx:        contextWindow,
-            research_mode:  researchMode
+            research_mode:  researchMode && !lockdownMode
         )
 
         var full = ""

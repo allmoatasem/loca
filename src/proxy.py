@@ -28,7 +28,6 @@ from typing import AsyncIterator
 import yaml
 from fastapi import FastAPI, File, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from starlette.middleware.base import BaseHTTPMiddleware
 
 from .inference_backend import InferenceBackend
 from .model_manager import ModelManager
@@ -115,17 +114,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="Local AI Orchestrator Proxy", lifespan=lifespan)
 
 
-class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
-        response = await call_next(request)
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-        return response
-
-
-app.add_middleware(_SecurityHeadersMiddleware)
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    return response
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
 

@@ -814,32 +814,59 @@ struct InputBar: View {
             }
             .padding(.horizontal, 12).padding(.top, 8)
 
-            HStack(alignment: .bottom, spacing: 8) {
-                ChatTextEditor(
-                    text: $text,
-                    placeholder: "Ask anything…  (Shift+Return for newline)",
-                    onSend: onSend,
-                    actions: inputActions
-                )
-                .frame(minHeight: 38, maxHeight: 120)
+            ChatTextEditor(
+                text: $text,
+                placeholder: "Ask anything…  (Shift+Return for newline)",
+                onSend: onSend,
+                actions: inputActions
+            )
+            .frame(minHeight: 38, maxHeight: 120)
+            .padding(.horizontal, 12)
 
-                VStack(spacing: 6) {
-                    Button(action: pickFile) {
-                        Image(systemName: "paperclip")
-                            .font(.system(size: 15)).foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain).disabled(isUploading).help("Attach file")
+            HStack(spacing: 8) {
+                InputToolButton(
+                    icon: "magnifyingglass", label: "Research",
+                    isActive: state.researchMode, isDisabled: state.lockdownMode
+                ) { if !state.lockdownMode { state.researchMode.toggle() } }
+                .help("Deep Research — SearXNG + Playwright browser")
 
-                    Button(action: onSend) {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: 26))
-                            .foregroundColor(canSend ? .accentColor : Color.secondary.opacity(0.3))
-                    }
-                    .buttonStyle(.plain).disabled(!canSend).help("Send (Return)")
+                InputToolButton(
+                    icon: "lock", label: "Lockdown",
+                    isActive: state.lockdownMode, isDisabled: false
+                ) {
+                    state.lockdownMode.toggle()
+                    if state.lockdownMode { state.researchMode = false }
                 }
-                .padding(.bottom, 4)
+                .help("Lockdown — disable all network tools")
+
+                Button(action: pickFile) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "paperclip").font(.system(size: 10))
+                        Text("Upload").font(.system(size: 10, weight: .medium))
+                    }
+                    .padding(.horizontal, 7).padding(.vertical, 4)
+                    .background(Color.secondary.opacity(0.08))
+                    .foregroundColor(.secondary)
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.secondary.opacity(0.2)))
+                }
+                .buttonStyle(.plain).disabled(isUploading).help("Attach file")
+
+                Spacer()
+
+                Button(action: onSend) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.up").font(.system(size: 11, weight: .semibold))
+                        Text("Send").font(.system(size: 12, weight: .semibold))
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(canSend ? Color.accentColor : Color.secondary.opacity(0.15))
+                    .foregroundColor(canSend ? .white : Color.secondary.opacity(0.4))
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(.plain).disabled(!canSend).help("Send (Return)")
             }
-            .padding(.horizontal, 12).padding(.bottom, 12)
+            .padding(.horizontal, 12).padding(.vertical, 8)
         }
         .background(Color(nsColor: .windowBackgroundColor))
     }
@@ -993,5 +1020,34 @@ struct MemoryPanel: View {
             }
         }
         .onAppear { state.loadMemories() }
+    }
+}
+
+// MARK: - Input tool button (Research / Lockdown)
+
+struct InputToolButton: View {
+    let icon: String
+    let label: String
+    let isActive: Bool
+    let isDisabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Image(systemName: isActive && icon == "lock" ? "lock.fill" : icon)
+                    .font(.system(size: 10))
+                Text(label)
+                    .font(.system(size: 10, weight: .medium))
+            }
+            .padding(.horizontal, 7).padding(.vertical, 4)
+            .background(isActive ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.08))
+            .foregroundColor(isActive ? .accentColor : .secondary)
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .overlay(RoundedRectangle(cornerRadius: 5).stroke(isActive ? Color.accentColor.opacity(0.4) : Color.secondary.opacity(0.2)))
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.35 : 1)
     }
 }

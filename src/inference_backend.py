@@ -17,6 +17,7 @@ import logging
 import os
 import platform
 import shutil
+import signal
 import sys
 from pathlib import Path
 from typing import Literal
@@ -61,6 +62,7 @@ class InferenceBackend:
         """Internal: called only while _load_lock is held."""
         if self._proc and self._proc.returncode is None:
             await self.stop()
+        await self._kill_port_squatter()
 
         ctx = ctx_size or self.default_ctx_size
         backend = self._detect_backend(model_path)
@@ -237,6 +239,32 @@ class InferenceBackend:
             args += ["-ngl", "99"]
 
         return args
+
+    # ------------------------------------------------------------------
+    # Port management
+    # ------------------------------------------------------------------
+
+    async def _kill_port_squatter(self) -> None:
+        """Kill any stale process occupying our inference port before starting fresh."""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "lsof", "-ti", f":{self.port}",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+            pids = [int(p) for p in stdout.decode().split() if p.strip().isdigit()]
+            for pid in pids:
+                if pid != os.getpid():
+                    logger.info(f"Killing stale process {pid} on port {self.port}")
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+            if pids:
+                await asyncio.sleep(1.5)  # give OS time to release the port
+        except Exception as exc:
+            logger.debug(f"_kill_port_squatter: {exc}")
 
     # ------------------------------------------------------------------
     # Health polling
