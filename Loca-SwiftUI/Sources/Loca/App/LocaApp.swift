@@ -13,6 +13,11 @@ struct LocaApp: App {
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
         .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About Loca") {
+                    AppState.shared.isAcknowledgementsOpen = true
+                }
+            }
             CommandGroup(replacing: .newItem) {
                 Button("New Conversation") {
                     AppState.shared.newConversation()

@@ -442,6 +442,7 @@ struct SidebarFooter: View {
             .buttonStyle(.plain)
             .nativeTooltip("Memories — facts extracted from your conversations and injected into every new chat. Click to view and manage them.")
 
+
             if let dl = state.activeDownload, !dl.done, dl.error == nil {
                 Button { state.isSettingsOpen = true } label: {
                     ZStack(alignment: .bottomTrailing) {
