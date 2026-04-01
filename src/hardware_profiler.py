@@ -313,6 +313,72 @@ def _fallback_recommendations(profile: HardwareProfile) -> list[ModelRecommendat
 # Public API
 # ---------------------------------------------------------------------------
 
+def suggest_inference_params(
+    profile: HardwareProfile,
+    nvidia_vram_gb: float | None = None,
+) -> dict:
+    """
+    Return suggested backend performance parameters for the given hardware.
+
+    Keys in the returned dict (when suggestions are available):
+        n_gpu_layers  — GPU layers to offload (-ngl for llama.cpp, ignored by mlx)
+        batch_size    — prompt processing batch size
+        num_threads   — CPU threads for non-matrix ops
+        source        — "apple_silicon" | "nvidia" | "nvidia_no_vram" | "cpu_only"
+    """
+    import os
+    cpu_count = os.cpu_count() or 8
+
+    if profile.has_apple_silicon:
+        ram = profile.total_ram_gb
+        if ram >= 64:
+            batch_size = 1024
+        elif ram >= 32:
+            batch_size = 512
+        elif ram >= 16:
+            batch_size = 256
+        else:
+            batch_size = 128
+        return {
+            "n_gpu_layers": 99,
+            "batch_size": batch_size,
+            "num_threads": max(4, cpu_count // 2),
+            "source": "apple_silicon",
+        }
+
+    if profile.has_nvidia_gpu:
+        if nvidia_vram_gb is None:
+            return {"source": "nvidia_no_vram"}
+        vram = nvidia_vram_gb
+        if vram >= 24:
+            n_gpu_layers = 99
+        elif vram >= 16:
+            n_gpu_layers = 40
+        elif vram >= 12:
+            n_gpu_layers = 35
+        elif vram >= 8:
+            n_gpu_layers = 28
+        elif vram >= 4:
+            n_gpu_layers = 16
+        else:
+            n_gpu_layers = 8
+        batch_size = 512 if vram >= 16 else (256 if vram >= 8 else 128)
+        return {
+            "n_gpu_layers": n_gpu_layers,
+            "batch_size": batch_size,
+            "num_threads": max(4, cpu_count // 2),
+            "source": "nvidia",
+        }
+
+    # CPU-only
+    return {
+        "n_gpu_layers": 0,
+        "batch_size": 128,
+        "num_threads": max(4, cpu_count - 2),
+        "source": "cpu_only",
+    }
+
+
 def get_hardware_profile() -> HardwareProfile:
     """Return hardware profile, using llmfit if available."""
     bin_path = _llmfit_bin()

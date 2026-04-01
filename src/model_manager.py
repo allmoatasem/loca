@@ -140,12 +140,19 @@ class ModelManager:
     # Load / switch
     # ------------------------------------------------------------------
 
-    async def load(self, model_name: str, ctx_size: int | None = None) -> tuple[str, str]:
+    async def load(
+        self,
+        model_name: str,
+        ctx_size: int | None = None,
+        n_gpu_layers: int | None = None,
+        batch_size: int | None = None,
+        num_threads: int | None = None,
+    ) -> tuple[str, str]:
         """Load a model by name into the inference backend."""
         model = self.get_model(model_name)
         if not model:
             raise InferenceBackendError(f"Model '{model_name}' not found in {self.models_dir}")
-        await self.backend.restart(model.path, ctx_size)
+        await self.backend.restart(model.path, ctx_size, n_gpu_layers, batch_size, num_threads)
         # Persist active model in config (relative path from models_dir)
         rel = Path(model.path).relative_to(self.models_dir)
         self.config.setdefault("inference", {})["active_model"] = str(rel)

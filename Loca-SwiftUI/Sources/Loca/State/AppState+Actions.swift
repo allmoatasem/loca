@@ -43,12 +43,37 @@ extension AppState {
         isLoadingModel = true
         modelLoadError = nil
         do {
-            try await BackendClient.shared.loadModel(name: name, ctxSize: ctxSize)
+            try await BackendClient.shared.loadModel(
+                name: name,
+                ctxSize: ctxSize,
+                nGpuLayers: nGpuLayers,
+                batchSize: batchSize,
+                numThreads: numThreads
+            )
             await _loadLocalModels()
         } catch {
             modelLoadError = error.localizedDescription
         }
         isLoadingModel = false
+    }
+
+    func _suggestPerformanceParams() async {
+        isSuggestingParams = true
+        paramSuggestionError = nil
+        do {
+            let vram: Double? = nvidiaVramGb > 0 ? nvidiaVramGb : nil
+            let suggestion = try await BackendClient.shared.suggestParams(nvidiaVramGb: vram)
+            if suggestion.source == "nvidia_no_vram" {
+                paramSuggestionError = "Enter your GPU VRAM size above, then try again."
+            } else {
+                if let ngl = suggestion.n_gpu_layers { nGpuLayers = ngl }
+                if let bs  = suggestion.batch_size    { batchSize  = bs  }
+                if let nt  = suggestion.num_threads   { numThreads = nt  }
+            }
+        } catch {
+            paramSuggestionError = error.localizedDescription
+        }
+        isSuggestingParams = false
     }
 
     func _unloadModel() async {

@@ -53,12 +53,26 @@ class InferenceBackend:
     # Public API
     # ------------------------------------------------------------------
 
-    async def start(self, model_path: str, ctx_size: int | None = None) -> None:
+    async def start(
+        self,
+        model_path: str,
+        ctx_size: int | None = None,
+        n_gpu_layers: int | None = None,
+        batch_size: int | None = None,
+        num_threads: int | None = None,
+    ) -> None:
         """Start the inference server for the given model path."""
         async with self._load_lock:
-            await self._start_locked(model_path, ctx_size)
+            await self._start_locked(model_path, ctx_size, n_gpu_layers, batch_size, num_threads)
 
-    async def _start_locked(self, model_path: str, ctx_size: int | None = None) -> None:
+    async def _start_locked(
+        self,
+        model_path: str,
+        ctx_size: int | None = None,
+        n_gpu_layers: int | None = None,
+        batch_size: int | None = None,
+        num_threads: int | None = None,
+    ) -> None:
         """Internal: called only while _load_lock is held."""
         if self._proc and self._proc.returncode is None:
             await self.stop()
@@ -66,7 +80,7 @@ class InferenceBackend:
 
         ctx = ctx_size or self.default_ctx_size
         backend = self._detect_backend(model_path)
-        args = self._build_args(backend, model_path, ctx)
+        args = self._build_args(backend, model_path, ctx, n_gpu_layers, batch_size, num_threads)
 
         logger.info(f"Starting {backend} backend: {' '.join(args)}")
         self._stderr_lines = []
@@ -111,10 +125,17 @@ class InferenceBackend:
         self._current_backend = None
         logger.info("Inference backend stopped")
 
-    async def restart(self, model_path: str, ctx_size: int | None = None) -> None:
+    async def restart(
+        self,
+        model_path: str,
+        ctx_size: int | None = None,
+        n_gpu_layers: int | None = None,
+        batch_size: int | None = None,
+        num_threads: int | None = None,
+    ) -> None:
         """Stop then start with a new model."""
         await self.stop()
-        await self.start(model_path, ctx_size)
+        await self.start(model_path, ctx_size, n_gpu_layers, batch_size, num_threads)
 
     async def health_check(self) -> bool:
         """Return True if the backend is responding to /health."""
@@ -195,14 +216,24 @@ class InferenceBackend:
     # Argument builders
     # ------------------------------------------------------------------
 
-    def _build_args(self, backend: Backend, model_path: str, ctx_size: int) -> list[str]:
+    def _build_args(
+        self,
+        backend: Backend,
+        model_path: str,
+        ctx_size: int,
+        n_gpu_layers: int | None = None,
+        batch_size: int | None = None,
+        num_threads: int | None = None,
+    ) -> list[str]:
         if backend == "mlx":
             return self._build_mlx_args(model_path, ctx_size)
-        return self._build_llama_args(model_path, ctx_size)
+        return self._build_llama_args(model_path, ctx_size, n_gpu_layers, batch_size, num_threads)
 
     def _build_mlx_args(self, model_path: str, ctx_size: int) -> list[str]:
         # Prefer the mlx_lm script on PATH (works regardless of which venv is active).
         # Fall back to sys.executable -m mlx_lm if not on PATH.
+        # Note: batch_size and num_threads are llama.cpp concepts; mlx_lm handles
+        # hardware tuning internally and does not expose these as server flags.
         mlx_bin = shutil.which("mlx_lm")
         if mlx_bin:
             return [
@@ -218,7 +249,14 @@ class InferenceBackend:
             "--max-tokens", str(ctx_size),
         ]
 
-    def _build_llama_args(self, model_path: str, ctx_size: int) -> list[str]:
+    def _build_llama_args(
+        self,
+        model_path: str,
+        ctx_size: int,
+        n_gpu_layers: int | None = None,
+        batch_size: int | None = None,
+        num_threads: int | None = None,
+    ) -> list[str]:
         p = Path(model_path)
         # If directory, find the first .gguf inside
         if p.is_dir():
@@ -234,9 +272,14 @@ class InferenceBackend:
             "--ctx-size", str(ctx_size),
             "--no-mmap",  # safer for large models — avoids page fault stalls
         ]
-        # Offload all layers to GPU if available
+        # GPU layer offload — default to full offload on GPU-capable platforms
         if platform.system() in ("Darwin", "Linux"):
-            args += ["-ngl", "99"]
+            ngl = n_gpu_layers if n_gpu_layers is not None else 99
+            args += ["-ngl", str(ngl)]
+        if batch_size is not None:
+            args += ["-b", str(batch_size)]
+        if num_threads is not None:
+            args += ["-t", str(num_threads)]
 
         return args
 

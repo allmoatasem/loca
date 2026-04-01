@@ -170,6 +170,39 @@ final class AppState: ObservableObject {
         didSet { UserDefaults.standard.set(systemPromptOverride, forKey: "systemPromptOverride") }
     }
 
+    // MARK: - Performance params (backend tuning, applied at model load time)
+
+    @Published var nGpuLayers: Int = {
+        let v = UserDefaults.standard.integer(forKey: "nGpuLayers")
+        return v > 0 ? v : 99
+    }() {
+        didSet { UserDefaults.standard.set(nGpuLayers, forKey: "nGpuLayers") }
+    }
+
+    @Published var batchSize: Int = {
+        let v = UserDefaults.standard.integer(forKey: "batchSize")
+        return v > 0 ? v : 512
+    }() {
+        didSet { UserDefaults.standard.set(batchSize, forKey: "batchSize") }
+    }
+
+    @Published var numThreads: Int = {
+        let v = UserDefaults.standard.integer(forKey: "numThreads")
+        return v > 0 ? v : 4
+    }() {
+        didSet { UserDefaults.standard.set(numThreads, forKey: "numThreads") }
+    }
+
+    /// Nvidia VRAM size entered by the user (GB). Zero means not set.
+    @Published var nvidiaVramGb: Double = {
+        UserDefaults.standard.double(forKey: "nvidiaVramGb")
+    }() {
+        didSet { UserDefaults.standard.set(nvidiaVramGb, forKey: "nvidiaVramGb") }
+    }
+
+    @Published var isSuggestingParams = false
+    @Published var paramSuggestionError: String?
+
     // MARK: - Conversation search
 
     @Published var conversationQuery   = ""
@@ -192,6 +225,7 @@ final class AppState: ObservableObject {
     func searchConversations()                             { Task { await _searchConversations() } }
     func reloadLocalModels()    { Task { await _loadLocalModels() } }
     func loadModel(_ name: String, ctxSize: Int? = nil) { Task { await _loadModel(name, ctxSize: ctxSize) } }
+    func suggestPerformanceParams() { Task { await _suggestPerformanceParams() } }
     func deleteModel(_ name: String) { Task { await _deleteModel(name) } }
     func unloadModel()               { Task { await _unloadModel() } }
     func reloadRecommendations() { Task { await _loadRecommendations(force: true) } }
