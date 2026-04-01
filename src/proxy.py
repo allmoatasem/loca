@@ -314,10 +314,15 @@ async def load_model(request: Request) -> JSONResponse:
     body = await request.json()
     name = body.get("name", "")
     ctx_size = body.get("ctx_size")
+    n_gpu_layers = body.get("n_gpu_layers")
+    batch_size = body.get("batch_size")
+    num_threads = body.get("num_threads")
     if not name:
         return JSONResponse({"error": "name is required"}, status_code=400)
     try:
-        model_name, api_base = await _model_manager.load(name, ctx_size)
+        model_name, api_base = await _model_manager.load(
+            name, ctx_size, n_gpu_layers, batch_size, num_threads
+        )
         return JSONResponse({"ok": True, "name": model_name, "api_base": api_base})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -649,6 +654,19 @@ async def api_hardware() -> JSONResponse:
         "supports_mlx": profile.supports_mlx,
         "llmfit_available": bool(_llmfit_bin()),
     })
+
+
+@app.get("/api/suggest-params")
+async def api_suggest_params(nvidia_vram_gb: float | None = None) -> JSONResponse:
+    """Return suggested backend performance parameters for the current hardware.
+
+    For Nvidia GPUs, pass ?nvidia_vram_gb=<float> to get n_gpu_layers suggestion.
+    Returns {"source": "nvidia_no_vram"} when Nvidia is detected but VRAM is unknown.
+    """
+    from .hardware_profiler import get_hardware_profile, suggest_inference_params
+    loop = asyncio.get_event_loop()
+    profile = await loop.run_in_executor(None, get_hardware_profile)
+    return JSONResponse(suggest_inference_params(profile, nvidia_vram_gb))
 
 
 @app.post("/api/hardware/install-llmfit")

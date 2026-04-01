@@ -221,6 +221,17 @@ struct LocalModelsResponse: Decodable {
 struct LoadModelRequest: Encodable {
     let name: String
     let ctx_size: Int?
+    let n_gpu_layers: Int?
+    let batch_size: Int?
+    let num_threads: Int?
+}
+
+struct PerformanceSuggestion: Decodable {
+    let n_gpu_layers: Int?
+    let batch_size: Int?
+    let num_threads: Int?
+    /// "apple_silicon" | "nvidia" | "nvidia_no_vram" | "cpu_only"
+    let source: String
 }
 
 struct ActiveModelResponse: Decodable {

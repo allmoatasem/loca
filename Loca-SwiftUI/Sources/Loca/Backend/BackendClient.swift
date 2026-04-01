@@ -30,12 +30,33 @@ actor BackendClient {
         return try JSONDecoder().decode(LocalModelsResponse.self, from: data).models
     }
 
-    func loadModel(name: String, ctxSize: Int? = nil) async throws {
-        let body = LoadModelRequest(name: name, ctx_size: ctxSize)
+    func loadModel(
+        name: String,
+        ctxSize: Int? = nil,
+        nGpuLayers: Int? = nil,
+        batchSize: Int? = nil,
+        numThreads: Int? = nil
+    ) async throws {
+        let body = LoadModelRequest(
+            name: name,
+            ctx_size: ctxSize,
+            n_gpu_layers: nGpuLayers,
+            batch_size: batchSize,
+            num_threads: numThreads
+        )
         let (_, resp) = try await post("/api/models/load", body: body)
         if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
             throw BackendError.http(http.statusCode)
         }
+    }
+
+    func suggestParams(nvidiaVramGb: Double? = nil) async throws -> PerformanceSuggestion {
+        var path = "/api/suggest-params"
+        if let vram = nvidiaVramGb {
+            path += "?nvidia_vram_gb=\(vram)"
+        }
+        let (data, _) = try await get(path)
+        return try JSONDecoder().decode(PerformanceSuggestion.self, from: data)
     }
 
     func unloadModel() async throws {

@@ -9,7 +9,8 @@ struct PreferencesView: View {
             Picker("", selection: $selectedTab) {
                 Text("General").tag(0)
                 Text("Inference").tag(1)
-                Text("System Prompt").tag(2)
+                Text("Performance").tag(2)
+                Text("System Prompt").tag(3)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 20)
@@ -20,7 +21,8 @@ struct PreferencesView: View {
 
             switch selectedTab {
             case 1:  InferencePrefsTab()
-            case 2:  SystemPromptPrefsTab()
+            case 2:  PerformancePrefsTab()
+            case 3:  SystemPromptPrefsTab()
             default: GeneralPrefsTab()
             }
         }
@@ -206,6 +208,117 @@ private struct RecipeCard: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .onTapGesture { onTap() }
+    }
+}
+
+// MARK: - Performance
+
+private struct PerformancePrefsTab: View {
+    @EnvironmentObject var state: AppState
+    @State private var vramInput: String = ""
+
+    private var hw: HardwareProfile? { state.hardwareProfile }
+
+    private var isNvidia: Bool { hw?.has_nvidia_gpu == true && hw?.has_apple_silicon != true }
+    private var isApple: Bool  { hw?.has_apple_silicon == true }
+
+    private var hardwareBadge: String {
+        guard let hw else { return "Detecting hardware…" }
+        if hw.has_apple_silicon { return "\(hw.cpu_name)  ·  \(Int(hw.total_ram_gb)) GB unified memory" }
+        if hw.has_nvidia_gpu    { return "NVIDIA GPU  ·  \(Int(hw.total_ram_gb)) GB system RAM" }
+        return "CPU only  ·  \(Int(hw.total_ram_gb)) GB RAM"
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                HStack(spacing: 6) {
+                    Image(systemName: isApple ? "memorychip" : (isNvidia ? "display" : "cpu"))
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                    Text(hardwareBadge)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.bottom, 2)
+
+                if isNvidia {
+                    HStack {
+                        Text("GPU VRAM (GB)")
+                            .frame(width: 120, alignment: .leading)
+                        TextField("e.g. 8", text: $vramInput)
+                            .frame(width: 80)
+                            .onAppear {
+                                if state.nvidiaVramGb > 0 {
+                                    vramInput = String(Int(state.nvidiaVramGb))
+                                }
+                            }
+                            .onChange(of: vramInput) { _, val in
+                                if let d = Double(val), d > 0 { state.nvidiaVramGb = d }
+                            }
+                        Spacer()
+                    }
+                    Text("Enter your GPU VRAM to enable hardware-aware suggestions.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                IntSliderRow(
+                    label: "GPU Layers",
+                    value: $state.nGpuLayers,
+                    range: 0...99,
+                    hint: "Layers offloaded to GPU — 99 = all (llama.cpp only, ignored by MLX)",
+                    enabled: true
+                ) {}
+
+                IntSliderRow(
+                    label: "Batch Size",
+                    value: $state.batchSize,
+                    range: 64...2048,
+                    hint: "Prompt processing batch size — larger = faster but more memory",
+                    enabled: true
+                ) {}
+
+                IntSliderRow(
+                    label: "CPU Threads",
+                    value: $state.numThreads,
+                    range: 1...32,
+                    hint: "CPU threads for non-matrix operations (llama.cpp only)",
+                    enabled: true
+                ) {}
+
+                HStack {
+                    Button(action: { state.suggestPerformanceParams() }) {
+                        HStack(spacing: 6) {
+                            if state.isSuggestingParams {
+                                ProgressView().scaleEffect(0.7)
+                            } else {
+                                Image(systemName: "wand.and.stars")
+                            }
+                            Text("Suggest for my hardware")
+                        }
+                    }
+                    .disabled(state.isSuggestingParams || hw == nil)
+                    Spacer()
+                }
+                .padding(.top, 4)
+
+                if let err = state.paramSuggestionError {
+                    Text(err).font(.caption).foregroundColor(.red)
+                }
+
+                Text("Applied at model load time — reload your model after changing.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+            } header: {
+                Text("Backend Parameters")
+            }
+        }
+        .formStyle(.grouped)
+        .padding(20)
+        .frame(width: 540)
+        .onAppear { state.loadRecommendationsIfNeeded() }
     }
 }
 
