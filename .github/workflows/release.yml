@@ -40,6 +40,7 @@ jobs:
           MACOS="$BUNDLE/Contents/MacOS"
           RESOURCES="$BUNDLE/Contents/Resources"
           mkdir -p "$MACOS" "$RESOURCES"
+          printf 'APPL????' > "$BUNDLE/Contents/PkgInfo"
 
           # Swift binary
           cp Loca-SwiftUI/.build/release/Loca "$MACOS/Loca"
@@ -59,23 +60,12 @@ jobs:
           done
           find "$RESOURCES/src" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
-          # Info.plist
-          if [ -f "Loca-SwiftUI/Sources/Loca/Info.plist" ]; then
-            cp "Loca-SwiftUI/Sources/Loca/Info.plist" "$BUNDLE/Contents/Info.plist"
-          else
-            printf '%s\n' \
-              '<?xml version="1.0" encoding="UTF-8"?>' \
-              '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
-              '<plist version="1.0"><dict>' \
-              '  <key>CFBundleIdentifier</key><string>com.loca.app</string>' \
-              '  <key>CFBundleName</key><string>Loca</string>' \
-              '  <key>CFBundleExecutable</key><string>Loca</string>' \
-              '  <key>CFBundlePackageType</key><string>APPL</string>' \
-              '  <key>LSMinimumSystemVersion</key><string>14.0</string>' \
-              '  <key>NSHighResolutionCapable</key><true/>' \
-              '  <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>' \
-              '</dict></plist>' \
-              > "$BUNDLE/Contents/Info.plist"
+          # Info.plist — already present in the repo at Loca.app/Contents/Info.plist
+          # (nothing to do; the checkout provides it)
+
+          # App icon
+          if [ -f "Loca-SwiftUI/Sources/Loca/Assets.xcassets/AppIcon.appiconset/loca.icns" ]; then
+            cp "Loca-SwiftUI/Sources/Loca/Assets.xcassets/AppIcon.appiconset/loca.icns" "$RESOURCES/loca.icns"
           fi
 
           # Ad-hoc signature

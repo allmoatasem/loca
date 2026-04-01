@@ -72,8 +72,8 @@ searxng-settings.yaml
 # Claude Code
 .claude/
 
-# Obsidian vault (personal knowledge base)
-obsidian/
+# Obsidian vault
+.obsidian/
 
 # Env / secrets
 .env
