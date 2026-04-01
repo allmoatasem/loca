@@ -39,6 +39,7 @@ fi
 # ── 2. Assemble bundle ────────────────────────────────────────────────────────
 
 mkdir -p "$MACOS" "$RESOURCES"
+printf 'APPL????' > "$BUNDLE/Contents/PkgInfo"
 
 # Swift binary
 rm -f "$MACOS/LocalAI"
