@@ -72,8 +72,8 @@ searxng-settings.yaml
 # Claude Code
 .claude/
 
-# Obsidian vault (personal knowledge base)
-obsidian/
+# Obsidian vault symlinks (personal knowledge base, synced via iCloud)
+.obsidian/
 
 # Env / secrets
 .env
