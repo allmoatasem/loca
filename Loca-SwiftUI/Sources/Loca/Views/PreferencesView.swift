@@ -11,6 +11,7 @@ struct PreferencesView: View {
                 Text("Inference").tag(1)
                 Text("Performance").tag(2)
                 Text("System Prompt").tag(3)
+                Text("Server").tag(4)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 20)
@@ -23,6 +24,7 @@ struct PreferencesView: View {
             case 1:  InferencePrefsTab()
             case 2:  PerformancePrefsTab()
             case 3:  SystemPromptPrefsTab()
+            case 4:  ServerPrefsTab()
             default: GeneralPrefsTab()
             }
         }
@@ -377,6 +379,97 @@ private struct IntSliderRow: View {
                 .foregroundColor(.secondary)
         }
         .opacity(enabled ? 1 : 0.55)
+    }
+}
+
+// MARK: - Server
+
+private struct ServerPrefsTab: View {
+    @EnvironmentObject var state: AppState
+    @State private var hostInput: String = ""
+    @State private var connectionStatus: ConnectionStatus = .unknown
+
+    private enum ConnectionStatus: Equatable {
+        case unknown, checking, connected, failed
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                HStack {
+                    Text("Backend host")
+                        .frame(width: 120, alignment: .leading)
+                    TextField("localhost", text: $hostInput)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { applyHost() }
+                    Button("Connect") { applyHost() }
+                        .disabled(hostInput.trimmingCharacters(in: .whitespacesAndNewlines) == state.serverHost)
+                }
+
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 8, height: 8)
+                    Text(statusLabel)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.top, 2)
+
+                Text("Enter a hostname or IP address. Use a Tailscale IP (e.g. 100.x.x.x) to connect to a remote machine running Loca's backend.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } header: {
+                Text("Remote Server")
+            }
+
+            Section {
+                Button("Reset to localhost") {
+                    hostInput = "localhost"
+                    applyHost()
+                }
+                .disabled(state.serverHost == "localhost")
+            }
+        }
+        .formStyle(.grouped)
+        .padding(20)
+        .frame(width: 540)
+        .onAppear {
+            hostInput = state.serverHost
+            checkConnection()
+        }
+    }
+
+    private var statusColor: Color {
+        switch connectionStatus {
+        case .unknown:   return .gray
+        case .checking:  return .yellow
+        case .connected: return .green
+        case .failed:    return .red
+        }
+    }
+
+    private var statusLabel: String {
+        switch connectionStatus {
+        case .unknown:   return "Not checked"
+        case .checking:  return "Connecting to \(state.serverHost)…"
+        case .connected: return "Connected to \(state.serverHost)"
+        case .failed:    return "Cannot reach \(state.serverHost):8000"
+        }
+    }
+
+    private func applyHost() {
+        let h = hostInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        state.serverHost = h.isEmpty ? "localhost" : h
+        checkConnection()
+    }
+
+    private func checkConnection() {
+        connectionStatus = .checking
+        Task {
+            let healthy = await BackendClient.shared.isHealthy()
+            connectionStatus = healthy ? .connected : .failed
+        }
     }
 }
 

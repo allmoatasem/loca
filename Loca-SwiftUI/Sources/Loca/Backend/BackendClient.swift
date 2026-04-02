@@ -1,18 +1,30 @@
 import Foundation
 
-/// Async/await client for the local FastAPI proxy at localhost:8000.
+/// Async/await client for the Loca FastAPI proxy.
+/// Supports both local (localhost:8000) and remote (Tailscale IP) backends.
 /// All methods throw `BackendError` on failure.
 actor BackendClient {
 
     static let shared = BackendClient()
 
-    private let base = URL(string: "http://localhost:8000")!
+    private var base: URL
     private let session: URLSession = {
         let cfg = URLSessionConfiguration.default
         cfg.timeoutIntervalForRequest  = 300
         cfg.timeoutIntervalForResource = 600
         return URLSession(configuration: cfg)
     }()
+
+    init() {
+        let host = UserDefaults.standard.string(forKey: "serverHost") ?? "localhost"
+        self.base = URL(string: "http://\(host):8000")!
+    }
+
+    func updateBaseURL(host: String) {
+        let sanitized = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let h = sanitized.isEmpty ? "localhost" : sanitized
+        self.base = URL(string: "http://\(h):8000")!
+    }
 
     // MARK: - Health
 
@@ -98,7 +110,7 @@ actor BackendClient {
 
     func fetchRepoFiles(repoId: String, format: String = "gguf") async throws -> [RepoFile] {
         let encoded = repoId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? repoId
-        guard let url = URL(string: "http://localhost:8000/api/repo-files?repo_id=\(encoded)&format=\(format)") else {
+        guard let url = URL(string: "\(base.absoluteString)/api/repo-files?repo_id=\(encoded)&format=\(format)") else {
             throw URLError(.badURL)
         }
         let (data, _) = try await session.data(from: url)
@@ -143,12 +155,13 @@ actor BackendClient {
         AsyncThrowingStream { continuation in
             Task {
                 do {
-                    var urlReq = URLRequest(url: base.appendingPathComponent("v1/chat/completions"))
+                    let (chatURL, sess) = await self.streamConfig()
+                    var urlReq = URLRequest(url: chatURL)
                     urlReq.httpMethod = "POST"
                     urlReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     urlReq.httpBody  = try JSONEncoder().encode(request)
 
-                    let (bytes, _) = try await session.bytes(for: urlReq)
+                    let (bytes, _) = try await sess.bytes(for: urlReq)
                     var buffer = ""
                     for try await byte in bytes {
                         let ch = String(bytes: [byte], encoding: .utf8) ?? ""
@@ -170,6 +183,11 @@ actor BackendClient {
                 }
             }
         }
+    }
+
+    /// Returns the chat completions URL and session for use from nonisolated contexts.
+    private func streamConfig() -> (URL, URLSession) {
+        (base.appendingPathComponent("v1/chat/completions"), session)
     }
 
     // MARK: - Conversations
