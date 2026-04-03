@@ -244,7 +244,7 @@ def scan_vault(vault_path: str) -> dict:
 
             # File timestamps
             stat = fpath.stat()
-            created = stat.st_birthtime if hasattr(stat, "st_birthtime") else stat.st_ctime
+            created = getattr(stat, "st_birthtime", stat.st_ctime)
             modified = stat.st_mtime
 
             # Upsert note
