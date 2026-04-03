@@ -10,7 +10,6 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -79,14 +78,14 @@ class TestParseNote:
     def test_wiki_links(self):
         text = "# Note\nSee [[Other Note]] and [[Linked|alias]]."
         result = parse_note("test.md", text)
-        links = [l["to_note"] for l in result["links"]]
+        links = [lk["to_note"] for lk in result["links"]]
         assert "Other Note" in links
         assert "Linked" in links
 
     def test_markdown_links_internal(self):
         text = "# Note\nSee [guide](setup-guide.md) for details."
         result = parse_note("test.md", text)
-        links = [l["to_note"] for l in result["links"]]
+        links = [lk["to_note"] for lk in result["links"]]
         assert "setup-guide.md" in links
 
     def test_markdown_links_external_skipped(self):
