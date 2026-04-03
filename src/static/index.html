@@ -1582,7 +1582,7 @@ code[class*="language-"] {
       <select id="vault-select" onchange="selectVault(this.value)" style="display:none"><option value="">Detected vaults...</option></select>
       <input id="vault-path-input" type="text" placeholder="Paste vault path or select detected vault..." onkeydown="if(event.key==='Enter')selectVault(this.value)">
       <div class="vault-actions">
-        <button class="sidebar-action-btn" onclick="scanVault()" id="vault-scan-btn" style="flex:none">Scan</button>
+        <button id="vault-scan-btn" onclick="scanVault()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--text);font-size:12px;cursor:pointer">Scan</button>
         <button class="panel-close" onclick="closeVaultPanel()">&times;</button>
       </div>
     </div>

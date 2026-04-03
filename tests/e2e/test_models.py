@@ -11,7 +11,7 @@ def _open_panel(page, base_url, models=None):
         status=200, content_type="application/json",
         body=json.dumps({"models": models or []}),
     ))
-    page.locator(".sidebar-action-btn").nth(2).click()
+    page.locator(".sidebar-action-btn").nth(3).click()
     page.wait_for_selector("#models-overlay.open")
 
 
@@ -45,7 +45,9 @@ class TestModelsPanel:
     def test_downloaded_empty_and_populated(self, page, base_url):
         """Empty state, then list with badges, dots, and action buttons."""
         _open_panel(page, base_url)
-        assert "No models downloaded" in page.locator("#models-panel-body").text_content()
+        page.wait_for_function(
+            "document.getElementById('models-panel-body')?.textContent?.includes('No models downloaded')"
+        )
         page.locator("#models-panel .panel-close").click()
 
         models = [
