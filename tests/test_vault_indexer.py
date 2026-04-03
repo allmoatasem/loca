@@ -3,6 +3,7 @@ Tests for the Obsidian vault indexer (src/vault_indexer.py).
 
 Run with: pytest tests/test_vault_indexer.py -v
 """
+from __future__ import annotations
 
 import json
 import os
@@ -10,6 +11,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
