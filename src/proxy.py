@@ -39,6 +39,7 @@ from .store import (
     get_conversation,
     list_conversations,
     list_memories,
+    list_vault_notes,
     patch_conversation,
     save_conversation,
     search_conversations,
@@ -863,6 +864,72 @@ async def api_repo_files(repo_id: str = "", format: str = "gguf") -> JSONRespons
         return JSONResponse({"files": files})
     except Exception as e:
         return JSONResponse({"files": [], "error": str(e)})
+
+
+# ---------------------------------------------------------------------------
+# Vault API
+# ---------------------------------------------------------------------------
+
+@app.get("/api/vault/detect")
+async def api_vault_detect() -> JSONResponse:
+    from .vault_indexer import detect_vaults
+    return JSONResponse({"vaults": detect_vaults()})
+
+
+@app.post("/api/vault/scan")
+async def api_vault_scan(request: Request) -> JSONResponse:
+    from .vault_indexer import scan_vault, validate_vault_path
+    body = await request.json()
+    vault_path = body.get("path", "")
+    if not vault_path:
+        return JSONResponse({"error": "path is required"}, status_code=400)
+    err = validate_vault_path(vault_path)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    loop = asyncio.get_event_loop()
+    try:
+        stats = await loop.run_in_executor(None, scan_vault, vault_path)
+        return JSONResponse({"ok": True, **stats})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/vault/stats")
+async def api_vault_stats(path: str = "") -> JSONResponse:
+    from .vault_analyser import vault_stats
+    if not path:
+        return JSONResponse({"error": "path query param is required"}, status_code=400)
+    return JSONResponse(vault_stats(path))
+
+
+@app.get("/api/vault/analysis")
+async def api_vault_analysis(path: str = "") -> JSONResponse:
+    from .vault_analyser import full_analysis
+    if not path:
+        return JSONResponse({"error": "path query param is required"}, status_code=400)
+    return JSONResponse(full_analysis(path))
+
+
+@app.get("/api/vault/search")
+async def api_vault_search(path: str = "", q: str = "", limit: int = 20) -> JSONResponse:
+    if not path or not q.strip():
+        return JSONResponse({"results": []})
+    notes = list_vault_notes(path)
+    query = q.lower()
+    results = []
+    for n in notes:
+        tags = n["tags"] if isinstance(n["tags"], list) else json.loads(n["tags"])
+        searchable = f"{n['title']} {n['rel_path']} {' '.join(tags)}".lower()
+        if query in searchable:
+            results.append({
+                "rel_path": n["rel_path"],
+                "title": n["title"],
+                "tags": tags,
+                "word_count": n["word_count"],
+            })
+        if len(results) >= limit:
+            break
+    return JSONResponse({"results": results})
 
 
 @app.post("/api/extract-memories")

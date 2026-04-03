@@ -64,6 +64,34 @@ def _migrate(c: sqlite3.Connection) -> None:
     mem_cols = {r[1] for r in c.execute("PRAGMA table_info(memories)")}
     if "type" not in mem_cols:
         c.execute("ALTER TABLE memories ADD COLUMN type TEXT NOT NULL DEFAULT 'user_fact'")
+
+    # Vault analyser tables
+    c.executescript("""
+    CREATE TABLE IF NOT EXISTS vault_notes (
+        id           TEXT PRIMARY KEY,
+        vault_path   TEXT NOT NULL,
+        rel_path     TEXT NOT NULL,
+        title        TEXT NOT NULL,
+        word_count   INTEGER NOT NULL DEFAULT 0,
+        tags         TEXT NOT NULL DEFAULT '[]',
+        headings     TEXT NOT NULL DEFAULT '[]',
+        created      REAL,
+        modified     REAL,
+        content_hash TEXT NOT NULL,
+        indexed_at   REAL NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_notes_rel ON vault_notes(vault_path, rel_path);
+
+    CREATE TABLE IF NOT EXISTS vault_links (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        vault_path TEXT NOT NULL,
+        from_note TEXT NOT NULL,
+        to_note   TEXT NOT NULL,
+        link_type TEXT NOT NULL DEFAULT 'wiki'
+    );
+    CREATE INDEX IF NOT EXISTS idx_vault_links_from ON vault_links(vault_path, from_note);
+    CREATE INDEX IF NOT EXISTS idx_vault_links_to   ON vault_links(vault_path, to_note);
+    """)
     c.commit()
 
 
@@ -184,6 +212,93 @@ def delete_memory(mem_id: str) -> None:
     with _conn() as c:
         c.execute("DELETE FROM memories WHERE id=?", (mem_id,))
         c.commit()
+
+
+# ── Vault ────────────────────────────────────────────────────────────────────
+
+
+def upsert_vault_note(note: dict) -> None:
+    with _conn() as c:
+        c.execute(
+            """INSERT INTO vault_notes
+                   (id, vault_path, rel_path, title, word_count, tags, headings,
+                    created, modified, content_hash, indexed_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(vault_path, rel_path) DO UPDATE SET
+                    title        = excluded.title,
+                    word_count   = excluded.word_count,
+                    tags         = excluded.tags,
+                    headings     = excluded.headings,
+                    created      = excluded.created,
+                    modified     = excluded.modified,
+                    content_hash = excluded.content_hash,
+                    indexed_at   = excluded.indexed_at""",
+            (
+                note["id"], note["vault_path"], note["rel_path"], note["title"],
+                note["word_count"], json.dumps(note["tags"]), json.dumps(note["headings"]),
+                note.get("created"), note.get("modified"),
+                note["content_hash"], note["indexed_at"],
+            ),
+        )
+        c.commit()
+
+
+def replace_vault_links(vault_path: str, from_note: str, links: list[dict]) -> None:
+    with _conn() as c:
+        c.execute(
+            "DELETE FROM vault_links WHERE vault_path=? AND from_note=?",
+            (vault_path, from_note),
+        )
+        for lnk in links:
+            c.execute(
+                "INSERT INTO vault_links (vault_path, from_note, to_note, link_type) VALUES (?, ?, ?, ?)",
+                (vault_path, from_note, lnk["to_note"], lnk.get("link_type", "wiki")),
+            )
+        c.commit()
+
+
+def delete_vault_note(vault_path: str, rel_path: str) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM vault_notes WHERE vault_path=? AND rel_path=?", (vault_path, rel_path))
+        c.execute("DELETE FROM vault_links WHERE vault_path=? AND from_note=?", (vault_path, rel_path))
+        c.commit()
+
+
+def clear_vault_index(vault_path: str) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM vault_notes WHERE vault_path=?", (vault_path,))
+        c.execute("DELETE FROM vault_links WHERE vault_path=?", (vault_path,))
+        c.commit()
+
+
+def list_vault_notes(vault_path: str) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM vault_notes WHERE vault_path=? ORDER BY rel_path", (vault_path,)
+        ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["tags"] = json.loads(d["tags"])
+        d["headings"] = json.loads(d["headings"])
+        result.append(d)
+    return result
+
+
+def list_vault_links(vault_path: str) -> list[dict]:
+    with _conn() as c:
+        return [dict(r) for r in c.execute(
+            "SELECT * FROM vault_links WHERE vault_path=? ORDER BY from_note", (vault_path,)
+        )]
+
+
+def get_vault_note_content_hash(vault_path: str, rel_path: str) -> str | None:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT content_hash FROM vault_notes WHERE vault_path=? AND rel_path=?",
+            (vault_path, rel_path),
+        ).fetchone()
+    return row["content_hash"] if row else None
 
 
 def get_memories_context(limit_per_type: int = 10) -> str:

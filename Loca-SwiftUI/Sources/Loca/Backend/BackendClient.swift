@@ -255,6 +255,26 @@ actor BackendClient {
         return try JSONDecoder().decode(UploadResult.self, from: respData)
     }
 
+    // MARK: - Vault
+
+    func detectVaults() async throws -> [DetectedVault] {
+        let (data, _) = try await get("/api/vault/detect")
+        return try JSONDecoder().decode(DetectedVaultsResponse.self, from: data).vaults
+    }
+
+    func scanVault(path: String) async throws -> VaultScanResult {
+        let (data, _) = try await post("/api/vault/scan", body: ["path": path])
+        return try JSONDecoder().decode(VaultScanResult.self, from: data)
+    }
+
+    func vaultAnalysis(path: String) async throws -> VaultAnalysis {
+        var comps = URLComponents(url: base, resolvingAgainstBaseURL: false)!
+        comps.path = "/api/vault/analysis"
+        comps.queryItems = [URLQueryItem(name: "path", value: path)]
+        let (data, _) = try await session.data(from: comps.url!)
+        return try JSONDecoder().decode(VaultAnalysis.self, from: data)
+    }
+
     // MARK: - System stats
 
     func systemStats() async throws -> SystemStats {

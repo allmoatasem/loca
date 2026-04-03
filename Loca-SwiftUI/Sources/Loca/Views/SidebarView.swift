@@ -15,10 +15,14 @@ private struct TooltipModifier: ViewModifier {
     }
 }
 
+private class PassthroughTooltipNSView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 private struct TooltipView: NSViewRepresentable {
     let text: String
     func makeNSView(context: Context) -> NSView {
-        let v = NSView()
+        let v = PassthroughTooltipNSView()
         v.toolTip = text
         return v
     }
@@ -437,6 +441,14 @@ struct SidebarFooter: View {
             .buttonStyle(.plain)
             .nativeTooltip("Memories — facts extracted from your conversations and injected into every new chat. Click to view and manage them.")
 
+            Button { state.isVaultOpen.toggle() } label: {
+                Image(systemName: "books.vertical")
+                    .font(.system(size: 16))
+                    .foregroundColor(.secondary)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .nativeTooltip("Vault Analyser — analyse your Obsidian vault. Read-only.")
 
             if let dl = state.activeDownload, !dl.done, dl.error == nil {
                 Button { state.isSettingsOpen = true } label: {

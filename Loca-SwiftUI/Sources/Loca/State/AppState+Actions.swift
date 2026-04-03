@@ -440,6 +440,40 @@ extension AppState {
         }
     }
 
+    // MARK: - Vault
+
+    func _detectVaults() async {
+        do {
+            detectedVaults = try await BackendClient.shared.detectVaults()
+            if selectedVaultPath.isEmpty, let first = detectedVaults.first {
+                selectedVaultPath = first.path
+            }
+        } catch {}
+    }
+
+    func _scanVault() async {
+        guard !selectedVaultPath.isEmpty else { return }
+        isVaultScanning = true
+        vaultError = nil
+        vaultScanResult = nil
+        do {
+            let result = try await BackendClient.shared.scanVault(path: selectedVaultPath)
+            vaultScanResult = result
+            if let err = result.error { vaultError = err }
+            else { await _analyseVault() }
+        } catch { vaultError = error.localizedDescription }
+        isVaultScanning = false
+    }
+
+    func _analyseVault() async {
+        guard !selectedVaultPath.isEmpty else { return }
+        isVaultAnalysing = true
+        vaultError = nil
+        do { vaultAnalysis = try await BackendClient.shared.vaultAnalysis(path: selectedVaultPath) }
+        catch { vaultError = error.localizedDescription }
+        isVaultAnalysing = false
+    }
+
     // MARK: - System stats
 
     private func _scheduleStatsPoll() {

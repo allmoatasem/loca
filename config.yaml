@@ -60,6 +60,9 @@ tools:
     - python3
     - pwd
 
+vault:
+  path: null                 # Obsidian vault path (auto-detected if null)
+
 proxy:
   host: 0.0.0.0
   port: 8000
