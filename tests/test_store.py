@@ -181,3 +181,97 @@ def test_get_memories_context_only_user_facts():
     assert "User facts:" in ctx
     assert "Verified knowledge" not in ctx
     assert "User corrections" not in ctx
+
+
+# ── Vault ────────────────────────────────────────────────────────────────────
+
+def test_upsert_and_list_vault_notes():
+    note = {
+        "id": "n1", "vault_path": "/v", "rel_path": "test.md", "title": "Test",
+        "word_count": 10, "tags": ["python"], "headings": [{"level": 1, "text": "Test"}],
+        "created": 1.0, "modified": 2.0, "content_hash": "abc123", "indexed_at": 3.0,
+    }
+    store_module.upsert_vault_note(note)
+    notes = store_module.list_vault_notes("/v")
+    assert len(notes) == 1
+    assert notes[0]["title"] == "Test"
+    assert notes[0]["tags"] == ["python"]
+
+
+def test_upsert_vault_note_updates_on_conflict():
+    note = {
+        "id": "n1", "vault_path": "/v", "rel_path": "test.md", "title": "Old",
+        "word_count": 5, "tags": [], "headings": [],
+        "created": 1.0, "modified": 2.0, "content_hash": "hash1", "indexed_at": 3.0,
+    }
+    store_module.upsert_vault_note(note)
+    note["id"] = "n2"  # different id but same vault_path+rel_path
+    note["title"] = "Updated"
+    note["content_hash"] = "hash2"
+    store_module.upsert_vault_note(note)
+    notes = store_module.list_vault_notes("/v")
+    assert len(notes) == 1
+    assert notes[0]["title"] == "Updated"
+
+
+def test_replace_vault_links():
+    store_module.replace_vault_links("/v", "a.md", [
+        {"to_note": "b", "link_type": "wiki"},
+        {"to_note": "c.md", "link_type": "markdown"},
+    ])
+    links = store_module.list_vault_links("/v")
+    assert len(links) == 2
+    # Replace with new set
+    store_module.replace_vault_links("/v", "a.md", [{"to_note": "d", "link_type": "wiki"}])
+    links = store_module.list_vault_links("/v")
+    assert len(links) == 1
+    assert links[0]["to_note"] == "d"
+
+
+def test_delete_vault_note():
+    note = {
+        "id": "n1", "vault_path": "/v", "rel_path": "del.md", "title": "Del",
+        "word_count": 1, "tags": [], "headings": [],
+        "created": 1.0, "modified": 2.0, "content_hash": "h", "indexed_at": 3.0,
+    }
+    store_module.upsert_vault_note(note)
+    store_module.replace_vault_links("/v", "del.md", [{"to_note": "x"}])
+    store_module.delete_vault_note("/v", "del.md")
+    assert store_module.list_vault_notes("/v") == []
+    assert store_module.list_vault_links("/v") == []
+
+
+def test_get_vault_note_content_hash():
+    note = {
+        "id": "n1", "vault_path": "/v", "rel_path": "h.md", "title": "H",
+        "word_count": 1, "tags": [], "headings": [],
+        "created": 1.0, "modified": 2.0, "content_hash": "myhash", "indexed_at": 3.0,
+    }
+    store_module.upsert_vault_note(note)
+    assert store_module.get_vault_note_content_hash("/v", "h.md") == "myhash"
+    assert store_module.get_vault_note_content_hash("/v", "missing.md") is None
+
+
+def test_clear_vault_index():
+    note = {
+        "id": "n1", "vault_path": "/v", "rel_path": "c.md", "title": "C",
+        "word_count": 1, "tags": [], "headings": [],
+        "created": 1.0, "modified": 2.0, "content_hash": "h", "indexed_at": 3.0,
+    }
+    store_module.upsert_vault_note(note)
+    store_module.replace_vault_links("/v", "c.md", [{"to_note": "x"}])
+    store_module.clear_vault_index("/v")
+    assert store_module.list_vault_notes("/v") == []
+    assert store_module.list_vault_links("/v") == []
+
+
+def test_vault_notes_isolated_by_path():
+    for vp in ["/v1", "/v2"]:
+        note = {
+            "id": f"n-{vp}", "vault_path": vp, "rel_path": "same.md", "title": vp,
+            "word_count": 1, "tags": [], "headings": [],
+            "created": 1.0, "modified": 2.0, "content_hash": "h", "indexed_at": 3.0,
+        }
+        store_module.upsert_vault_note(note)
+    assert len(store_module.list_vault_notes("/v1")) == 1
+    assert len(store_module.list_vault_notes("/v2")) == 1
