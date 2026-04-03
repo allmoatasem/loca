@@ -203,6 +203,19 @@ final class AppState: ObservableObject {
     @Published var isSuggestingParams = false
     @Published var paramSuggestionError: String?
 
+    // MARK: - Vault
+
+    @Published var isVaultOpen          = false
+    @Published var detectedVaults: [DetectedVault] = []
+    @Published var selectedVaultPath: String = UserDefaults.standard.string(forKey: "vaultPath") ?? "" {
+        didSet { UserDefaults.standard.set(selectedVaultPath, forKey: "vaultPath") }
+    }
+    @Published var vaultAnalysis: VaultAnalysis?
+    @Published var isVaultScanning      = false
+    @Published var isVaultAnalysing     = false
+    @Published var vaultScanResult: VaultScanResult?
+    @Published var vaultError: String?
+
     // MARK: - Conversation search
 
     @Published var conversationQuery   = ""
@@ -239,5 +252,9 @@ final class AppState: ObservableObject {
         _startDownload(repoId: dl.repoId, filename: dl.filename, format: dl.format)
     }
     func cancelDownload() { Task { await _cancelDownload() } }
+    func detectVaults()   { Task { await _detectVaults() } }
+    func scanVault()      { Task { await _scanVault() } }
+    func analyseVault()   { Task { await _analyseVault() } }
+    func selectVaultPath(_ path: String) { selectedVaultPath = path; analyseVault() }
 }
 

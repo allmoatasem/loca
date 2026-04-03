@@ -504,6 +504,65 @@ struct ExtractMemoriesResponse: Decodable {
     let memories: [Memory]
 }
 
+// MARK: - Vault
+
+struct DetectedVault: Decodable, Identifiable {
+    let name: String
+    let path: String
+    var id: String { path }
+}
+
+struct DetectedVaultsResponse: Decodable { let vaults: [DetectedVault] }
+
+struct VaultScanResult: Decodable {
+    let ok: Bool?; let total: Int?; let added: Int?; let updated: Int?
+    let removed: Int?; let skipped: Int?; let errors: Int?; let error: String?
+}
+
+struct VaultStats: Decodable {
+    let note_count: Int; let link_count: Int; let total_words: Int
+    let tag_count: Int; let top_tags: [TagCount]; let folder_count: Int
+    struct TagCount: Decodable, Identifiable { let tag: String; let count: Int; var id: String { tag } }
+}
+
+struct VaultAnalysis: Decodable {
+    let stats: VaultStats; let orphans: [OrphanNote]; let dead_ends: [DeadEndNote]
+    let broken_links: [BrokenLink]; let tag_orphans: [TagOrphan]; let link_suggestions: [LinkSuggestion]
+}
+
+struct OrphanNote: Decodable, Identifiable {
+    let rel_path: String; let title: String; let word_count: Int; let has_outgoing_links: Bool
+    var id: String { rel_path }
+}
+
+struct DeadEndNote: Decodable, Identifiable {
+    let rel_path: String; let title: String; let word_count: Int
+    var id: String { rel_path }
+}
+
+struct BrokenLink: Decodable, Identifiable {
+    let from_note: String; let to_note: String; let link_type: String
+    var id: String { "\(from_note)->\(to_note)" }
+}
+
+struct TagOrphan: Decodable, Identifiable {
+    let tag: String; let note: String; var id: String { tag }
+}
+
+struct LinkSuggestion: Decodable, Identifiable {
+    let note_a: NoteRef; let note_b: NoteRef; let shared_tags: [String]
+    let score: Int; let reason: String
+    var id: String { "\(note_a.rel_path)<>\(note_b.rel_path)" }
+    struct NoteRef: Decodable { let rel_path: String; let title: String }
+}
+
+struct VaultSearchResult: Decodable, Identifiable {
+    let rel_path: String; let title: String; let tags: [String]; let word_count: Int
+    var id: String { rel_path }
+}
+
+struct VaultSearchResponse: Decodable { let results: [VaultSearchResult] }
+
 // MARK: - File upload
 
 struct UploadResult: Decodable {
