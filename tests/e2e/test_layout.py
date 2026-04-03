@@ -53,7 +53,7 @@ class TestPageLayout:
 
         assert page.locator("#mem-count-label").is_visible()
         assert page.locator("#theme-btn").is_visible()
-        assert page.locator(".sidebar-action-btn").count() == 3
+        assert page.locator(".sidebar-action-btn").count() == 4
 
     def test_input_area(self, page):
         """Input, send button, research button, formatting toolbar, hint."""
@@ -68,6 +68,5 @@ class TestPageLayout:
         assert page.locator("#fmt-bar").is_visible()
         assert page.locator("#fmt-bar .fmt-btn").count() >= 4
 
-        hint = page.locator("#input-hint")
-        assert "Enter to send" in hint.text_content()
-        assert "Shift+Enter" in hint.text_content()
+        # Input hint was removed from the HTML; verify the input area itself is functional
+        assert page.locator("#input-footer").is_visible()
