@@ -36,6 +36,11 @@
 │  • GET /api/hf-search  →  Hugging Face Hub search API                 │
 │  • GET /api/repo-files  →  Hugging Face sibling files for a repo      │
 │  • POST /api/upload  →  image/pdf/text extraction                     │
+│  • GET /api/vault/detect  →  auto-detect Obsidian vaults              │
+│  • POST /api/vault/scan  →  vault_indexer.scan_vault() (read-only)   │
+│  • GET /api/vault/analysis  →  vault_analyser.full_analysis()         │
+│  • GET /api/vault/search  →  keyword search across indexed vault      │
+│  • GET /api/vault/stats  →  vault_analyser.vault_stats()              │
 └───────────┬────────────────────────────────────────────────────────── ┘
             │
             ▼
@@ -90,7 +95,9 @@ Separate process:
 | `src/model_manager.py` | Local model inventory (list, load, delete) and HF Hub download with real-time SSE progress, pause/resume/cancel via HTTP Range headers. |
 | `src/hardware_profiler.py` | Hardware detection and model recommendations. Runs llmfit (auto-downloaded); falls back to built-in catalog. Exposes `HardwareProfile` and `ModelRecommendation` dataclasses. |
 | `src/router.py` | Keyword-based message routing to general/code/reason modes. Search trigger detection. |
-| `src/store.py` | SQLite store (`data/loca.db`). Conversations (messages, title, starred, folder) and memories (user_fact, knowledge, correction). |
+| `src/store.py` | SQLite store (`data/loca.db`). Conversations (messages, title, starred, folder), memories (user_fact, knowledge, correction), and vault index (vault_notes, vault_links). |
+| `src/vault_indexer.py` | Obsidian vault scanner. Auto-detects vaults from Obsidian config, parses markdown (frontmatter, wiki-links, tags, headings), indexes to SQLite. Read-only — never writes to the vault. |
+| `src/vault_analyser.py` | Structural analysis of indexed vaults: orphan notes, dead ends, broken links, single-use tags, tag-based link suggestions. |
 | `src/memory_extractor.py` | Three-pass LLM extraction of user facts, verified knowledge, and user corrections from conversations. |
 | `src/tools/web_search.py` | SearXNG query + trafilatura or Playwright content extraction. |
 | `src/tools/web_fetch.py` | Fetch and clean a single URL. |
@@ -168,6 +175,52 @@ Extraction runs after each conversation turn via `POST /api/extract-memories`. T
 **Fallback path:** If llmfit is unavailable, a built-in catalog of ~8 curated Qwen2.5 / MLX models is used, filtered by `total_ram_gb`.
 
 Recommendations are cached in `_recs_cache` (in-memory dict) and served from `/api/recommended-models`. A `?force=true` query parameter rebuilds the cache.
+
+---
+
+## Vault analyser
+
+The vault analyser indexes Obsidian vaults and surfaces structural insights. It is **strictly read-only** — no writes, renames, deletes, or file watchers touch the vault.
+
+```
+User opens Vault panel
+      │
+      ▼
+GET /api/vault/detect
+      │  reads ~/Library/Application Support/obsidian/obsidian.json
+      │  (Linux: ~/.config/obsidian/, Windows: %APPDATA%/obsidian/)
+      │  returns [{name, path}]
+      │
+      ▼
+POST /api/vault/scan  {path}
+      │  validates: .obsidian/ exists, path under $HOME, no symlink escape
+      │  walks .md files, skips .obsidian/, .trash/, .icloud placeholders
+      │  parses each note: frontmatter tags, inline #tags, [[wiki-links]],
+      │    [md](links), headings, word count, content SHA-256
+      │  upserts into vault_notes + vault_links tables (incremental via hash)
+      │  returns {total, added, updated, skipped, removed, errors}
+      │
+      ▼
+GET /api/vault/analysis?path=...
+      │  runs all analyses on the SQLite index (not the vault files):
+      │    - stats (note/link/word/tag/folder counts, top tags)
+      │    - orphan notes (no incoming links)
+      │    - dead-end notes (no outgoing links)
+      │    - broken links (target note doesn't exist)
+      │    - single-use tags
+      │    - link suggestions (notes sharing tags but not linked)
+      │
+      ▼
+Displayed in VaultView (SwiftUI) or vault panel (HTML)
+```
+
+**Safety guards:**
+- `open(path, 'r')` only — no write imports exist in vault modules
+- Model never sees absolute filesystem paths (vault-relative only)
+- Vault path must contain `.obsidian/` and be under `$HOME`
+- Symlinks that resolve outside the vault are rejected
+- iCloud `.icloud` placeholder files are skipped
+- No file watchers — manual scan only
 
 ---
 

@@ -25,6 +25,10 @@ Loca-SwiftUI/
       ChatTextEditor.swift   ← Custom NSTextView wrapper for multi-line input + paste handling
       SettingsView.swift     ← TabView: Manage Models (Installed / Discover / Search HF),
                                Memories, Settings
+      VaultView.swift        ← Vault Analyser modal: vault picker, scan, 4-tab analysis
+                               (Overview, Orphans, Broken Links, Suggestions)
+      AcknowledgementsView.swift ← Credits and acknowledgments panel
+      PreferencesView.swift  ← User preferences (theme, inference recipe, system prompt)
 ```
 
 ---
@@ -52,7 +56,7 @@ Loca-SwiftUI/
                                         │ @EnvironmentObject
                               ┌─────────┼──────────┐
                               │         │          │
-                         RootView  ChatView  SettingsView
+                         RootView  ChatView  SettingsView  VaultView
                               │               │
                          SidebarView    DiscoverTab / InstalledTab / ...
 ```
@@ -85,6 +89,9 @@ Key methods:
 | `fetchConversations()` | `GET /api/conversations` |
 | `saveConversation(...)` | `POST /api/conversations` |
 | `sendMessage(messages:...)` | `POST /v1/chat/completions` (streaming SSE) |
+| `detectVaults()` | `GET /api/vault/detect` |
+| `scanVault(path:)` | `POST /api/vault/scan` |
+| `vaultAnalysis(path:)` | `GET /api/vault/analysis` |
 
 SSE streaming (chat completions and download progress) uses `URLSession.bytes(for:)` — an `AsyncBytes` sequence — iterated line by line.
 
@@ -103,6 +110,10 @@ All types conform to `Codable` and are value types (`struct`). Key types:
 | `HardwareProfile` | platform, arch, cpuName, totalRamGb, hasAppleSilicon, llmfitAvailable |
 | `ModelRecommendation` | name, repoId, filename, format, sizeGb, fitLevel, useCase, provider, score, tps, why |
 | `Memory` | id, content, type, createdAt |
+| `DetectedVault` | name, path |
+| `VaultAnalysis` | stats, orphans, dead_ends, broken_links, tag_orphans, link_suggestions |
+| `VaultStats` | note_count, link_count, total_words, tag_count, top_tags, folder_count |
+| `VaultScanResult` | ok, total, added, updated, removed, skipped, errors |
 | `StartupStatus` | stage, progress |
 
 ---
@@ -140,6 +151,15 @@ All types conform to `Codable` and are value types (`struct`). Key types:
 2. If empty, calls `GET /api/recommended-models` → server runs llmfit (or returns in-memory cache)
 3. Results populate `recommendedModels` — filtered/paginated in `SettingsView` locally
 4. Refresh button calls `reloadRecommendations()` → `GET /api/recommended-models?force=true`
+
+### Vault analysis
+
+1. User clicks books icon in sidebar → `state.isVaultOpen = true` → VaultView overlay appears
+2. `onAppear` calls `state.detectVaults()` → `GET /api/vault/detect` → populates vault picker
+3. If one vault found, auto-selects and calls `state.analyseVault()` → `GET /api/vault/analysis`
+4. If vault not indexed (note_count == 0), shows "Scan Now" prompt
+5. Scan button calls `state.scanVault()` → `POST /api/vault/scan` → auto-refreshes analysis
+6. Analysis displayed in 4 tabs: Overview (stats, tags, health), Orphans, Broken Links, Suggestions
 
 ---
 

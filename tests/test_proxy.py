@@ -453,3 +453,86 @@ class TestDetectImage:
             {"role": "user", "content": "Second message"},
         ]
         assert _detect_image(messages) is False
+
+
+# ---------------------------------------------------------------------------
+# Vault API
+# ---------------------------------------------------------------------------
+
+class TestVaultDetect:
+    def test_detect_vaults(self, client):
+        with patch("src.vault_indexer.detect_vaults", return_value=[{"name": "studio", "path": "/home/user/vault"}]):
+            r = client.get("/api/vault/detect")
+        assert r.status_code == 200
+        assert len(r.json()["vaults"]) == 1
+        assert r.json()["vaults"][0]["name"] == "studio"
+
+
+class TestVaultScan:
+    def test_scan_missing_path(self, client):
+        r = client.post("/api/vault/scan", json={})
+        assert r.status_code == 400
+
+    def test_scan_invalid_path(self, client):
+        with patch("src.vault_indexer.validate_vault_path", return_value="Not a vault"):
+            r = client.post("/api/vault/scan", json={"path": "/bad"})
+        assert r.status_code == 400
+        assert "Not a vault" in r.json()["error"]
+
+    def test_scan_success(self, client):
+        stats = {"total": 10, "added": 10, "updated": 0, "skipped": 0, "removed": 0, "errors": 0}
+        with patch("src.vault_indexer.validate_vault_path", return_value=None), \
+             patch("src.vault_indexer.scan_vault", return_value=stats):
+            r = client.post("/api/vault/scan", json={"path": "/vault"})
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+        assert r.json()["total"] == 10
+
+
+class TestVaultStats:
+    def test_stats_missing_path(self, client):
+        r = client.get("/api/vault/stats")
+        assert r.status_code == 400
+
+    def test_stats_returns_data(self, client):
+        mock_stats = {"note_count": 5, "link_count": 3, "total_words": 100, "tag_count": 2, "top_tags": [], "folder_count": 1}
+        with patch("src.vault_analyser.vault_stats", return_value=mock_stats):
+            r = client.get("/api/vault/stats", params={"path": "/vault"})
+        assert r.status_code == 200
+        assert r.json()["note_count"] == 5
+
+
+class TestVaultAnalysis:
+    def test_analysis_missing_path(self, client):
+        r = client.get("/api/vault/analysis")
+        assert r.status_code == 400
+
+    def test_analysis_returns_full_report(self, client):
+        mock = {
+            "stats": {"note_count": 3, "link_count": 1, "total_words": 50, "tag_count": 2, "top_tags": [], "folder_count": 0},
+            "orphans": [{"rel_path": "o.md", "title": "O", "word_count": 10, "has_outgoing_links": False}],
+            "dead_ends": [], "broken_links": [], "tag_orphans": [], "link_suggestions": [],
+        }
+        with patch("src.vault_analyser.full_analysis", return_value=mock):
+            r = client.get("/api/vault/analysis", params={"path": "/vault"})
+        assert r.status_code == 200
+        assert r.json()["stats"]["note_count"] == 3
+        assert len(r.json()["orphans"]) == 1
+
+
+class TestVaultSearch:
+    def test_search_empty_query(self, client):
+        r = client.get("/api/vault/search", params={"path": "/v", "q": ""})
+        assert r.json()["results"] == []
+
+    def test_search_returns_matches(self, client):
+        mock_notes = [
+            {"rel_path": "ml.md", "title": "Machine Learning", "tags": ["python"], "word_count": 50,
+             "headings": [], "id": "1", "vault_path": "/v", "created": 1, "modified": 2, "content_hash": "h", "indexed_at": 3},
+            {"rel_path": "cooking.md", "title": "Recipes", "tags": ["food"], "word_count": 30,
+             "headings": [], "id": "2", "vault_path": "/v", "created": 1, "modified": 2, "content_hash": "h", "indexed_at": 3},
+        ]
+        with patch("src.proxy.list_vault_notes", return_value=mock_notes):
+            r = client.get("/api/vault/search", params={"path": "/v", "q": "machine"})
+        assert len(r.json()["results"]) == 1
+        assert r.json()["results"][0]["title"] == "Machine Learning"
