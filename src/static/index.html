@@ -1668,9 +1668,8 @@ function _applyLockdown() {
 // ── Image attachment warnings ─────────────────────────────────────────────────
 function _refreshAttachWarnings() {
   const hasImages = attachments.some(a => a && a.type === 'image');
-  const model = document.getElementById('model-select').value || currentMode;
   const warn = document.getElementById('attach-warn');
-  const show = hasImages && !_isVisionModel(model);
+  const show = hasImages && !_isVisionModel();
   warn.classList.toggle('visible', show);
   document.querySelectorAll('.attach-chip[data-type="image"]').forEach(el => {
     el.classList.toggle('attach-chip--warn', show);
@@ -1717,6 +1716,7 @@ async function refreshModelPicker() {
   } catch (_) {
     sel.innerHTML = '<option value="">Backend unavailable</option>';
   }
+  _refreshVisionFlag();
 }
 refreshModelPicker();
 _applyLockdown();
@@ -1967,19 +1967,18 @@ function buildUserContent(text) {
 }
 
 // ── Send ──────────────────────────────────────────────────────────────────────
-const _VISION_TERMS = [
-  'llava','moondream','bakllava','minicpm-v','idefics','cogvlm',
-  'internvl','qwen-vl','qwen2-vl','qwen2.5-vl','qwen3-vl',
-  'qwen3.5',
-  'blip','pixtral','phi-vision','phi3-vision','phi3.5-vision',
-  'gemini-vision','gemma4','gemma-4','paligemma','florence',
-];
-function _isVisionModel(name) {
-  if (!name) return false;
-  const l = name.toLowerCase();
-  if (_VISION_TERMS.some(t => l.includes(t))) return true;
-  return /(?:^|-)vl(?:-|$|\.)/.test(l);
+let _activeModelSupportsVision = false;
+
+async function _refreshVisionFlag() {
+  try {
+    const { models = [] } = await (await fetch('/api/local-models')).json();
+    const loaded = models.find(m => m.is_loaded);
+    _activeModelSupportsVision = loaded?.supports_vision ?? false;
+  } catch (_) {
+    _activeModelSupportsVision = false;
+  }
 }
+function _isVisionModel() { return _activeModelSupportsVision; }
 
 async function sendMessage() {
   const text = getInputText();
@@ -1994,7 +1993,7 @@ async function sendMessage() {
 
   // Guard: reject images for non-vision models
   const hasImages = attachments.some(a => a && a.type === 'image');
-  if (hasImages && !_isVisionModel(currentModel)) {
+  if (hasImages && !_isVisionModel()) {
     document.getElementById('empty')?.remove();
     appendUser(text, attachments.filter(Boolean));
     const { bodyEl } = appendAssistant(currentModel);

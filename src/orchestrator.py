@@ -235,6 +235,21 @@ class Orchestrator:
                             f"{resp.status_code}", request=resp.request, response=resp
                         )
                         continue
+                    if resp.status_code == 404:
+                        has_image = any(
+                            isinstance(m.get("content"), list)
+                            and any(p.get("type") in ("image_url", "image") for p in m["content"] if isinstance(p, dict))
+                            for m in messages
+                        )
+                        if has_image:
+                            raise Exception(
+                                "The inference backend does not support image input. "
+                                "This model may require mlx-vlm instead of mlx_lm for vision. "
+                                "Try a text-only message or switch to a model with full vision server support."
+                            )
+                        raise Exception(
+                            "No model is loaded. Open Manage Models and load a model before sending messages."
+                        )
                     resp.raise_for_status()
                     return resp.json()
                 except httpx.HTTPStatusError as e:

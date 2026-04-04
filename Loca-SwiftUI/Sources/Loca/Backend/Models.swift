@@ -198,6 +198,7 @@ struct LocalModel: Decodable, Identifiable {
     let is_loaded: Bool
     let context_length: Int?
     let param_label: String?
+    let supports_vision: Bool?
 
     var id: String { name }
 
@@ -381,9 +382,8 @@ struct LMModel: Decodable, Identifiable {
         let visionTerms = [
             "llava", "moondream", "bakllava", "minicpm-v", "idefics", "cogvlm",
             "internvl", "qwen-vl", "qwen2-vl", "qwen2.5-vl", "qwen3-vl",
-            "qwen3.5",
             "blip", "pixtral", "phi-vision", "phi3-vision", "phi3.5-vision",
-            "gemini-vision", "gemma4", "gemma-4", "paligemma", "florence",
+            "gemini-vision", "paligemma", "florence",
         ]
         let hasVLComponent = lower.hasPrefix("vl-") || lower.contains("-vl-")
             || lower.hasSuffix("-vl") || lower.hasSuffix(".vl")
