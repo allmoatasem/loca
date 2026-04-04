@@ -268,12 +268,26 @@ class InferenceBackend:
         num_threads: int | None = None,
     ) -> list[str]:
         p = Path(model_path)
-        # If directory, find the first .gguf inside
+        mmproj_path: str | None = None
+
+        # If directory, find the main .gguf and any mmproj file
         if p.is_dir():
             gguf_files = sorted(p.glob("*.gguf"))
             if not gguf_files:
                 raise InferenceBackendError(f"No .gguf file found in directory: {model_path}")
-            model_path = str(gguf_files[0])
+            # Separate mmproj from main model files
+            mmproj_candidates = [f for f in gguf_files if "mmproj" in f.name.lower()]
+            main_candidates = [f for f in gguf_files if "mmproj" not in f.name.lower()]
+            if not main_candidates:
+                raise InferenceBackendError(f"No main model .gguf found in directory: {model_path}")
+            model_path = str(main_candidates[0])
+            if mmproj_candidates:
+                mmproj_path = str(mmproj_candidates[0])
+        else:
+            # Single .gguf file — check for mmproj sibling in same directory
+            sibling_mmproj = list(p.parent.glob("*mmproj*.gguf"))
+            if sibling_mmproj:
+                mmproj_path = str(sibling_mmproj[0])
 
         args = [
             self.llama_server_bin,
@@ -282,6 +296,10 @@ class InferenceBackend:
             "--ctx-size", str(ctx_size),
             "--no-mmap",  # safer for large models — avoids page fault stalls
         ]
+        # Vision: multi-modal projector for GGUF vision models
+        if mmproj_path:
+            args += ["--mmproj", mmproj_path]
+            logger.info(f"GGUF vision model detected — using mmproj: {mmproj_path}")
         # GPU layer offload — default to full offload on GPU-capable platforms
         if platform.system() in ("Darwin", "Linux"):
             ngl = n_gpu_layers if n_gpu_layers is not None else 99

@@ -94,8 +94,13 @@ class ModelManager:
         # GGUF files
         if self.gguf_dir.exists():
             for p in sorted(self.gguf_dir.glob("*.gguf")):
+                # Skip mmproj files — they're vision projectors, not standalone models
+                if "mmproj" in p.name.lower():
+                    continue
                 size_gb = p.stat().st_size / 1_073_741_824
                 name = p.stem
+                # Vision: check for a sibling mmproj file
+                has_mmproj = any(p.parent.glob("*mmproj*.gguf"))
                 models.append(ModelInfo(
                     name=name,
                     path=str(p),
@@ -103,6 +108,7 @@ class ModelManager:
                     size_gb=size_gb,
                     is_loaded=(loaded_name == p.name),
                     param_label=_extract_param_label(name),
+                    supports_vision=has_mmproj,
                 ))
 
         # MLX model directories (contain config.json)
