@@ -198,6 +198,7 @@ struct LocalModel: Decodable, Identifiable {
     let is_loaded: Bool
     let context_length: Int?
     let param_label: String?
+    let supports_vision: Bool?
 
     var id: String { name }
 

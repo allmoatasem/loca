@@ -37,6 +37,7 @@ class ModelInfo:
     is_loaded: bool = False
     context_length: int | None = None  # max tokens from config
     param_label: str | None = None     # e.g. "7B", "70B", "3.8B"
+    supports_vision: bool = False      # detected from config.json vision_config
 
     def to_dict(self) -> dict:
         return {
@@ -47,6 +48,7 @@ class ModelInfo:
             "is_loaded": self.is_loaded,
             "context_length": self.context_length,
             "param_label": self.param_label,
+            "supports_vision": self.supports_vision,
         }
 
 
@@ -92,8 +94,13 @@ class ModelManager:
         # GGUF files
         if self.gguf_dir.exists():
             for p in sorted(self.gguf_dir.glob("*.gguf")):
+                # Skip mmproj files — they're vision projectors, not standalone models
+                if "mmproj" in p.name.lower():
+                    continue
                 size_gb = p.stat().st_size / 1_073_741_824
                 name = p.stem
+                # Vision: check for a sibling mmproj file
+                has_mmproj = any(p.parent.glob("*mmproj*.gguf"))
                 models.append(ModelInfo(
                     name=name,
                     path=str(p),
@@ -101,6 +108,7 @@ class ModelManager:
                     size_gb=size_gb,
                     is_loaded=(loaded_name == p.name),
                     param_label=_extract_param_label(name),
+                    supports_vision=has_mmproj,
                 ))
 
         # MLX model directories (contain config.json)
@@ -109,7 +117,9 @@ class ModelManager:
                 if p.is_dir() and (p / "config.json").exists():
                     size_gb = _dir_size_gb(p)
                     name = p.name
-                    ctx = _read_context_length(p / "config.json")
+                    cfg_path = p / "config.json"
+                    ctx = _read_context_length(cfg_path)
+                    vision = _has_vision_config(cfg_path)
                     models.append(ModelInfo(
                         name=name,
                         path=str(p),
@@ -118,6 +128,7 @@ class ModelManager:
                         is_loaded=(loaded_name == p.name),
                         context_length=ctx,
                         param_label=_extract_param_label(name),
+                        supports_vision=vision,
                     ))
 
         return models
@@ -489,3 +500,13 @@ def _read_context_length(config_path: Path) -> int | None:
         return cfg.get("max_position_embeddings") or cfg.get("max_seq_len") or cfg.get("seq_length")
     except Exception:
         return None
+
+
+def _has_vision_config(config_path: Path) -> bool:
+    """Check if a model's config.json contains vision configuration."""
+    try:
+        import json
+        cfg = json.loads(config_path.read_text())
+        return "vision_config" in cfg or "visual" in cfg
+    except Exception:
+        return False

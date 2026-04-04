@@ -230,24 +230,34 @@ class InferenceBackend:
         return self._build_llama_args(model_path, ctx_size, n_gpu_layers, batch_size, num_threads)
 
     def _build_mlx_args(self, model_path: str, ctx_size: int) -> list[str]:
-        # Prefer the mlx_lm script on PATH (works regardless of which venv is active).
-        # Fall back to sys.executable -m mlx_lm if not on PATH.
-        # Note: batch_size and num_threads are llama.cpp concepts; mlx_lm handles
-        # hardware tuning internally and does not expose these as server flags.
-        mlx_bin = shutil.which("mlx_lm")
+        # Use mlx-vlm for vision models, mlx_lm for text-only.
+        # Detected from config.json: presence of "vision_config" or "visual" key.
+        module = "mlx_lm"
+        if self._model_has_vision(model_path):
+            module = "mlx_vlm"
+            logger.info(f"Vision model detected — using {module} backend")
+
+        mlx_bin = shutil.which(module)
         if mlx_bin:
-            return [
-                mlx_bin, "server",
-                "--model", model_path,
-                "--port", str(self.port),
-                "--max-tokens", str(ctx_size),
-            ]
-        return [
-            sys.executable, "-m", "mlx_lm", "server",
-            "--model", model_path,
-            "--port", str(self.port),
-            "--max-tokens", str(ctx_size),
-        ]
+            args = [mlx_bin, "server", "--model", model_path, "--port", str(self.port)]
+        else:
+            args = [sys.executable, "-m", module, "server", "--model", model_path, "--port", str(self.port)]
+
+        # --max-tokens is mlx_lm only; mlx_vlm uses --max-kv-size
+        if module == "mlx_lm":
+            args += ["--max-tokens", str(ctx_size)]
+
+        return args
+
+    @staticmethod
+    def _model_has_vision(model_path: str) -> bool:
+        """Check if an MLX model has vision support via config.json."""
+        import json
+        try:
+            cfg = json.loads((Path(model_path) / "config.json").read_text())
+            return "vision_config" in cfg or "visual" in cfg
+        except Exception:
+            return False
 
     def _build_llama_args(
         self,
@@ -258,12 +268,26 @@ class InferenceBackend:
         num_threads: int | None = None,
     ) -> list[str]:
         p = Path(model_path)
-        # If directory, find the first .gguf inside
+        mmproj_path: str | None = None
+
+        # If directory, find the main .gguf and any mmproj file
         if p.is_dir():
             gguf_files = sorted(p.glob("*.gguf"))
             if not gguf_files:
                 raise InferenceBackendError(f"No .gguf file found in directory: {model_path}")
-            model_path = str(gguf_files[0])
+            # Separate mmproj from main model files
+            mmproj_candidates = [f for f in gguf_files if "mmproj" in f.name.lower()]
+            main_candidates = [f for f in gguf_files if "mmproj" not in f.name.lower()]
+            if not main_candidates:
+                raise InferenceBackendError(f"No main model .gguf found in directory: {model_path}")
+            model_path = str(main_candidates[0])
+            if mmproj_candidates:
+                mmproj_path = str(mmproj_candidates[0])
+        else:
+            # Single .gguf file — check for mmproj sibling in same directory
+            sibling_mmproj = list(p.parent.glob("*mmproj*.gguf"))
+            if sibling_mmproj:
+                mmproj_path = str(sibling_mmproj[0])
 
         args = [
             self.llama_server_bin,
@@ -272,6 +296,10 @@ class InferenceBackend:
             "--ctx-size", str(ctx_size),
             "--no-mmap",  # safer for large models — avoids page fault stalls
         ]
+        # Vision: multi-modal projector for GGUF vision models
+        if mmproj_path:
+            args += ["--mmproj", mmproj_path]
+            logger.info(f"GGUF vision model detected — using mmproj: {mmproj_path}")
         # GPU layer offload — default to full offload on GPU-capable platforms
         if platform.system() in ("Darwin", "Linux"):
             ngl = n_gpu_layers if n_gpu_layers is not None else 99
