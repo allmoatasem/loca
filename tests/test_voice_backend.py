@@ -13,7 +13,6 @@ from unittest.mock import MagicMock, patch
 
 from src.voice_backend import VoiceBackend, VoiceConfig, VoiceModelInfo
 
-
 # ---------------------------------------------------------------------------
 # VoiceConfig
 # ---------------------------------------------------------------------------
