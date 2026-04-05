@@ -15,7 +15,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, cast
 
 import httpx
 
@@ -28,6 +28,7 @@ from .tools.file_ops import file_read, file_write
 from .tools.shell import shell_exec
 from .tools.web_fetch import web_fetch
 from .tools.web_search import format_search_results, web_search
+from .voice_backend import VoiceBackend
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ _TOOL_CALL_RE = re.compile(
 
 
 class Orchestrator:
-    def __init__(self, config: dict, model_manager: ModelManager):
+    def __init__(self, config: dict, model_manager: ModelManager, voice_backend: VoiceBackend | None = None):
         self.config = config
         self.mm = model_manager
         self._search_cfg = config.get("search", {})
@@ -47,6 +48,7 @@ class Orchestrator:
         self._tools_cfg = config.get("tools", {})
         self._max_tool_calls: int = self._routing_cfg.get("max_tool_calls_per_turn", 5)
         self._hw = get_hardware_profile()
+        self.voice = voice_backend
 
     # ------------------------------------------------------------------
     # Public entrypoint
@@ -106,6 +108,79 @@ class Orchestrator:
             temperature=temperature, top_p=top_p, top_k=top_k,
             repeat_penalty=repeat_penalty, max_tokens=max_tokens,
         )
+
+    # ------------------------------------------------------------------
+    # Voice mode: transcribe → LLM → TTS
+    # ------------------------------------------------------------------
+
+    async def handle_voice(
+        self,
+        audio_data: bytes,
+        messages: list[dict],
+        language: str | None = None,
+        model_override: str | None = None,
+        num_ctx: int | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        system_prompt_override: str | None = None,
+    ) -> dict:
+        """
+        Full voice conversation turn:
+          1. Transcribe audio → text
+          2. Send text to LLM
+          3. Synthesize LLM response → audio
+
+        Returns:
+          {
+            "transcription": "what the user said",
+            "response": "what the LLM said",
+            "audio": "<base64-encoded WAV>",
+            "model": "model name"
+          }
+        """
+        if not self.voice:
+            raise RuntimeError("Voice backend not configured")
+
+        import base64
+
+        # Step 1: Transcribe
+        stt_result = await self.voice.transcribe(audio_data, language=language)
+        user_text = stt_result.get("text", "").strip()
+
+        if not user_text:
+            return {
+                "transcription": "",
+                "response": "",
+                "audio": None,
+                "model": None,
+            }
+
+        # Step 2: Send to LLM
+        user_msg = {"role": "user", "content": user_text}
+        full_messages = list(messages) + [user_msg]
+
+        llm_response = cast(dict, await self.handle(
+            full_messages,
+            stream=False,
+            model_override=model_override,
+            num_ctx=num_ctx,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            system_prompt_override=system_prompt_override,
+        ))
+
+        response_text = _extract_content(llm_response)
+
+        # Step 3: Synthesize response to audio
+        audio_bytes = await self.voice.synthesize(response_text)
+        audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
+
+        return {
+            "transcription": user_text,
+            "response": response_text,
+            "audio": audio_b64,
+            "model": llm_response.get("model"),
+        }
 
     # ------------------------------------------------------------------
     # Internal: model calls + tool loop
@@ -385,9 +460,12 @@ def _build_system_prompt(model: Model, model_name: str, hw) -> str:
         hw_desc = f"{hw.cpu_name}, {hw.total_ram_gb:.0f} GB RAM (NVIDIA GPU)"
     else:
         hw_desc = f"{hw.cpu_name}, {hw.total_ram_gb:.0f} GB RAM"
+    # Strip filesystem path — just show the model name
+    import os
+    display_name = os.path.basename(model_name.rstrip("/")) if "/" in model_name else model_name
     identity = (
         f"Your name is Loca. You are a private, offline AI assistant running locally on this machine "
-        f"({hw_desc}). The loaded model is {model_name}. "
+        f"({hw_desc}). The loaded model is {display_name}. "
         f"When asked to identify yourself, say you are Loca and mention the model and hardware. "
         f"Do not refer to any external AI company or platform as your origin.\n\n"
         f"Interpret the user's intent, not just their literal words. Users may type quickly and make "

@@ -45,6 +45,7 @@ from .store import (
     search_conversations,
     update_memory,
 )
+from .voice_backend import VoiceBackend
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,7 @@ _config: dict = {}
 _inference_backend: InferenceBackend | None = None
 _model_manager: ModelManager | None = None
 _orchestrator: Orchestrator | None = None
+_voice_backend: VoiceBackend | None = None
 
 # In-memory download job tracking
 _download_jobs:  dict[str, asyncio.Queue]  = {}   # download_id → progress queue
@@ -86,12 +88,13 @@ _recs_cache_lock: asyncio.Lock | None      = None  # ensures only one build runs
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    global _config, _inference_backend, _model_manager, _orchestrator
+    global _config, _inference_backend, _model_manager, _orchestrator, _voice_backend
 
     _config = _load_config()
     _inference_backend = InferenceBackend(_config)
     _model_manager = ModelManager(_config, _inference_backend)
-    _orchestrator = Orchestrator(_config, _model_manager)
+    _voice_backend = VoiceBackend(_config)
+    _orchestrator = Orchestrator(_config, _model_manager, voice_backend=_voice_backend)
 
     # Auto-start the active model if configured
     active_rel = _config.get("inference", {}).get("active_model")
@@ -121,7 +124,7 @@ async def _security_headers(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(self), geolocation=()"
     return response
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
@@ -473,6 +476,18 @@ async def api_upload(file: UploadFile = File(...)) -> JSONResponse:
         return JSONResponse({"type": "text", "content": text, "name": filename})
 
     if content_type.startswith("audio/"):
+        # Attempt transcription if voice backend is available
+        if _voice_backend:
+            try:
+                result = await _voice_backend.transcribe(audio_data=data)
+                return JSONResponse({
+                    "type": "text",
+                    "content": result.get("text", ""),
+                    "name": filename,
+                    "source": "voice_transcription",
+                })
+            except Exception as exc:
+                logger.warning(f"Audio transcription failed, returning raw: {exc}")
         return JSONResponse({"type": "audio", "name": filename})
 
     if content_type.startswith("video/"):
@@ -930,6 +945,119 @@ async def api_vault_search(path: str = "", q: str = "", limit: int = 20) -> JSON
         if len(results) >= limit:
             break
     return JSONResponse({"results": results})
+
+
+# ---------------------------------------------------------------------------
+# Voice API — STT & TTS (OpenAI-compatible)
+# ---------------------------------------------------------------------------
+
+@app.post("/v1/audio/transcriptions")
+async def audio_transcriptions(
+    file: UploadFile = File(...),
+    model: str | None = None,
+    language: str | None = None,
+    prompt: str | None = None,
+    response_format: str = "json",
+) -> JSONResponse:
+    """
+    OpenAI-compatible speech-to-text endpoint.
+    Accepts audio file upload, returns transcribed text.
+    """
+    assert _voice_backend is not None
+    audio_data = await file.read()
+    try:
+        result = await _voice_backend.transcribe(
+            audio_data=audio_data,
+            language=language,
+            prompt=prompt,
+            response_format=response_format,
+        )
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Transcription failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/v1/audio/speech")
+async def audio_speech(request: Request) -> Response:
+    """
+    OpenAI-compatible text-to-speech endpoint.
+    Accepts JSON body with text, returns audio bytes.
+    """
+    assert _voice_backend is not None
+    body = await request.json()
+    text = body.get("input", "")
+    voice = body.get("voice")
+    speed = body.get("speed")
+    response_format = body.get("response_format", "wav")
+
+    if not text:
+        return JSONResponse({"error": "input text is required"}, status_code=400)
+
+    try:
+        audio_bytes = await _voice_backend.synthesize(
+            text=text,
+            voice=voice,
+            speed=speed,
+            response_format=response_format,
+        )
+        media_type = "audio/wav" if response_format == "wav" else f"audio/{response_format}"
+        return Response(content=audio_bytes, media_type=media_type)
+    except Exception as e:
+        logger.error(f"Speech synthesis failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/voice/config")
+async def api_voice_config() -> JSONResponse:
+    """Return current voice configuration and model status."""
+    assert _voice_backend is not None
+    return JSONResponse(_voice_backend.get_voice_config())
+
+
+@app.get("/api/voice/models")
+async def api_voice_models() -> JSONResponse:
+    """List available voice models with download status."""
+    assert _voice_backend is not None
+    return JSONResponse({
+        "models": [m.to_dict() for m in _voice_backend.list_voice_models()]
+    })
+
+
+@app.post("/api/voice/chat")
+async def api_voice_chat(
+    file: UploadFile = File(...),
+    messages: str = "",
+    model_override: str | None = None,
+    num_ctx: int | None = None,
+) -> JSONResponse:
+    """
+    Full voice conversation turn: audio in → transcribe → LLM → TTS → audio out.
+    Accepts multipart form with audio file and optional JSON messages history.
+    Returns transcription, LLM response text, and base64-encoded audio.
+    """
+    assert _orchestrator is not None
+    audio_data = await file.read()
+
+    # Parse messages history from form field
+    msg_list: list[dict] = []
+    if messages:
+        try:
+            msg_list = json.loads(messages)
+        except json.JSONDecodeError:
+            pass
+
+    try:
+        result = await _orchestrator.handle_voice(
+            audio_data=audio_data,
+            messages=msg_list,
+            model_override=model_override,
+            num_ctx=num_ctx,
+        )
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Voice chat failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.post("/api/extract-memories")

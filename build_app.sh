@@ -64,6 +64,9 @@ done
 # Remove __pycache__ dirs to keep the bundle clean
 find "$RESOURCES/src" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
+# Info.plist
+cp "$DIR/Info.plist" "$BUNDLE/Contents/Info.plist"
+
 # Icon
 if [ -f "$DIR/Loca-SwiftUI/Sources/Loca/Assets.xcassets/AppIcon.appiconset/loca.icns" ]; then
     cp "$DIR/Loca-SwiftUI/Sources/Loca/Assets.xcassets/AppIcon.appiconset/loca.icns" "$RESOURCES/loca.icns"
@@ -76,7 +79,8 @@ fi
 # Strip iCloud/Finder extended attributes that block ad-hoc signing
 xattr -cr "$BUNDLE" 2>/dev/null || true
 
-codesign --sign - --force --deep "$BUNDLE"
+ENTITLEMENTS="$DIR/Loca.entitlements"
+codesign --sign - --force --deep --entitlements "$ENTITLEMENTS" "$BUNDLE"
 echo "Built and signed: $BUNDLE"
 
 # ── 4. Sync to ~/Applications ─────────────────────────────────────────────────
@@ -87,6 +91,6 @@ echo "Installing to $DEST…"
 # Full rsync so Python source, prompts, etc. are all in sync
 rsync -a --delete "$BUNDLE/" "$DEST/"
 
-codesign --sign - --force --deep "$DEST"
+codesign --sign - --force --deep --entitlements "$ENTITLEMENTS" "$DEST"
 echo "Updated ~/Applications/Loca.app"
 echo "Done — open Loca.app to launch."

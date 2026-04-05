@@ -56,10 +56,20 @@ def client():
     mock_orch.handle = AsyncMock()
     mock_orch.extract_and_save_memories = AsyncMock(return_value=[])
 
+    mock_voice = MagicMock()
+    mock_voice.transcribe = AsyncMock(return_value={"text": "hello world"})
+    mock_voice.synthesize = AsyncMock(return_value=b"fake-wav-data")
+    mock_voice.get_voice_config.return_value = {
+        "stt_model": "test-stt", "tts_model": "test-tts",
+        "tts_voice": "af_heart", "tts_speed": 1.0, "auto_tts": False, "models": [],
+    }
+    mock_voice.list_voice_models.return_value = []
+
     with patch("src.proxy._load_config", return_value=minimal_config), \
          patch("src.proxy.InferenceBackend", return_value=mock_backend), \
          patch("src.proxy.ModelManager", return_value=mock_mm), \
          patch("src.proxy.Orchestrator", return_value=mock_orch), \
+         patch("src.proxy.VoiceBackend", return_value=mock_voice), \
          patch("src.proxy._build_recs_cache", new_callable=AsyncMock), \
          patch("asyncio.create_task"):
         from src.proxy import app
@@ -68,6 +78,7 @@ def client():
             c._mock_backend = mock_backend
             c._mock_mm = mock_mm
             c._mock_orch = mock_orch
+            c._mock_voice = mock_voice
             yield c
 
 
@@ -321,13 +332,17 @@ class TestUploadAPI:
         assert body["type"] == "text"
         assert "Hello, world!" in body["content"]
 
-    def test_upload_audio_returns_type(self, client):
+    def test_upload_audio_returns_transcription(self, client):
+        """Audio uploads are auto-transcribed when voice backend is available."""
         r = client.post(
             "/api/upload",
             files={"file": ("clip.mp3", b"fake-audio-bytes", "audio/mpeg")},
         )
         assert r.status_code == 200
-        assert r.json()["type"] == "audio"
+        body = r.json()
+        assert body["type"] == "text"
+        assert body["source"] == "voice_transcription"
+        assert body["content"] == "hello world"
 
     def test_upload_video_returns_type(self, client):
         r = client.post(
@@ -536,3 +551,55 @@ class TestVaultSearch:
             r = client.get("/api/vault/search", params={"path": "/v", "q": "machine"})
         assert len(r.json()["results"]) == 1
         assert r.json()["results"][0]["title"] == "Machine Learning"
+
+
+# ---------------------------------------------------------------------------
+# Voice API
+# ---------------------------------------------------------------------------
+
+class TestVoiceAPI:
+    def test_voice_config(self, client):
+        r = client.get("/api/voice/config")
+        assert r.status_code == 200
+        data = r.json()
+        assert "stt_model" in data
+        assert "tts_model" in data
+        assert "models" in data
+
+    def test_voice_models(self, client):
+        r = client.get("/api/voice/models")
+        assert r.status_code == 200
+        assert "models" in r.json()
+
+    def test_transcription(self, client):
+        # Create a minimal WAV file
+        import io
+        import wave
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            wf.writeframes(b"\x00\x00" * 16000)  # 1 second of silence
+        wav_bytes = buf.getvalue()
+
+        r = client.post(
+            "/v1/audio/transcriptions",
+            files={"file": ("test.wav", wav_bytes, "audio/wav")},
+        )
+        assert r.status_code == 200
+        assert "text" in r.json()
+        assert r.json()["text"] == "hello world"
+
+    def test_speech_synthesis(self, client):
+        r = client.post(
+            "/v1/audio/speech",
+            json={"input": "Hello, world!"},
+        )
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "audio/wav"
+        assert len(r.content) > 0
+
+    def test_speech_requires_input(self, client):
+        r = client.post("/v1/audio/speech", json={"input": ""})
+        assert r.status_code == 400

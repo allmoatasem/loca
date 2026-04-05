@@ -216,6 +216,14 @@ final class AppState: ObservableObject {
     @Published var vaultScanResult: VaultScanResult?
     @Published var vaultError: String?
 
+    // MARK: - Voice mode
+
+    @Published var isVoiceMode       = false
+    @Published var isTranscribing    = false
+    @Published var voiceError: String?
+    @Published var voiceConfig: VoiceConfigResponse?
+    @Published var showVoiceSetup    = false
+
     // MARK: - Conversation search
 
     @Published var conversationQuery   = ""
@@ -256,5 +264,6 @@ final class AppState: ObservableObject {
     func scanVault()      { Task { await _scanVault() } }
     func analyseVault()   { Task { await _analyseVault() } }
     func selectVaultPath(_ path: String) { selectedVaultPath = path; analyseVault() }
+    func fetchVoiceConfig() { Task { do { voiceConfig = try await BackendClient.shared.fetchVoiceConfig() } catch {} } }
 }
 
