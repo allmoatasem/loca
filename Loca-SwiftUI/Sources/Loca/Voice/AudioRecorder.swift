@@ -69,20 +69,19 @@ final class AudioRecorder: ObservableObject {
             return
         }
 
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: recordFormat) { [weak self] buffer, _ in
-            guard let self else { return }
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: recordFormat) { @Sendable [weak self] buffer, _ in
             let ptr = buffer.floatChannelData?[0]
             let count = Int(buffer.frameLength)
             guard let ptr, count > 0 else { return }
 
             let floats = UnsafeBufferPointer(start: ptr, count: count)
-            let rms = Self.computeRMS(floats)
+            let rms = AudioRecorder.computeRMS(floats)
 
             // Collect raw audio bytes
             let bytes = Data(bytes: ptr, count: count * MemoryLayout<Float>.size)
 
-            Task { @MainActor in
-                self.processAudioBuffer(bytes, rms: rms)
+            Task { @MainActor [weak self] in
+                self?.processAudioBuffer(bytes, rms: rms)
             }
         }
 
@@ -92,8 +91,8 @@ final class AudioRecorder: ObservableObject {
             state = .listening
 
             // Poll for silence timeout
-            silenceTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
-                Task { @MainActor in
+            silenceTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { @Sendable [weak self] _ in
+                Task { @MainActor [weak self] in
                     self?.checkSilenceTimeout()
                 }
             }
