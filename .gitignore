@@ -72,6 +72,9 @@ searxng-settings.yaml
 # Claude Code
 .claude/
 
+# Continue
+.continuerc.yaml
+
 # Obsidian vault
 .obsidian/
 
