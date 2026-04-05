@@ -564,6 +564,42 @@ struct VaultSearchResult: Decodable, Identifiable {
 
 struct VaultSearchResponse: Decodable { let results: [VaultSearchResult] }
 
+// MARK: - Voice
+
+struct VoiceModel: Decodable, Identifiable {
+    let name: String
+    let repo_id: String
+    let model_type: String   // "stt" or "tts"
+    let downloaded: Bool
+    let size_gb: Double
+
+    var id: String { repo_id }
+}
+
+struct VoiceModelsResponse: Decodable {
+    let models: [VoiceModel]
+}
+
+struct VoiceConfigResponse: Decodable {
+    let stt_model: String
+    let tts_model: String
+    let tts_voice: String
+    let tts_speed: Double
+    let auto_tts: Bool
+    let models: [VoiceModel]
+}
+
+struct TranscriptionResponse: Decodable {
+    let text: String
+}
+
+struct VoiceChatResponse: Decodable {
+    let transcription: String
+    let response: String
+    let audio: String?     // base64-encoded WAV
+    let model: String?
+}
+
 // MARK: - File upload
 
 struct UploadResult: Decodable {

@@ -56,6 +56,7 @@ struct SettingsView: View {
         .onAppear {
             state.reloadLocalModels()
             state.loadRecommendationsIfNeeded()
+            state.fetchVoiceConfig()
         }
     }
 }
@@ -69,12 +70,24 @@ private struct DownloadedModelsTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if state.localModels.isEmpty {
+            if state.localModels.isEmpty && (state.voiceConfig?.models ?? []).isEmpty {
                 emptyState
             } else {
                 ScrollView {
-                    VStack(spacing: 6) {
-                        ForEach(state.localModels) { m in modelRow(m) }
+                    VStack(alignment: .leading, spacing: 6) {
+                        if !state.localModels.isEmpty {
+                            ForEach(state.localModels) { m in modelRow(m) }
+                        }
+
+                        // Speech Models section
+                        if let vc = state.voiceConfig, !vc.models.isEmpty {
+                            Divider().padding(.vertical, 8)
+                            Text("Speech Models")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.secondary)
+                                .padding(.leading, 4)
+                            ForEach(vc.models) { vm in speechModelRow(vm) }
+                        }
                     }
                     .padding(20)
                 }
@@ -163,6 +176,46 @@ private struct DownloadedModelsTab: View {
             .buttonStyle(.plain)
             .disabled(m.is_loaded)
             .help(m.is_loaded ? "Unload this model before deleting" : "Delete from disk")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func speechModelRow(_ vm: VoiceModel) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: vm.model_type == "stt" ? "ear" : "speaker.wave.2")
+                .font(.system(size: 14))
+                .foregroundColor(vm.downloaded ? .green : .secondary)
+                .frame(width: 20)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(vm.name).font(.system(size: 13)).lineLimit(1)
+                HStack(spacing: 6) {
+                    modelBadge(
+                        vm.model_type == "stt" ? "STT" : "TTS",
+                        bg: vm.model_type == "stt" ? Color.teal.opacity(0.12) : Color.orange.opacity(0.12),
+                        fg: vm.model_type == "stt" ? .teal : .orange
+                    )
+                    Text(vm.repo_id)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+
+            if vm.downloaded {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.green)
+                    .font(.system(size: 14))
+            } else {
+                Text("Downloads on first use")
+                    .font(.system(size: 11))
+                    .foregroundColor(.orange)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)

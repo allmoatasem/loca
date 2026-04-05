@@ -12,6 +12,8 @@ struct ChatView: View {
     @StateObject private var inputActions = ChatInputActions()
     @State private var chatSearch = ""
     @State private var showChatSearch = false
+    @StateObject private var voiceRecorder = AudioRecorder()
+    @State private var wasStreaming = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -35,7 +37,8 @@ struct ChatView: View {
                 attachments: $attachments,
                 isUploading: $isUploading,
                 inputActions: inputActions,
-                onSend: sendIfReady
+                onSend: sendIfReady,
+                voiceRecorder: voiceRecorder
             )
         }
         .overlay {
@@ -65,6 +68,61 @@ struct ChatView: View {
                 }
                 .help("Search in conversation (⌘F)")
                 .keyboardShortcut("f")
+            }
+        }
+        .onChange(of: state.isStreaming) {
+            if wasStreaming && !state.isStreaming && state.isVoiceMode {
+                // LLM response done — resume listening for next utterance
+                voiceRecorder.resumeListening()
+            }
+            wasStreaming = state.isStreaming
+        }
+        .onChange(of: state.isVoiceMode) {
+            if state.isVoiceMode {
+                voiceRecorder.start()
+            } else {
+                voiceRecorder.stop()
+            }
+        }
+        .onChange(of: voiceRecorder.completedAudio) {
+            guard let wavData = voiceRecorder.completedAudio else { return }
+            voiceRecorder.completedAudio = nil
+            handleVoiceAudio(wavData)
+        }
+        .onDisappear {
+            if state.isVoiceMode {
+                voiceRecorder.stop()
+            }
+        }
+    }
+
+    // MARK: - Voice transcription
+
+    private func handleVoiceAudio(_ wavData: Data) {
+        state.isTranscribing = true
+        Task {
+            do {
+                let transcription = try await BackendClient.shared.transcribeAudio(wavData)
+                await MainActor.run {
+                    state.isTranscribing = false
+                    if !transcription.isEmpty {
+                        state.send(transcription)
+                    }
+                    // Resume listening after LLM + TTS cycle
+                    // (if no TTS, resume immediately)
+                    if !state.isVoiceMode { return }
+                    if transcription.isEmpty {
+                        voiceRecorder.resumeListening()
+                    }
+                    // If non-empty, the cycle is:
+                    // send → isStreaming → onChange stops streaming → TTS plays → onFinished → resumeListening
+                }
+            } catch {
+                await MainActor.run {
+                    state.isTranscribing = false
+                    state.voiceError = error.localizedDescription
+                    voiceRecorder.resumeListening()
+                }
             }
         }
     }
@@ -793,6 +851,7 @@ struct InputBar: View {
     @Binding var isUploading: Bool
     let inputActions: ChatInputActions
     let onSend: () -> Void
+    let voiceRecorder: AudioRecorder
 
     var body: some View {
         VStack(spacing: 0) {
@@ -852,7 +911,51 @@ struct InputBar: View {
                 }
                 .buttonStyle(.plain).disabled(isUploading).help("Attach file")
 
+                // Voice mode toggle — enables mic input + auto-TTS
+                InputToolButton(
+                    icon: state.isVoiceMode ? "waveform" : "mic",
+                    label: "Voice",
+                    isActive: state.isVoiceMode,
+                    isDisabled: false
+                ) {
+                    if state.isVoiceMode {
+                        state.isVoiceMode = false
+                    } else {
+                        // Check if voice models are downloaded
+                        state.fetchVoiceConfig()
+                        let allReady = state.voiceConfig?.models.allSatisfy(\.downloaded) ?? false
+                        if allReady {
+                            state.isVoiceMode = true
+                        } else {
+                            state.showVoiceSetup = true
+                        }
+                    }
+                }
+                .help(state.isVoiceMode ? "Voice mode ON — mic listens, responses are spoken" : "Enable voice mode")
+                .sheet(isPresented: $state.showVoiceSetup) {
+                    VoiceSetupSheet()
+                        .environmentObject(state)
+                }
+
                 Spacer()
+
+                if state.isVoiceMode {
+                    if let err = state.voiceError {
+                        Text(err)
+                            .font(.system(size: 10))
+                            .foregroundColor(.red)
+                            .lineLimit(1)
+                            .frame(maxWidth: 200)
+                            .onTapGesture { state.voiceError = nil }
+                            .help("Click to dismiss")
+                    }
+                    VoiceStatusIndicator(
+                        recorderState: voiceRecorder.state,
+                        audioLevel: voiceRecorder.audioLevel,
+                        isTranscribing: state.isTranscribing,
+                        isStreaming: state.isStreaming
+                    )
+                }
 
                 Button(action: onSend) {
                     HStack(spacing: 5) {
@@ -1049,5 +1152,78 @@ struct InputToolButton: View {
         .buttonStyle(.plain)
         .disabled(isDisabled)
         .opacity(isDisabled ? 0.35 : 1)
+    }
+}
+
+// MARK: - Voice status indicator
+
+struct VoiceStatusIndicator: View {
+    let recorderState: AudioRecorder.State
+    let audioLevel: Float
+    let isTranscribing: Bool
+    let isStreaming: Bool
+
+    private var label: String {
+        if isTranscribing { return "Transcribing…" }
+        if isStreaming { return "Thinking…" }
+        switch recorderState {
+        case .recording: return "Listening…"
+        case .listening: return "Waiting…"
+        case .processing: return "Processing…"
+        case .idle: return "Voice"
+        }
+    }
+
+    private var icon: String {
+        if isTranscribing || isStreaming { return "ellipsis" }
+        switch recorderState {
+        case .recording: return "mic.fill"
+        case .listening: return "mic"
+        case .processing: return "waveform"
+        case .idle: return "mic.slash"
+        }
+    }
+
+    private var color: Color {
+        if isTranscribing { return .orange }
+        if isStreaming { return .purple }
+        switch recorderState {
+        case .recording: return .red
+        case .listening: return .green
+        default: return .secondary
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 3) {
+            if isTranscribing || isStreaming {
+                ProgressView().scaleEffect(0.4).frame(width: 10, height: 10)
+            } else if recorderState == .recording {
+                HStack(spacing: 1) {
+                    ForEach(0..<3, id: \.self) { i in
+                        RoundedRectangle(cornerRadius: 1)
+                            .fill(Color.red)
+                            .frame(width: 2, height: barHeight(i))
+                    }
+                }
+                .frame(width: 10, height: 10)
+            } else {
+                Image(systemName: icon).font(.system(size: 10))
+            }
+            Text(label).font(.system(size: 10, weight: .medium))
+        }
+        .padding(.horizontal, 7).padding(.vertical, 4)
+        .background(color.opacity(0.12))
+        .foregroundColor(color)
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .overlay(RoundedRectangle(cornerRadius: 5).stroke(color.opacity(0.3)))
+        .help(label)
+    }
+
+    private func barHeight(_ index: Int) -> CGFloat {
+        let base: CGFloat = 4
+        let level = CGFloat(audioLevel)
+        let offsets: [CGFloat] = [0.6, 1.0, 0.8]
+        return base + (10 * level * offsets[index])
     }
 }

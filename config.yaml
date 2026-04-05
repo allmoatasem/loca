@@ -63,6 +63,13 @@ tools:
 vault:
   path: null                 # Obsidian vault path (auto-detected if null)
 
+voice:
+  stt_model: mlx-community/whisper-large-v3-turbo   # HF repo for STT model
+  tts_model: prince-canuma/Kokoro-82M                 # HF repo for TTS model
+  tts_voice: af_heart                                 # default voice preset
+  tts_speed: 1.0                                      # playback speed 0.5–2.0
+  auto_tts: false                                     # auto-speak LLM responses
+
 proxy:
   host: 0.0.0.0
   port: 8000

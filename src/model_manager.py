@@ -86,8 +86,17 @@ class ModelManager:
     # Local model inventory
     # ------------------------------------------------------------------
 
+    # Known speech/voice model name patterns — excluded from LLM model list
+    _VOICE_MODEL_PATTERNS = {"whisper", "kokoro", "bark", "piper", "coqui", "tts", "parler"}
+
+    @staticmethod
+    def _is_voice_model(name: str) -> bool:
+        """Check if a model name matches a known voice/speech model pattern."""
+        lower = name.lower()
+        return any(p in lower for p in ModelManager._VOICE_MODEL_PATTERNS)
+
     def list_local(self) -> list[ModelInfo]:
-        """Scan models_dir and return all discovered models."""
+        """Scan models_dir and return all discovered LLM models (excludes voice models)."""
         models: list[ModelInfo] = []
         loaded_name = self.backend.current_model()
 
@@ -96,6 +105,9 @@ class ModelManager:
             for p in sorted(self.gguf_dir.glob("*.gguf")):
                 # Skip mmproj files — they're vision projectors, not standalone models
                 if "mmproj" in p.name.lower():
+                    continue
+                # Skip voice/speech models
+                if self._is_voice_model(p.stem):
                     continue
                 size_gb = p.stat().st_size / 1_073_741_824
                 name = p.stem
@@ -114,22 +126,26 @@ class ModelManager:
         # MLX model directories (contain config.json)
         if self.mlx_dir.exists():
             for p in sorted(self.mlx_dir.iterdir()):
-                if p.is_dir() and (p / "config.json").exists():
-                    size_gb = _dir_size_gb(p)
-                    name = p.name
-                    cfg_path = p / "config.json"
-                    ctx = _read_context_length(cfg_path)
-                    vision = _has_vision_config(cfg_path)
-                    models.append(ModelInfo(
-                        name=name,
-                        path=str(p),
-                        format="mlx",
-                        size_gb=size_gb,
-                        is_loaded=(loaded_name == p.name),
-                        context_length=ctx,
-                        param_label=_extract_param_label(name),
-                        supports_vision=vision,
-                    ))
+                if not p.is_dir() or not (p / "config.json").exists():
+                    continue
+                # Skip voice/speech models
+                if self._is_voice_model(p.name):
+                    continue
+                size_gb = _dir_size_gb(p)
+                name = p.name
+                cfg_path = p / "config.json"
+                ctx = _read_context_length(cfg_path)
+                vision = _has_vision_config(cfg_path)
+                models.append(ModelInfo(
+                    name=name,
+                    path=str(p),
+                    format="mlx",
+                    size_gb=size_gb,
+                    is_loaded=(loaded_name == p.name),
+                    context_length=ctx,
+                    param_label=_extract_param_label(name),
+                    supports_vision=vision,
+                ))
 
         return models
 

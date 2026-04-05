@@ -235,6 +235,86 @@ actor BackendClient {
         return try JSONDecoder().decode(ExtractMemoriesResponse.self, from: data).memories
     }
 
+    // MARK: - Voice
+
+    func transcribeAudio(_ audioData: Data, mimeType: String = "audio/wav") async throws -> String {
+        let boundary = UUID().uuidString
+        var urlReq = URLRequest(url: base.appendingPathComponent("v1/audio/transcriptions"))
+        urlReq.httpMethod = "POST"
+        urlReq.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"recording.wav\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: \(mimeType)\r\n\r\n".data(using: .utf8)!)
+        body.append(audioData)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        urlReq.httpBody = body
+
+        let (respData, _) = try await session.data(for: urlReq)
+        let result = try JSONDecoder().decode(TranscriptionResponse.self, from: respData)
+        return result.text
+    }
+
+    func synthesizeSpeech(text: String, voice: String? = nil, speed: Double? = nil) async throws -> Data {
+        var payload: [String: Any] = ["input": text]
+        if let v = voice { payload["voice"] = v }
+        if let s = speed { payload["speed"] = s }
+        payload["response_format"] = "wav"
+
+        var req = URLRequest(url: base.appendingPathComponent("v1/audio/speech"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let (data, resp) = try await session.data(for: req)
+        if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
+            // Surface the actual error message from the backend
+            if let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let errMsg = body["error"] as? String {
+                throw BackendError.decode(NSError(domain: "Loca", code: http.statusCode,
+                    userInfo: [NSLocalizedDescriptionKey: "TTS failed: \(errMsg)"]))
+            }
+            throw BackendError.http(http.statusCode)
+        }
+        return data
+    }
+
+    func voiceChat(audioData: Data, messages: [[String: String]]) async throws -> VoiceChatResponse {
+        let boundary = UUID().uuidString
+        var urlReq = URLRequest(url: base.appendingPathComponent("api/voice/chat"))
+        urlReq.httpMethod = "POST"
+        urlReq.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        var body = Data()
+        // Audio file part
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"recording.wav\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: audio/wav\r\n\r\n".data(using: .utf8)!)
+        body.append(audioData)
+        body.append("\r\n".data(using: .utf8)!)
+
+        // Messages JSON part
+        if let msgData = try? JSONSerialization.data(withJSONObject: messages),
+           let msgStr = String(data: msgData, encoding: .utf8) {
+            body.append("--\(boundary)\r\n".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"messages\"\r\n\r\n".data(using: .utf8)!)
+            body.append(msgStr.data(using: .utf8)!)
+            body.append("\r\n".data(using: .utf8)!)
+        }
+
+        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        urlReq.httpBody = body
+
+        let (respData, _) = try await session.data(for: urlReq)
+        return try JSONDecoder().decode(VoiceChatResponse.self, from: respData)
+    }
+
+    func fetchVoiceConfig() async throws -> VoiceConfigResponse {
+        let (data, _) = try await get("/api/voice/config")
+        return try JSONDecoder().decode(VoiceConfigResponse.self, from: data)
+    }
+
     // MARK: - File upload
 
     func uploadFile(_ data: Data, filename: String, mimeType: String) async throws -> UploadResult {
