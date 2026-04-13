@@ -34,7 +34,7 @@ class InferenceBackendError(Exception):
     pass
 
 
-_llama_version_cache: dict[str, object] = {}   # keyed by bin path
+_llama_version_cache: dict[str, int] = {}   # keyed by bin path
 
 
 class InferenceBackend:
@@ -203,7 +203,7 @@ class InferenceBackend:
         """
         cached = _llama_version_cache.get(bin_path)
         if cached is not None:
-            return int(cached)  # type: ignore[arg-type]
+            return cached
         try:
             proc = await asyncio.create_subprocess_exec(
                 bin_path, "--version",
