@@ -136,17 +136,19 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 #new-chat-btn {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
   width: 100%;
-  padding: 8px 12px;
+  padding: 11px 12px;
   background: var(--accent);
   color: #fff;
   border: none;
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  font-weight: 500;
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
   transition: background .15s;
+  letter-spacing: .01em;
 }
 #new-chat-btn:hover { background: var(--accent-hover); }
 #new-chat-btn svg   { flex-shrink: 0; }
@@ -1527,7 +1529,7 @@ code[class*="language-"] {
   <div id="sidebar">
     <div id="sidebar-header">
       <button id="new-chat-btn" onclick="newConversation()">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
         New conversation
       </button>
     </div>
