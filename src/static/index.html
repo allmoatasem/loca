@@ -1058,6 +1058,37 @@ body.dark #input code { color: #e06c75; }
   transition: width .3s;
   width: 0%;
 }
+#llama-version-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  border-top: 1px solid var(--border-light);
+  background: var(--bg);
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+#llama-version-bar.outdated {
+  background: rgba(245,158,11,.07);
+  border-top-color: rgba(245,158,11,.3);
+  color: #b45309;
+}
+body.dark #llama-version-bar.outdated { color: #fbbf24; }
+#llama-upgrade-btn {
+  margin-left: auto;
+  padding: 3px 10px;
+  border: 1px solid currentColor;
+  border-radius: 5px;
+  background: none;
+  font-size: 11px;
+  cursor: pointer;
+  color: inherit;
+  white-space: nowrap;
+  transition: opacity .12s;
+}
+#llama-upgrade-btn:hover { opacity: .7; }
+
 #discover-filters {
   display: flex;
   gap: 4px;
@@ -1434,6 +1465,9 @@ code[class*="language-"] {
     <div id="models-download-bar">
       <div id="models-download-label">Downloading…</div>
       <div id="models-download-progress"><div id="models-download-fill"></div></div>
+    </div>
+    <div id="llama-version-bar">
+      <span id="llama-version-label">llama-server —</span>
     </div>
   </div>
 </div>
@@ -2697,7 +2731,39 @@ let _dlPollId  = null;
 
 async function openModelsPanel() {
   document.getElementById('models-overlay').classList.add('open');
-  await loadModelsTab();
+  await Promise.all([loadModelsTab(), _loadLlamaVersionBar()]);
+}
+
+async function _loadLlamaVersionBar() {
+  const bar   = document.getElementById('llama-version-bar');
+  const label = document.getElementById('llama-version-label');
+  try {
+    const data = await (await fetch('/api/llama/version')).json();
+    const build = data.build ? `build ${data.build}` : 'version unknown';
+    if (data.outdated) {
+      bar.classList.add('outdated');
+      label.textContent = `⚠ llama-server ${build} — update available`;
+      if (!document.getElementById('llama-upgrade-btn')) {
+        const btn = document.createElement('button');
+        btn.id = 'llama-upgrade-btn';
+        btn.textContent = 'brew upgrade llama.cpp';
+        btn.title = 'Click to copy upgrade command';
+        btn.onclick = () => {
+          navigator.clipboard.writeText('brew upgrade llama.cpp').then(() => {
+            btn.textContent = 'Copied!';
+            setTimeout(() => { btn.textContent = 'brew upgrade llama.cpp'; }, 2000);
+          });
+        };
+        bar.appendChild(btn);
+      }
+    } else {
+      bar.classList.remove('outdated');
+      label.textContent = `llama-server ${build}`;
+      document.getElementById('llama-upgrade-btn')?.remove();
+    }
+  } catch (_) {
+    label.textContent = 'llama-server — could not check version';
+  }
 }
 function closeModelsPanel() {
   document.getElementById('models-overlay').classList.remove('open');

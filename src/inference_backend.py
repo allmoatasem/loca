@@ -16,6 +16,7 @@ import asyncio
 import logging
 import os
 import platform
+import re
 import shutil
 import signal
 import sys
@@ -33,6 +34,9 @@ class InferenceBackendError(Exception):
     pass
 
 
+_llama_version_cache: dict[str, int] = {}   # keyed by bin path
+
+
 class InferenceBackend:
     def __init__(self, config: dict) -> None:
         inf = config.get("inference", {})
@@ -48,6 +52,7 @@ class InferenceBackend:
         self._current_backend: Backend | None = None
         self._stderr_lines: list[str] = []   # rolling buffer for error reporting
         self._load_lock = asyncio.Lock()      # prevents concurrent start() calls
+        self._llama_outdated: bool | None = None   # None = not checked yet
 
     # ------------------------------------------------------------------
     # Public API
@@ -81,6 +86,18 @@ class InferenceBackend:
         ctx = ctx_size or self.default_ctx_size
         backend = self._detect_backend(model_path)
         args = self._build_args(backend, model_path, ctx, n_gpu_layers, batch_size, num_threads)
+
+        # Check llama.cpp version once per session (non-blocking: fire and cache).
+        if backend == "llama.cpp" and self._llama_outdated is None:
+            self._llama_outdated = await self.is_llama_outdated(self.llama_server_bin)
+            build = await self.get_llama_build(self.llama_server_bin)
+            if self._llama_outdated:
+                logger.warning(
+                    f"llama-server build {build} is outdated — a newer version is available. "
+                    "Run: brew upgrade llama.cpp"
+                )
+            elif build:
+                logger.info(f"llama-server build {build} is up to date")
 
         logger.info(f"Starting {backend} backend: {' '.join(args)}")
         self._stderr_lines = []
@@ -172,6 +189,58 @@ class InferenceBackend:
 
     def api_base(self) -> str:
         return f"http://localhost:{self.port}"
+
+    # ------------------------------------------------------------------
+    # llama.cpp version helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def get_llama_build(bin_path: str = "llama-server") -> int | None:
+        """Return the llama-server build number, or None if not parseable.
+
+        Parses the line:  version: 8110 (237958db3)
+        Result is cached per binary path for the lifetime of the process.
+        """
+        cached = _llama_version_cache.get(bin_path)
+        if cached is not None:
+            return cached
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                bin_path, "--version",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=8.0)
+            m = re.search(r"version:\s*(\d+)", stderr.decode(errors="replace"))
+            if m:
+                build = int(m.group(1))
+                _llama_version_cache[bin_path] = build
+                return build
+        except Exception as exc:
+            logger.debug(f"get_llama_build: {exc}")
+        return None
+
+    @staticmethod
+    async def is_llama_outdated(bin_path: str = "llama-server") -> bool:
+        """Return True if brew reports a newer llama.cpp version is available.
+
+        Runs ``brew outdated --quiet llama.cpp``.  Returns False on any error
+        (no Homebrew, no network, etc.) so it never blocks the load path.
+        """
+        try:
+            brew = shutil.which("brew")
+            if not brew:
+                return False
+            proc = await asyncio.create_subprocess_exec(
+                brew, "outdated", "--quiet", "llama.cpp",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+            return bool(stdout.strip())
+        except Exception as exc:
+            logger.debug(f"is_llama_outdated: {exc}")
+            return False
 
     # ------------------------------------------------------------------
     # Backend detection
@@ -353,6 +422,14 @@ class InferenceBackend:
                     hint = " (FP8 models are not yet supported by mlx_lm — use a 4-bit or 8-bit MLX model instead)"
                 elif "not found" in tail.lower() or "no such file" in tail.lower():
                     hint = " (model file not found — check the path)"
+                elif "unknown model architecture" in tail.lower():
+                    arch_match = re.search(r"unknown model architecture: ['\"]?(\w+)['\"]?", tail, re.IGNORECASE)
+                    arch = f" '{arch_match.group(1)}'" if arch_match else ""
+                    upgrade_hint = " Run: brew upgrade llama.cpp"
+                    if self._llama_outdated:
+                        hint = f" (llama-server does not support the{arch} architecture — your llama.cpp is outdated.{upgrade_hint})"
+                    else:
+                        hint = f" (llama-server does not support the{arch} architecture — your llama.cpp may need updating.{upgrade_hint})"
                 raise InferenceBackendError(
                     f"Inference server exited with code {self._proc.returncode}{hint}\n{tail}".strip()
                 )

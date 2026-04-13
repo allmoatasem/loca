@@ -519,6 +519,20 @@ async def health() -> JSONResponse:
     return JSONResponse(content={"status": "ok"})
 
 
+@app.get("/api/llama/version")
+async def llama_version() -> JSONResponse:
+    """Return the installed llama-server build number and whether an upgrade is available."""
+    bin_path = _inference_backend.llama_server_bin if _inference_backend else "llama-server"
+    build = await InferenceBackend.get_llama_build(bin_path)
+    outdated = await InferenceBackend.is_llama_outdated(bin_path)
+
+    return JSONResponse(content={
+        "build": build,
+        "outdated": outdated,
+        "upgrade_cmd": "brew upgrade llama.cpp",
+    })
+
+
 @app.get("/assets/{file_path:path}")
 async def serve_asset(file_path: str) -> Response:
     """Serve static assets (JS, CSS) bundled with the app."""
