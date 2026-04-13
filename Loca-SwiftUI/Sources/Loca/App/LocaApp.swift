@@ -17,6 +17,12 @@ struct LocaApp: App {
                 Button("About Loca") {
                     AppState.shared.isAcknowledgementsOpen = true
                 }
+                Button("Glossary") {
+                    AppState.shared.isGlossaryOpen = true
+                }
+                Button("Philosophy") {
+                    AppState.shared.isPhilosophyOpen = true
+                }
             }
             CommandGroup(replacing: .newItem) {
                 Button("New Conversation") {

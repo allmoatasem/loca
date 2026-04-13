@@ -53,7 +53,7 @@ class TestPageLayout:
 
         assert page.locator("#mem-count-label").is_visible()
         assert page.locator("#theme-btn").is_visible()
-        assert page.locator(".sidebar-action-btn").count() == 4
+        assert page.locator(".sidebar-action-btn").count() == 5
 
     def test_input_area(self, page):
         """Input, send button, research button, formatting toolbar, hint."""

@@ -64,6 +64,8 @@ final class AppState: ObservableObject {
     @Published var memories: [Memory] = []
     @Published var isMemoryPanelOpen          = false
     @Published var isAcknowledgementsOpen     = false
+    @Published var isGlossaryOpen             = false
+    @Published var isPhilosophyOpen           = false
     @Published var isExtractingMemories    = false
     @Published var memoryExtractionError: String?
 
