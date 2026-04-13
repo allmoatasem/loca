@@ -391,6 +391,218 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   transition: color .15s;
 }
 #ack-link-btn:hover { color: var(--text-dim); }
+.sidebar-txt-btn {
+  background: none; border: none; cursor: pointer;
+  font-size: 11px; color: var(--text-muted);
+  padding: 2px 6px; border-radius: 4px;
+  transition: color .15s;
+}
+.sidebar-txt-btn:hover { color: var(--text-dim); }
+.sidebar-link-sep { font-size: 10px; color: var(--text-muted); user-select: none; }
+
+/* ── Glossary & Philosophy panels (shared style) ─────────────────────────── */
+#glossary-overlay, #philosophy-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.4);
+  z-index: 200;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+#glossary-overlay.open, #philosophy-overlay.open { display: flex; }
+#glossary-panel, #philosophy-panel {
+  width: 560px;
+  max-width: 95vw;
+  max-height: 85vh;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 40px rgba(0,0,0,.25);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#glossary-panel-hdr, #philosophy-panel-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#glossary-panel-hdr h3, #philosophy-panel-hdr h3 { font-size: 14px; font-weight: 600; }
+#glossary-panel-body, #philosophy-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 18px 18px;
+}
+#glossary-panel-body::-webkit-scrollbar,
+#philosophy-panel-body::-webkit-scrollbar { width: 4px; }
+#glossary-panel-body::-webkit-scrollbar-thumb,
+#philosophy-panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.glossary-entry {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-light);
+}
+.glossary-entry:last-child { border-bottom: none; }
+.glossary-term {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+.glossary-def {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.55;
+}
+
+/* ── Preferences panel ───────────────────────────────────────────────────── */
+#prefs-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.4);
+  z-index: 200;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+#prefs-overlay.open { display: flex; }
+#prefs-panel {
+  width: 540px;
+  max-width: 95vw;
+  max-height: 85vh;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 40px rgba(0,0,0,.25);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#prefs-panel-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#prefs-panel-hdr h3 { font-size: 14px; font-weight: 600; }
+#prefs-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  padding: 0 18px;
+  flex-shrink: 0;
+}
+.prefs-tab {
+  background: none; border: none;
+  padding: 9px 14px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color .12s;
+}
+.prefs-tab:hover { color: var(--text); }
+.prefs-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+#prefs-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px;
+}
+#prefs-body::-webkit-scrollbar { width: 4px; }
+#prefs-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.prefs-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-light);
+}
+.prefs-row:last-child { border-bottom: none; }
+.prefs-label { font-size: 13px; color: var(--text); }
+.prefs-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+.prefs-section-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--text-muted);
+  margin: 16px 0 8px;
+}
+.prefs-section-title:first-child { margin-top: 0; }
+.recipe-grid {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  margin-bottom: 16px;
+}
+.recipe-card {
+  flex: 1; min-width: 90px; max-width: 110px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  background: var(--bg);
+  transition: border-color .12s, background .12s;
+}
+.recipe-card.active {
+  border-color: var(--accent);
+  background: rgba(99,102,241,.07);
+}
+.recipe-card-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.recipe-card-meta {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.prefs-custom-params {
+  margin-top: 8px;
+  padding: 12px;
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+}
+.param-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+}
+.param-row label { font-size: 12px; color: var(--text-dim); width: 110px; flex-shrink: 0; }
+.param-row input[type=range] { flex: 1; }
+.param-row .param-val {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text);
+  width: 42px;
+  text-align: right;
+}
+#prefs-sysprompt {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 180px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text);
+  resize: vertical;
+  outline: none;
+  margin-top: 8px;
+}
+#prefs-sysprompt:focus { border-color: var(--accent); }
 
 #mem-trigger {
   display: flex;
@@ -1316,6 +1528,9 @@ code[class*="language-"] {
         <button class="sidebar-action-btn" onclick="openModelsPanel()" title="Manage Models" data-tip="Download and manage local models.">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01M6 18h.01"/></svg>
         </button>
+        <button class="sidebar-action-btn" onclick="openPrefsPanel()" title="Preferences" data-tip="Preferences — theme, context window,&#10;inference recipe, system prompt.">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/><path d="M19.07 19.07A10 10 0 0 1 4.93 4.93"/></svg>
+        </button>
       </div>
       <div id="sidebar-stats">
         <div class="stat-row">
@@ -1333,7 +1548,13 @@ code[class*="language-"] {
       </div>
       <div id="ack-link-row">
         <span id="sidebar-version">v0.11.0</span>
-        <button id="ack-link-btn" onclick="openAckPanel()">♥ Acknowledgements</button>
+        <div style="display:flex;gap:2px;align-items:center;flex-wrap:wrap;justify-content:center">
+          <button class="sidebar-txt-btn" onclick="openGlossaryPanel()">Glossary</button>
+          <span class="sidebar-link-sep">·</span>
+          <button class="sidebar-txt-btn" onclick="openPhilosophyPanel()">Philosophy</button>
+          <span class="sidebar-link-sep">·</span>
+          <button id="ack-link-btn" onclick="openAckPanel()">♥ Acknowledgements</button>
+        </div>
       </div>
     </div>
   </div>
@@ -1571,6 +1792,69 @@ code[class*="language-"] {
 
     </div>
     <div id="ack-footer">Loca is built on the shoulders of these open source projects. Thank you.</div>
+  </div>
+</div>
+
+<!-- Glossary panel -->
+<div id="glossary-overlay" onclick="if(event.target===this)closeGlossaryPanel()">
+  <div id="glossary-panel">
+    <div id="glossary-panel-hdr">
+      <h3>Glossary</h3>
+      <button class="panel-close" onclick="closeGlossaryPanel()">×</button>
+    </div>
+    <div id="glossary-panel-body">
+      <div class="glossary-entry"><div class="glossary-term">Token</div><div class="glossary-def">The basic unit of text a language model processes. Roughly ¾ of an English word on average. A sentence of 10 words is approximately 13–14 tokens.</div></div>
+      <div class="glossary-entry"><div class="glossary-term">Context Window</div><div class="glossary-def">The maximum number of tokens a model can attend to at once — both your input and the model's output combined. Larger windows let the model remember more of the conversation.</div></div>
+      <div class="glossary-entry"><div class="glossary-term">Temperature</div><div class="glossary-def">Controls the randomness of output. At 0 the model always picks the most likely next token (deterministic). At 2 it samples very freely, producing creative but potentially incoherent text.</div></div>
+      <div class="glossary-entry"><div class="glossary-term">Top-P (Nucleus Sampling)</div><div class="glossary-def">Restricts token selection to the smallest set whose cumulative probability exceeds P. A value of 0.9 means only tokens covering 90% of the probability mass are considered at each step.</div></div>
+      <div class="glossary-entry"><div class="glossary-term">Top-K</div><div class="glossary-def">Limits token selection to the K most probable candidates at each generation step. Lower values make output more focused; higher values allow more variety.</div></div>
+      <div class="glossary-entry"><div class="glossary-term">Repeat Penalty</div><div class="glossary-def">A multiplier applied to already-seen tokens to discourage repetition. Values above 1.0 make the model less likely to reuse recent words or phrases.</div></div>
+      <div class="glossary-entry"><div class="glossary-term">Max Tokens</div><div class="glossary-def">The maximum number of tokens the model will generate in a single response. Does not affect how much conversation history is retained.</div></div>
+      <div class="glossary-entry"><div class="glossary-term">Inference</div><div class="glossary-def">The act of running a trained model to produce output. Distinct from training — inference uses existing weights to generate text without updating them.</div></div>
+      <div class="glossary-entry"><div class="glossary-term">LLM (Large Language Model)</div><div class="glossary-def">A neural network trained on large text corpora to predict and generate natural language. Examples include Llama, Mistral, Qwen, and Phi.</div></div>
+      <div class="glossary-entry"><div class="glossary-term">MLX</div><div class="glossary-def">Apple's open-source machine learning framework optimised for Apple Silicon. Used by Loca to run models natively on the Neural Engine and GPU.</div></div>
+      <div class="glossary-entry"><div class="glossary-term">GGUF</div><div class="glossary-def">A binary model file format used by llama.cpp. Designed for fast loading and efficient CPU/GPU inference. Replaces the older GGML format.</div></div>
+      <div class="glossary-entry"><div class="glossary-term">Quantization</div><div class="glossary-def">Reducing the numerical precision of model weights (e.g., from 32-bit float to 4-bit integer). Shrinks model size and speeds up inference at a small cost to output quality.</div></div>
+      <div class="glossary-entry"><div class="glossary-term">System Prompt</div><div class="glossary-def">Instructions given to the model before the conversation starts. Sets the model's persona, constraints, or context. Loca's built-in prompts are mode-aware and include hardware context.</div></div>
+      <div class="glossary-entry"><div class="glossary-term">Embedding</div><div class="glossary-def">A fixed-length numeric vector representing the meaning of a piece of text. Used in semantic search and retrieval-augmented generation to find conceptually similar content.</div></div>
+      <div class="glossary-entry"><div class="glossary-term">RAG (Retrieval-Augmented Generation)</div><div class="glossary-def">A technique that injects retrieved documents into the prompt before asking the model to answer, grounding responses in specific source material.</div></div>
+      <div class="glossary-entry"><div class="glossary-term">Fine-tuning</div><div class="glossary-def">Further training a pre-trained model on a smaller, domain-specific dataset to specialise its behaviour for a particular task.</div></div>
+      <div class="glossary-entry"><div class="glossary-term">VRAM</div><div class="glossary-def">Video RAM — memory on the GPU used for storing model weights and activations during inference. Larger models require more VRAM.</div></div>
+      <div class="glossary-entry"><div class="glossary-term">Unified Memory</div><div class="glossary-def">Apple Silicon's shared memory pool used by both the CPU and GPU. Eliminates the need to copy data between separate CPU RAM and GPU VRAM, making larger models practical on Mac.</div></div>
+      <div class="glossary-entry"><div class="glossary-term">Hallucination</div><div class="glossary-def">When a model generates plausible-sounding but factually incorrect information with apparent confidence. A fundamental limitation of current LLMs.</div></div>
+      <div class="glossary-entry"><div class="glossary-term">Prompt</div><div class="glossary-def">The full input sent to a language model, including the system prompt, conversation history, and the user's current message.</div></div>
+      <div class="glossary-entry"><div class="glossary-term">VAD (Voice Activity Detection)</div><div class="glossary-def">An algorithm that detects when a person is speaking versus silent. Loca uses VAD to automatically segment audio before passing it to the speech-to-text model.</div></div>
+      <div class="glossary-entry"><div class="glossary-term">Whisper</div><div class="glossary-def">OpenAI's open-source speech recognition model. Loca uses mlx-whisper, an Apple Silicon–optimised port, for local speech-to-text transcription.</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- Philosophy panel -->
+<div id="philosophy-overlay" onclick="if(event.target===this)closePhilosophyPanel()">
+  <div id="philosophy-panel">
+    <div id="philosophy-panel-hdr">
+      <h3>Philosophy</h3>
+      <button class="panel-close" onclick="closePhilosophyPanel()">×</button>
+    </div>
+    <div id="philosophy-panel-body">
+      <!-- Content intentionally left empty — to be written by the author. -->
+    </div>
+  </div>
+</div>
+
+<!-- Preferences panel -->
+<div id="prefs-overlay" onclick="if(event.target===this)closePrefsPanel()">
+  <div id="prefs-panel">
+    <div id="prefs-panel-hdr">
+      <h3>Preferences</h3>
+      <button class="panel-close" onclick="closePrefsPanel()">×</button>
+    </div>
+    <div id="prefs-tabs">
+      <button class="prefs-tab active" onclick="switchPrefsTab(this,'general')">General</button>
+      <button class="prefs-tab" onclick="switchPrefsTab(this,'inference')">Inference</button>
+      <button class="prefs-tab" onclick="switchPrefsTab(this,'system-prompt')">System Prompt</button>
+    </div>
+    <div id="prefs-body"></div>
   </div>
 </div>
 
@@ -2035,7 +2319,7 @@ async function sendMessage() {
     const resp = await fetch('/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode, model_override: modelOverride, messages: history, stream: true, num_ctx: numCtx, research_mode: researchMode && !lockdownMode })
+      body: JSON.stringify({ mode, model_override: modelOverride, messages: history, stream: true, num_ctx: numCtx, research_mode: researchMode && !lockdownMode, ..._getInferenceParams() })
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
@@ -2972,6 +3256,159 @@ async function openVaultPanel() {
   } catch(_) { sel.style.display = 'none'; }
 }
 function closeVaultPanel() { document.getElementById('vault-overlay').classList.remove('open'); }
+
+// ── Glossary panel ────────────────────────────────────────────────────────
+function openGlossaryPanel()    { document.getElementById('glossary-overlay').classList.add('open'); }
+function closeGlossaryPanel()   { document.getElementById('glossary-overlay').classList.remove('open'); }
+
+// ── Philosophy panel ──────────────────────────────────────────────────────
+function openPhilosophyPanel()  { document.getElementById('philosophy-overlay').classList.add('open'); }
+function closePhilosophyPanel() { document.getElementById('philosophy-overlay').classList.remove('open'); }
+
+// ── Preferences panel ─────────────────────────────────────────────────────
+const RECIPES = {
+  Balanced: { temperature: 0.70, top_p: 0.90, top_k: 40, repeat_penalty: 1.10, max_tokens: 2048 },
+  Creative: { temperature: 1.00, top_p: 0.95, top_k: 50, repeat_penalty: 1.00, max_tokens: 2048 },
+  Precise:  { temperature: 0.20, top_p: 0.80, top_k: 20, repeat_penalty: 1.15, max_tokens: 2048 },
+  Fast:     { temperature: 0.70, top_p: 0.90, top_k: 40, repeat_penalty: 1.10, max_tokens: 512  },
+  Custom:   null,
+};
+
+function _getPrefs() {
+  const recipe = localStorage.getItem('loca-recipe') || 'Balanced';
+  const base = RECIPES[recipe] || RECIPES.Balanced;
+  return {
+    recipe,
+    temperature:             parseFloat(localStorage.getItem('loca-temperature')    ?? base.temperature),
+    top_p:                   parseFloat(localStorage.getItem('loca-top-p')          ?? base.top_p),
+    top_k:                   parseInt  (localStorage.getItem('loca-top-k')          ?? base.top_k, 10),
+    repeat_penalty:          parseFloat(localStorage.getItem('loca-repeat-penalty') ?? base.repeat_penalty),
+    max_tokens:              parseInt  (localStorage.getItem('loca-max-tokens')     ?? base.max_tokens, 10),
+    system_prompt_override:  localStorage.getItem('loca-system-prompt') || null,
+  };
+}
+
+// Returns only the fields the backend accepts (recipe is UI-only state).
+function _getInferenceParams() {
+  const { recipe: _r, ...params } = _getPrefs(); // eslint-disable-line no-unused-vars
+  return params;
+}
+
+function _applyRecipe(name) {
+  localStorage.setItem('loca-recipe', name);
+  if (name !== 'Custom' && RECIPES[name]) {
+    const r = RECIPES[name];
+    localStorage.setItem('loca-temperature',    r.temperature);
+    localStorage.setItem('loca-top-p',          r.top_p);
+    localStorage.setItem('loca-top-k',          r.top_k);
+    localStorage.setItem('loca-repeat-penalty', r.repeat_penalty);
+    localStorage.setItem('loca-max-tokens',     r.max_tokens);
+  }
+}
+
+let _prefTab = 'general';
+function openPrefsPanel() {
+  _prefTab = 'general';
+  document.getElementById('prefs-overlay').classList.add('open');
+  _renderPrefsTab(_prefTab);
+  document.querySelectorAll('.prefs-tab').forEach((b,i) => b.classList.toggle('active', i === 0));
+}
+function closePrefsPanel() { document.getElementById('prefs-overlay').classList.remove('open'); }
+function switchPrefsTab(btn, tab) {
+  _prefTab = tab;
+  document.querySelectorAll('.prefs-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  _renderPrefsTab(tab);
+}
+
+function _renderPrefsTab(tab) {
+  const body = document.getElementById('prefs-body');
+  const p = _getPrefs();
+  if (tab === 'general') {
+    const ctx = parseInt(document.getElementById('ctx-select').value, 10);
+    const thm = localStorage.getItem('loca-theme') || 'auto';
+    body.innerHTML = `
+      <div class="prefs-section-title">Appearance</div>
+      <div class="prefs-row">
+        <div><div class="prefs-label">Theme</div></div>
+        <select id="pref-theme" onchange="prefSetTheme(this.value)" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-size:12px">
+          <option value="auto"  ${thm==='auto'  ?'selected':''}>Auto (system)</option>
+          <option value="light" ${thm==='light' ?'selected':''}>Light</option>
+          <option value="dark"  ${thm==='dark'  ?'selected':''}>Dark</option>
+        </select>
+      </div>
+      <div class="prefs-section-title" style="margin-top:16px">Context</div>
+      <div class="prefs-row">
+        <div>
+          <div class="prefs-label">Default context window</div>
+          <div class="prefs-hint">Tokens the model keeps in memory. Higher = more RAM.</div>
+        </div>
+        <select id="pref-ctx" onchange="prefSetCtx(this.value)" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-size:12px">
+          ${[4096,8192,16384,32768,65536,131072,262144].map(n=>`<option value="${n}" ${n===ctx?'selected':''}>${n>=1024?n/1024+'K':''+n} tokens</option>`).join('')}
+        </select>
+      </div>`;
+  } else if (tab === 'inference') {
+    const recipeCards = Object.keys(RECIPES).map(name => {
+      const r = RECIPES[name];
+      const meta = r ? `temp ${r.temperature.toFixed(1)}\ntop-p ${r.top_p.toFixed(2)}\nmax ${r.max_tokens}` : 'Your own\nparameters';
+      return `<div class="recipe-card ${p.recipe===name?'active':''}" onclick="prefSetRecipe('${name}')">`
+        + `<div class="recipe-card-name">${name}</div>`
+        + `<div class="recipe-card-meta">${meta.split('\n').join('<br>')}</div>`
+        + `</div>`;
+    }).join('');
+    const customVisible = p.recipe === 'Custom' ? '' : 'display:none';
+    body.innerHTML = `
+      <div class="prefs-section-title">Recipe</div>
+      <div class="recipe-grid">${recipeCards}</div>
+      <div id="pref-custom-params" class="prefs-custom-params" style="${customVisible}">
+        <div class="param-row"><label>Temperature</label><input type="range" min="0" max="2" step="0.01" value="${p.temperature}" oninput="prefParam('temperature',parseFloat(this.value));this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)"><span class="param-val">${p.temperature.toFixed(2)}</span></div>
+        <div class="param-row"><label>Top-P</label><input type="range" min="0" max="1" step="0.01" value="${p.top_p}" oninput="prefParam('top_p',parseFloat(this.value));this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)"><span class="param-val">${p.top_p.toFixed(2)}</span></div>
+        <div class="param-row"><label>Top-K</label><input type="range" min="1" max="100" step="1" value="${p.top_k}" oninput="prefParam('top_k',parseInt(this.value));this.nextElementSibling.textContent=this.value"><span class="param-val">${p.top_k}</span></div>
+        <div class="param-row"><label>Repeat Penalty</label><input type="range" min="1" max="2" step="0.01" value="${p.repeat_penalty}" oninput="prefParam('repeat_penalty',parseFloat(this.value));this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)"><span class="param-val">${p.repeat_penalty.toFixed(2)}</span></div>
+        <div class="param-row"><label>Max Tokens</label><input type="range" min="128" max="8192" step="64" value="${p.max_tokens}" oninput="prefParam('max_tokens',parseInt(this.value));this.nextElementSibling.textContent=this.value"><span class="param-val">${p.max_tokens}</span></div>
+      </div>`;
+  } else {
+    body.innerHTML = `
+      <div class="prefs-section-title">System Prompt Override</div>
+      <textarea id="prefs-sysprompt" placeholder="Leave empty to use Loca's built-in mode-aware prompts (recommended). If set, this replaces the system prompt for all conversations." oninput="prefSetSysPrompt(this.value)">${p.system_prompt}</textarea>
+      <div class="prefs-hint" style="margin-top:6px">Loca's built-in prompts are mode-aware (General, Code, Thinking, Vision) and include hardware context. An override applies to all modes.</div>
+      ${p.system_prompt ? `<button onclick="prefClearSysPrompt()" style="margin-top:10px;background:none;border:1px solid var(--border);border-radius:6px;padding:5px 12px;font-size:12px;color:#e74c3c;cursor:pointer">Clear Override</button>` : ''}`;
+  }
+}
+
+function prefSetTheme(val) {
+  let dark;
+  if (val === 'auto') {
+    localStorage.removeItem('loca-theme');
+    dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  } else {
+    localStorage.setItem('loca-theme', val);
+    dark = val === 'dark';
+  }
+  document.body.classList.toggle('dark', dark);
+  setThemeIcon(dark);
+  document.getElementById('prism-css').href = dark ? '/assets/prism-dark.min.css' : '/assets/prism-light.min.css';
+}
+function prefSetCtx(val) {
+  const n = parseInt(val, 10);
+  document.getElementById('ctx-select').value = n;
+}
+function prefSetRecipe(name) {
+  _applyRecipe(name);
+  _renderPrefsTab('inference');
+}
+function prefParam(key, val) {
+  localStorage.setItem('loca-recipe', 'Custom');
+  const keyMap = { temperature: 'loca-temperature', top_p: 'loca-top-p', top_k: 'loca-top-k', repeat_penalty: 'loca-repeat-penalty', max_tokens: 'loca-max-tokens' };
+  localStorage.setItem(keyMap[key], val);
+  document.querySelectorAll('.recipe-card').forEach(c => c.classList.toggle('active', c.querySelector('.recipe-card-name').textContent === 'Custom'));
+}
+function prefSetSysPrompt(val) { localStorage.setItem('loca-system-prompt', val); }
+function prefClearSysPrompt() {
+  localStorage.removeItem('loca-system-prompt');
+  _renderPrefsTab('system-prompt');
+}
+
 async function selectVault(p) { if (!p) return; document.getElementById('vault-path-input').value = p; await _loadVA(p); }
 async function scanVault() {
   const p = document.getElementById('vault-path-input').value || document.getElementById('vault-select').value;

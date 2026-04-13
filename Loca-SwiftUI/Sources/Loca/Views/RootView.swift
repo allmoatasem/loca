@@ -175,6 +175,38 @@ struct MainLayout: View {
                 .animation(.easeInOut(duration: 0.18), value: state.isVaultOpen)
             }
         }
+        .overlay {
+            if state.isGlossaryOpen {
+                ZStack {
+                    Color.black.opacity(0.3)
+                        .ignoresSafeArea()
+                        .onTapGesture { state.isGlossaryOpen = false }
+                    GlossaryView()
+                        .environmentObject(state)
+                        .background(.ultraThickMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .shadow(radius: 20)
+                }
+                .transition(.opacity)
+                .animation(.easeInOut(duration: 0.18), value: state.isGlossaryOpen)
+            }
+        }
+        .overlay {
+            if state.isPhilosophyOpen {
+                ZStack {
+                    Color.black.opacity(0.3)
+                        .ignoresSafeArea()
+                        .onTapGesture { state.isPhilosophyOpen = false }
+                    PhilosophyView()
+                        .environmentObject(state)
+                        .background(.ultraThickMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .shadow(radius: 20)
+                }
+                .transition(.opacity)
+                .animation(.easeInOut(duration: 0.18), value: state.isPhilosophyOpen)
+            }
+        }
     }
 }
 
