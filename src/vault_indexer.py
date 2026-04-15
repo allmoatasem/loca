@@ -95,6 +95,8 @@ _WIKI_LINK = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
 _MD_LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 _TAG_INLINE = re.compile(r"(?:^|\s)#([a-zA-Z][\w/-]*)", re.MULTILINE)
 _HEADING = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
+_DAILY_NOTE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_TASK = re.compile(r"^- \[([ x])\] (.+)$", re.MULTILINE)
 
 # Frontmatter YAML tag patterns (simple extraction without a YAML library)
 _FM_TAGS = re.compile(r"^tags:\s*\[([^\]]*)\]", re.MULTILINE)
@@ -103,7 +105,12 @@ _FM_TAG_ITEM = re.compile(r"^\s*-\s+(.+)$", re.MULTILINE)
 
 
 def _parse_frontmatter(text: str) -> tuple[dict, str]:
-    """Extract YAML frontmatter and return (metadata_dict, body_without_frontmatter)."""
+    """Extract YAML frontmatter and return (metadata_dict, body_without_frontmatter).
+
+    metadata_dict contains:
+      - "tags": list[str]  (already-handled tag fields)
+      - "properties": dict  (all other scalar key-value pairs)
+    """
     if not text.startswith("---"):
         return {}, text
     end = text.find("\n---", 3)
@@ -131,6 +138,20 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
                     break
     if tags:
         meta["tags"] = tags
+
+    # Extract other scalar key-value properties (skip tags key)
+    properties: dict[str, str] = {}
+    for line in fm_block.splitlines():
+        kv = line.split(":", 1)
+        if len(kv) != 2:
+            continue
+        key = kv[0].strip()
+        val = kv[1].strip()
+        if not key or key == "tags" or val.startswith("[") or val.startswith("-"):
+            continue
+        properties[key] = val.strip("'\"")
+    if properties:
+        meta["properties"] = properties
 
     return meta, body
 
@@ -172,6 +193,27 @@ def parse_note(rel_path: str, text: str) -> dict:
     # Content hash for change detection
     content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
 
+    # Daily note detection — filename stem matches YYYY-MM-DD
+    stem = Path(rel_path).stem
+    is_daily_note = bool(_DAILY_NOTE.fullmatch(stem))
+
+    # Task extraction — "- [ ] ..." and "- [x] ..."
+    tasks = []
+    for line_no, line in enumerate(text.splitlines(), 1):
+        tm = _TASK.match(line)
+        if tm:
+            tasks.append({
+                "text": tm.group(2).strip(),
+                "completed": tm.group(1) == "x",
+                "line": line_no,
+            })
+
+    # Frontmatter properties (non-tag key-values)
+    properties: dict[str, str] = meta.get("properties", {})
+
+    # Body snippet — first 500 chars, stripped of frontmatter
+    body_snippet = body[:500]
+
     return {
         "title": title,
         "tags": tags,
@@ -179,6 +221,10 @@ def parse_note(rel_path: str, text: str) -> dict:
         "links": links,
         "word_count": word_count,
         "content_hash": content_hash,
+        "is_daily_note": is_daily_note,
+        "tasks": tasks,
+        "properties": properties,
+        "body_snippet": body_snippet,
     }
 
 
@@ -262,6 +308,10 @@ def scan_vault(vault_path: str) -> dict:
                 "modified": modified,
                 "content_hash": parsed["content_hash"],
                 "indexed_at": time.time(),
+                "is_daily_note": parsed["is_daily_note"],
+                "tasks": parsed["tasks"],
+                "properties": parsed["properties"],
+                "body_snippet": parsed["body_snippet"],
             }
             store.upsert_vault_note(note)
             store.replace_vault_links(vault_key, rel_path, parsed["links"])

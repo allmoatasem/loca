@@ -1097,6 +1097,13 @@ body.dark #input code { color: #e06c75; }
 .vault-item .vi-detail { color:var(--text-dim);font-size:11px;margin-left:auto;white-space:nowrap }
 .vault-empty { padding:12px;background:var(--bg);border-radius:8px;color:var(--text-dim);font-size:12px }
 .vault-section-label { font-size:12px;color:var(--text-dim);margin-bottom:8px }
+.vault-search-bar { display:flex;gap:6px;margin-bottom:14px }
+.vault-search-bar input { flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--text);font-size:12px }
+.vault-search-bar button { background:var(--accent);border:none;border-radius:6px;padding:5px 12px;color:#fff;font-size:12px;cursor:pointer }
+.vault-score-bar { height:4px;border-radius:2px;background:rgba(99,102,241,.15);margin-top:4px }
+.vault-score-fill { height:4px;border-radius:2px;background:var(--accent) }
+.vault-health-row { display:flex;gap:8px;align-items:center;padding:6px 10px;background:var(--bg);border-radius:6px;margin-bottom:4px;font-size:12px }
+.vault-health-row .count { margin-left:auto;color:var(--text-dim) }
 .vault-health-row { display:flex;align-items:center;gap:6px;font-size:12px;padding:4px 0 }
 .vault-health-row .count { margin-left:auto;color:var(--text-dim);font-family:var(--font-mono) }
 #ack-panel {
@@ -1950,6 +1957,7 @@ code[class*="language-"] {
       <button onclick="switchVaultTab(this,'orphans')">Orphans</button>
       <button onclick="switchVaultTab(this,'broken')">Broken Links</button>
       <button onclick="switchVaultTab(this,'suggestions')">Suggestions</button>
+      <button onclick="switchVaultTab(this,'search')">Search</button>
     </div>
     <div id="vault-body"><div class="vault-empty">Select a vault and click Scan to get started.</div></div>
   </div>
@@ -3552,12 +3560,18 @@ async function _loadVA(p) {
   } catch(_) { b.innerHTML = '<div class="vault-empty">Click <strong>Scan</strong> to index this vault.</div>'; _va = null; }
 }
 function switchVaultTab(btn, t) { _vtab = t; document.querySelectorAll('#vault-tabs button').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); _renderVT(t); }
-function _renderVT(t) { if (!_va) return; const b = document.getElementById('vault-body'); b.innerHTML = ({overview:_vOverview,orphans:_vOrphans,broken:_vBroken,suggestions:_vSugg})[t](_va); }
+function _renderVT(t) {
+  if (!_va && t !== 'search') return;
+  const b = document.getElementById('vault-body');
+  if (t === 'search') { _vSearchRender(); return; }
+  b.innerHTML = ({overview:_vOverview,orphans:_vOrphans,broken:_vBroken,suggestions:_vSugg})[t](_va);
+}
 function _statCard(l,v) { return `<div class="vault-stat-card"><div class="stat-value">${v}</div><div class="stat-label">${l}</div></div>`; }
 function _hRow(l,c,g) { return `<div class="vault-health-row"><span style="color:${g?'#22c55e':'#f59e0b'}">${g?'&#10003;':'&#9888;'}</span><span>${l}</span><span class="count">${c}</span></div>`; }
 function _vOverview(a) {
-  let h = `<div class="vault-stat-grid">${_statCard('Notes',a.stats.note_count)}${_statCard('Links',a.stats.link_count)}${_statCard('Words',_fmtN(a.stats.total_words))}${_statCard('Tags',a.stats.tag_count)}${_statCard('Folders',a.stats.folder_count)}${_statCard('Orphans',a.orphans.length)}</div>`;
-  if (a.stats.top_tags.length) { h += '<div class="vault-section-label">Top Tags</div><div class="vault-tag-cloud">' + a.stats.top_tags.map(t=>`<span class="vault-tag">#${t.tag} <small>${t.count}</small></span>`).join('') + '</div>'; }
+  const s = a.stats;
+  let h = `<div class="vault-stat-grid">${_statCard('Notes',s.note_count)}${_statCard('Links',s.link_count)}${_statCard('Words',_fmtN(s.total_words))}${_statCard('Tags',s.tag_count)}${_statCard('Folders',s.folder_count)}${_statCard('Orphans',a.orphans.length)}${_statCard('Daily Notes',s.daily_note_count||0)}${_statCard('Open Tasks',s.open_tasks||0)}${_statCard('Done Tasks',s.done_tasks||0)}</div>`;
+  if (s.top_tags.length) { h += '<div class="vault-section-label">Top Tags</div><div class="vault-tag-cloud">' + s.top_tags.map(t=>`<span class="vault-tag">#${_esc(t.tag)} <small>${t.count}</small></span>`).join('') + '</div>'; }
   h += '<div class="vault-section-label">Health</div>' + _hRow('Broken links',a.broken_links.length,!a.broken_links.length) + _hRow('Dead-end notes',a.dead_ends.length,a.dead_ends.length<5) + _hRow('Single-use tags',a.tag_orphans.length,a.tag_orphans.length<5) + _hRow('Link suggestions',a.link_suggestions.length,true);
   return h;
 }
@@ -3577,6 +3591,57 @@ function _vSugg(a) {
   let h = '<div class="vault-section-label">Link Suggestions</div>';
   if (!a.link_suggestions.length) return h + '<div class="vault-empty">&#10003; All related notes connected.</div>';
   return h + a.link_suggestions.map(s=>`<div class="vault-item" style="flex-direction:column;gap:4px"><div style="display:flex;gap:6px;align-items:center"><span class="vi-title">${_esc(s.note_a.title)}</span><span style="color:var(--text-dim)">&harr;</span><span class="vi-title">${_esc(s.note_b.title)}</span></div><div class="vi-path">${_esc(s.reason)}</div></div>`).join('');
+}
+
+function _vSearchRender() {
+  const b = document.getElementById('vault-body');
+  const savedQ = b.dataset.searchQ || '';
+  const savedRes = b.dataset.searchRes ? JSON.parse(b.dataset.searchRes) : null;
+  let resultsHtml = '';
+  if (savedRes !== null) {
+    if (!savedRes.length) { resultsHtml = '<div class="vault-empty">No results.</div>'; }
+    else {
+      resultsHtml = savedRes.map(r => {
+        const pct = Math.round(r.score * 100);
+        const tags = r.tags.map(t=>`<span class="vault-tag">#${_esc(t)}</span>`).join('');
+        return `<div class="vault-item" style="flex-direction:column;gap:4px">
+          <div style="display:flex;justify-content:space-between;align-items:baseline">
+            <span class="vi-title">${_esc(r.title)}</span>
+            <span class="vi-detail">${pct}%</span>
+          </div>
+          <div class="vault-score-bar"><div class="vault-score-fill" style="width:${pct}%"></div></div>
+          <div class="vi-path">${_esc(r.rel_path)}</div>
+          ${r.snippet ? `<div style="font-size:11px;color:var(--text-dim);margin-top:2px">${_esc(r.snippet.slice(0,160))}</div>` : ''}
+          ${tags ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:2px">${tags}</div>` : ''}
+        </div>`;
+      }).join('');
+    }
+  }
+  b.innerHTML = `<div class="vault-search-bar">
+    <input id="vs-input" type="text" placeholder="Search vault..." value="${_esc(savedQ)}" onkeydown="if(event.key==='Enter')_vSearchRun()">
+    <button onclick="_vSearchRun()">Search</button>
+  </div>
+  <div id="vs-results">${resultsHtml}</div>`;
+  if (!savedQ) document.getElementById('vs-input')?.focus();
+}
+
+async function _vSearchRun() {
+  const inp = document.getElementById('vs-input');
+  const q = inp ? inp.value.trim() : '';
+  if (!q) return;
+  const vaultPath = document.getElementById('vault-path-input').value;
+  if (!vaultPath) return;
+  document.getElementById('vs-results').innerHTML = '<div class="vault-empty">Searching...</div>';
+  try {
+    const data = await (await fetch(`/api/vault/semantic-search?path=${encodeURIComponent(vaultPath)}&q=${encodeURIComponent(q)}&limit=20`)).json();
+    const b = document.getElementById('vault-body');
+    b.dataset.searchQ = q;
+    b.dataset.searchRes = JSON.stringify(data.results || []);
+    document.getElementById('vs-results').innerHTML = '';
+    _vSearchRender();
+  } catch(e) {
+    document.getElementById('vs-results').innerHTML = `<div class="vault-empty">Search failed: ${_esc(e.message)}</div>`;
+  }
 }
 
 async function renderMemList() {

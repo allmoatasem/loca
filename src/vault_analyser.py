@@ -29,11 +29,17 @@ def vault_stats(vault_path: str) -> dict:
             "tag_count": 0,
             "top_tags": [],
             "folder_count": 0,
+            "daily_note_count": 0,
+            "open_tasks": 0,
+            "done_tasks": 0,
         }
 
     all_tags: list[str] = []
     folders: set[str] = set()
     total_words = 0
+    daily_note_count = 0
+    open_tasks = 0
+    done_tasks = 0
 
     for n in notes:
         tags = n["tags"] if isinstance(n["tags"], list) else json.loads(n["tags"])
@@ -42,6 +48,13 @@ def vault_stats(vault_path: str) -> dict:
         parent = str(Path(n["rel_path"]).parent)
         if parent != ".":
             folders.add(parent)
+        if n.get("is_daily_note"):
+            daily_note_count += 1
+        for t in (n.get("tasks") or []):
+            if t.get("completed"):
+                done_tasks += 1
+            else:
+                open_tasks += 1
 
     tag_counts = Counter(all_tags).most_common(20)
 
@@ -52,6 +65,9 @@ def vault_stats(vault_path: str) -> dict:
         "tag_count": len(set(all_tags)),
         "top_tags": [{"tag": t, "count": c} for t, c in tag_counts],
         "folder_count": len(folders),
+        "daily_note_count": daily_note_count,
+        "open_tasks": open_tasks,
+        "done_tasks": done_tasks,
     }
 
 

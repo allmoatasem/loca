@@ -3,6 +3,7 @@ import SwiftUI
 struct VaultView: View {
     @EnvironmentObject var state: AppState
     @State private var selectedTab = "overview"
+    @State private var searchQuery = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -106,6 +107,7 @@ struct VaultView: View {
             tabButton("Orphans", id: "orphans", icon: "link.badge.plus")
             tabButton("Broken Links", id: "broken", icon: "exclamationmark.triangle")
             tabButton("Suggestions", id: "suggestions", icon: "lightbulb")
+            tabButton("Search", id: "search", icon: "magnifyingglass")
         }
         .padding(.horizontal, 16).padding(.vertical, 6)
     }
@@ -128,16 +130,20 @@ struct VaultView: View {
 
     @ViewBuilder
     private func tabContent(_ analysis: VaultAnalysis) -> some View {
-        ScrollView {
-            switch selectedTab {
-            case "overview":    overviewTab(analysis)
-            case "orphans":     orphansTab(analysis)
-            case "broken":      brokenTab(analysis)
-            case "suggestions": suggestionsTab(analysis)
-            default: EmptyView()
+        if selectedTab == "search" {
+            searchTab
+        } else {
+            ScrollView {
+                switch selectedTab {
+                case "overview":    overviewTab(analysis)
+                case "orphans":     orphansTab(analysis)
+                case "broken":      brokenTab(analysis)
+                case "suggestions": suggestionsTab(analysis)
+                default: EmptyView()
+                }
             }
+            .padding(16)
         }
-        .padding(16)
     }
 
     // MARK: - Overview
@@ -152,6 +158,16 @@ struct VaultView: View {
                 statCard("Folders", value: "\(a.stats.folder_count)", icon: "folder")
                 statCard("Orphans", value: "\(a.orphans.count)", icon: "link.badge.plus",
                          tint: a.orphans.isEmpty ? .green : .orange)
+                if let daily = a.stats.daily_note_count {
+                    statCard("Daily Notes", value: "\(daily)", icon: "calendar")
+                }
+                if let open = a.stats.open_tasks {
+                    statCard("Open Tasks", value: "\(open)", icon: "circle",
+                             tint: open == 0 ? .green : .orange)
+                }
+                if let done = a.stats.done_tasks {
+                    statCard("Done Tasks", value: "\(done)", icon: "checkmark.circle", tint: .green)
+                }
             }
             if !a.stats.top_tags.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
@@ -255,6 +271,97 @@ struct VaultView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Search
+
+    private var searchTab: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundColor(.secondary).font(.system(size: 13))
+                TextField("Search notes by meaning…", text: $searchQuery)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .onSubmit { state.vaultSearch(searchQuery) }
+                if state.isVaultSearching {
+                    ProgressView().controlSize(.small)
+                } else if !searchQuery.isEmpty {
+                    Button {
+                        searchQuery = ""
+                        state.vaultSearchResults = []
+                    } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Button("Search") { state.vaultSearch(searchQuery) }
+                    .controlSize(.small)
+                    .disabled(searchQuery.trimmingCharacters(in: .whitespaces).isEmpty || state.isVaultSearching)
+            }
+            .padding(10)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .padding(16)
+
+            Divider()
+
+            if let err = state.vaultSearchError {
+                Text(err).font(.caption).foregroundColor(.red).padding(16)
+            } else if state.vaultSearchResults.isEmpty && !searchQuery.isEmpty && !state.isVaultSearching {
+                VStack(spacing: 8) {
+                    Spacer()
+                    Image(systemName: "doc.text.magnifyingglass").font(.system(size: 28)).foregroundColor(.secondary)
+                    Text("No results for \"\(searchQuery)\"").font(.caption).foregroundColor(.secondary)
+                    Spacer()
+                }
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 6) {
+                        ForEach(state.vaultSearchResults) { r in
+                            searchResultRow(r)
+                        }
+                    }
+                    .padding(16)
+                }
+            }
+        }
+    }
+
+    private func searchResultRow(_ r: VaultSearchResult) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                if r.is_daily_note == true {
+                    Image(systemName: "calendar").font(.system(size: 10)).foregroundColor(.accentColor)
+                }
+                Text(r.title).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Spacer()
+                if let score = r.score {
+                    Text("\(Int(score * 100))%")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundColor(score > 0.5 ? .green : score > 0.25 ? .orange : .secondary)
+                }
+            }
+            if let snippet = r.snippet, !snippet.isEmpty {
+                Text(snippet)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+            }
+            HStack(spacing: 6) {
+                Text(r.rel_path).font(.system(size: 10)).foregroundColor(.secondary).lineLimit(1)
+                if let tc = r.tasks_count, tc > 0 {
+                    Label("\(tc)", systemImage: "checkmark.circle")
+                        .font(.system(size: 10)).foregroundColor(.secondary)
+                }
+                ForEach(r.tags.prefix(3), id: \.self) { tag in
+                    Text("#\(tag)").font(.system(size: 10)).foregroundColor(.accentColor)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - Helpers

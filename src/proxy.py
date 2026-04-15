@@ -977,6 +977,8 @@ async def api_vault_scan(request: Request) -> JSONResponse:
     loop = asyncio.get_event_loop()
     try:
         stats = await loop.run_in_executor(None, scan_vault, vault_path)
+        from .vault_search import clear_vault_search_cache
+        clear_vault_search_cache(vault_path)
         return JSONResponse({"ok": True, **stats})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -996,6 +998,78 @@ async def api_vault_analysis(path: str = "") -> JSONResponse:
     if not path:
         return JSONResponse({"error": "path query param is required"}, status_code=400)
     return JSONResponse(full_analysis(path))
+
+
+@app.get("/api/vault/semantic-search")
+async def api_vault_semantic_search(path: str = "", q: str = "", limit: int = 20) -> JSONResponse:
+    if not path or not q.strip():
+        return JSONResponse({"results": []})
+    from .vault_search import semantic_search
+    loop = asyncio.get_event_loop()
+    try:
+        results = await loop.run_in_executor(None, semantic_search, path, q, limit)
+        return JSONResponse({"results": results})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/vault/daily-notes")
+async def api_vault_daily_notes(path: str = "") -> JSONResponse:
+    if not path:
+        return JSONResponse({"error": "path is required"}, status_code=400)
+    notes = list_vault_notes(path)
+    daily = sorted(
+        [n for n in notes if n.get("is_daily_note")],
+        key=lambda n: n["rel_path"],
+        reverse=True,
+    )
+    return JSONResponse({"daily_notes": [
+        {"rel_path": n["rel_path"], "title": n["title"], "modified": n.get("modified")}
+        for n in daily
+    ]})
+
+
+@app.get("/api/vault/tasks")
+async def api_vault_tasks(path: str = "", completed: str = "") -> JSONResponse:
+    if not path:
+        return JSONResponse({"error": "path is required"}, status_code=400)
+    notes = list_vault_notes(path)
+    results = []
+    for n in notes:
+        tasks = n.get("tasks") or []
+        for t in tasks:
+            if completed == "true" and not t.get("completed"):
+                continue
+            if completed == "false" and t.get("completed"):
+                continue
+            results.append({
+                "rel_path": n["rel_path"],
+                "title": n["title"],
+                "text": t["text"],
+                "completed": t["completed"],
+                "line": t.get("line"),
+            })
+    return JSONResponse({"tasks": results})
+
+
+@app.get("/api/vault/properties")
+async def api_vault_properties(path: str = "", key: str = "", value: str = "") -> JSONResponse:
+    if not path:
+        return JSONResponse({"error": "path is required"}, status_code=400)
+    notes = list_vault_notes(path)
+    results = []
+    for n in notes:
+        props = n.get("properties") or {}
+        if key and key not in props:
+            continue
+        if key and value and props.get(key) != value:
+            continue
+        results.append({
+            "rel_path": n["rel_path"],
+            "title": n["title"],
+            "properties": props,
+        })
+    return JSONResponse({"notes": results})
 
 
 @app.get("/api/vault/search")
