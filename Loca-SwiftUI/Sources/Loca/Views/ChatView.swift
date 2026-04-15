@@ -1212,6 +1212,19 @@ struct AttachmentChip: View {
 
 struct MemoryPanel: View {
     @EnvironmentObject var state: AppState
+    @State private var searchText = ""
+    @State private var recallResults: [Memory] = []
+    @State private var isRecalling = false
+    @State private var recallError: String?
+
+    private var displayedMemories: [Memory] {
+        if !searchText.isEmpty && !recallResults.isEmpty { return recallResults }
+        if searchText.isEmpty { return state.memories }
+        // Local filter while recall is in-flight
+        return state.memories.filter {
+            $0.content.localizedCaseInsensitiveContains(searchText)
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1226,11 +1239,12 @@ struct MemoryPanel: View {
                     if state.isExtractingMemories {
                         ProgressView().scaleEffect(0.7)
                     } else {
-                        Text("Extract from chat")
+                        Text("Save from chat")
                     }
                 }
                 .controlSize(.small)
                 .buttonStyle(.bordered)
+                .help("Store recent messages verbatim for future recall")
                 .disabled(state.messages.isEmpty || state.isExtractingMemories)
 
                 Button("Done") { state.isMemoryPanelOpen = false }
@@ -1240,32 +1254,143 @@ struct MemoryPanel: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
 
+            // Search / recall bar
+            HStack(spacing: 6) {
+                Image(systemName: isRecalling ? "waveform" : "magnifyingglass")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                TextField("Search memories…", text: $searchText)
+                    .font(.system(size: 12))
+                    .textFieldStyle(.plain)
+                    .onChange(of: searchText) {
+                        _triggerRecall()
+                    }
+                if !searchText.isEmpty {
+                    Button { searchText = ""; recallResults = [] } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Color.secondary.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+
             Divider()
 
-            // Content
             if let err = state.memoryExtractionError {
-                Text("Extraction failed: \(err)")
+                Text("Save failed: \(err)")
+                    .font(.caption).foregroundColor(.red)
+                    .padding(.horizontal, 16).padding(.top, 8)
+            }
+            if let err = recallError {
+                Text("Recall failed: \(err)")
                     .font(.caption).foregroundColor(.red)
                     .padding(.horizontal, 16).padding(.top, 8)
             }
 
-            List {
-                ForEach(state.memories) { memory in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(memory.content).font(.system(size: 13)).textSelection(.enabled)
-                        Text(memory.createdDate, style: .relative)
-                            .font(.caption).foregroundColor(.secondary)
+            if displayedMemories.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: searchText.isEmpty ? "brain" : "magnifyingglass")
+                        .font(.system(size: 28)).foregroundColor(.secondary)
+                    Text(searchText.isEmpty ? "No memories yet" : "No matches found")
+                        .font(.system(size: 13)).foregroundColor(.secondary)
+                    if searchText.isEmpty {
+                        Text("Click \"Save from chat\" after a conversation\nto store messages for future recall.")
+                            .font(.system(size: 11)).foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
                     }
-                    .padding(.vertical, 2)
                 }
-                .onDelete { offsets in
-                    let ids = offsets.map { state.memories[$0].id }
-                    state.memories.remove(atOffsets: offsets)
-                    for id in ids { Task { try? await BackendClient.shared.deleteMemory(id) } }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding()
+            } else {
+                List {
+                    if !searchText.isEmpty && !recallResults.isEmpty {
+                        Section(header: Text("Semantic matches for \"\(searchText)\"")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.secondary)) {
+                            ForEach(displayedMemories) { memory in
+                                MemoryRow(memory: memory)
+                            }
+                        }
+                    } else {
+                        ForEach(displayedMemories) { memory in
+                            MemoryRow(memory: memory)
+                        }
+                        .onDelete { offsets in
+                            let ids = offsets.map { displayedMemories[$0].id }
+                            state.memories.removeAll { ids.contains($0.id) }
+                            for id in ids { Task { try? await BackendClient.shared.deleteMemory(id) } }
+                        }
+                    }
                 }
             }
         }
         .onAppear { state.loadMemories() }
+    }
+
+    private func _triggerRecall() {
+        guard !searchText.trimmingCharacters(in: .whitespaces).isEmpty else {
+            recallResults = []
+            recallError = nil
+            return
+        }
+        let q = searchText
+        Task {
+            isRecalling = true
+            recallError = nil
+            do {
+                let results = try await BackendClient.shared.recallMemories(query: q, limit: 8)
+                if searchText == q {   // discard stale results
+                    recallResults = results
+                }
+            } catch {
+                if searchText == q { recallError = error.localizedDescription }
+            }
+            isRecalling = false
+        }
+    }
+}
+
+private struct MemoryRow: View {
+    @EnvironmentObject var state: AppState
+    let memory: Memory
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(typeColor)
+                    .frame(width: 6, height: 6)
+                Text(memory.typeLabel)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(.secondary)
+                    .textCase(.uppercase)
+                    .tracking(0.5)
+                Spacer()
+                Text(memory.createdDate, style: .relative)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+            Text(memory.content)
+                .font(.system(size: 12))
+                .lineLimit(4)
+                .textSelection(.enabled)
+        }
+        .padding(.vertical, 3)
+    }
+
+    private var typeColor: Color {
+        switch memory.type {
+        case "knowledge":  return .blue
+        case "correction": return .orange
+        default:           return Color.secondary.opacity(0.5)
+        }
     }
 }
 

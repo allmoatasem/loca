@@ -64,6 +64,8 @@ def _migrate(c: sqlite3.Connection) -> None:
     mem_cols = {r[1] for r in c.execute("PRAGMA table_info(memories)")}
     if "type" not in mem_cols:
         c.execute("ALTER TABLE memories ADD COLUMN type TEXT NOT NULL DEFAULT 'user_fact'")
+    if "embedding" not in mem_cols:
+        c.execute("ALTER TABLE memories ADD COLUMN embedding BLOB")
 
     # Vault analyser tables
     c.executescript("""
@@ -224,6 +226,30 @@ def delete_memory(mem_id: str) -> None:
     with _conn() as c:
         c.execute("DELETE FROM memories WHERE id=?", (mem_id,))
         c.commit()
+
+
+def get_memory_embedding(mem_id: str) -> bytes | None:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT embedding FROM memories WHERE id=?", (mem_id,)
+        ).fetchone()
+        return row["embedding"] if row else None
+
+
+def set_memory_embedding(mem_id: str, blob: bytes | None) -> None:
+    with _conn() as c:
+        c.execute(
+            "UPDATE memories SET embedding=? WHERE id=?", (blob, mem_id)
+        )
+        c.commit()
+
+
+def list_memories_without_embeddings(limit: int = 200) -> list[dict]:
+    with _conn() as c:
+        return [dict(r) for r in c.execute(
+            "SELECT id, content, type FROM memories WHERE embedding IS NULL "
+            "ORDER BY created DESC LIMIT ?", (limit,)
+        )]
 
 
 # ── Vault ────────────────────────────────────────────────────────────────────

@@ -505,6 +505,20 @@ struct ExtractMemoriesResponse: Decodable {
     let memories: [Memory]
 }
 
+// MARK: - Plugins
+
+struct PluginInfo: Decodable, Identifiable {
+    let name: String
+    let type: String
+    let running: Bool
+    let description: String
+    var id: String { name }
+}
+
+struct PluginStatusResponse: Decodable {
+    let plugins: [PluginInfo]
+}
+
 // MARK: - Vault
 
 struct DetectedVault: Decodable, Identifiable {

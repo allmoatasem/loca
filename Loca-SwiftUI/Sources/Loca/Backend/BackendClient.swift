@@ -253,6 +253,17 @@ actor BackendClient {
         return try JSONDecoder().decode(ExtractMemoriesResponse.self, from: data).memories
     }
 
+    func recallMemories(query: String, limit: Int = 5) async throws -> [Memory] {
+        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let (data, _) = try await get("/api/memories/recall?q=\(encoded)&limit=\(limit)")
+        return try JSONDecoder().decode(MemoryListResponse.self, from: data).memories
+    }
+
+    func pluginStatus() async throws -> PluginStatusResponse {
+        let (data, _) = try await get("/api/plugins")
+        return try JSONDecoder().decode(PluginStatusResponse.self, from: data)
+    }
+
     // MARK: - Voice
 
     func transcribeAudio(_ audioData: Data, mimeType: String = "audio/wav") async throws -> String {
