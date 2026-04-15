@@ -97,17 +97,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _voice_backend = VoiceBackend(_config)
     _orchestrator = Orchestrator(_config, _model_manager, voice_backend=_voice_backend)
 
-    # Auto-start the active model if configured
-    active_rel = _config.get("inference", {}).get("active_model")
-    if active_rel:
-        active_path = _inference_backend.models_dir / active_rel
-        if active_path.exists():
-            logger.info(f"Auto-starting inference backend with: {active_path}")
-            try:
-                await _inference_backend.start(str(active_path))
-            except Exception as e:
-                logger.warning(f"Could not auto-start inference backend: {e}")
-
     logger.info("Loca proxy started")
     asyncio.create_task(_build_recs_cache())
     yield
