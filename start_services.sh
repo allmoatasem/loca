@@ -143,6 +143,7 @@ fi
 # ── 4. Start orchestrator proxy ───────────────────────────────────────────────
 status "Starting Loca…" 60
 lsof -ti tcp:8000 -sTCP:LISTEN | xargs kill -9 2>/dev/null || true
+lsof -ti tcp:8080 -sTCP:LISTEN | xargs kill -9 2>/dev/null || true
 cd "$DIR"
 LOCA_DATA_DIR="$LOCA_DATA_DIR" \
 "$VENV/bin/python" -m uvicorn src.proxy:app --host 0.0.0.0 --port 8000 \
