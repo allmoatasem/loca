@@ -86,10 +86,15 @@ private struct InferencePrefsTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            // ── Backend selector ────────────────────────────────────────
+            ExternalServerSection()
+
+            Divider()
+                .padding(.horizontal, 20)
+
             Text("Recipe")
                 .font(.headline)
                 .padding(.horizontal, 20)
-                .padding(.top, 20)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
@@ -163,6 +168,92 @@ private struct InferencePrefsTab: View {
             .padding(.bottom, 20)
         }
         .frame(width: 540)
+    }
+}
+
+// MARK: - External server section
+
+private struct ExternalServerSection: View {
+    @EnvironmentObject var state: AppState
+
+    private enum Preset: String, CaseIterable, Identifiable {
+        case native   = "Native"
+        case lmStudio = "LM Studio"
+        case ollama   = "Ollama"
+        case custom   = "Custom"
+
+        var id: String { rawValue }
+        var defaultUrl: String? {
+            switch self {
+            case .native:   return nil
+            case .lmStudio: return "http://localhost:1234"
+            case .ollama:   return "http://localhost:11434/v1"
+            case .custom:   return nil
+            }
+        }
+    }
+
+    @State private var preset: Preset = .native
+
+    var body: some View {
+        Form {
+            Section("Backend") {
+                Picker("Server", selection: $preset) {
+                    ForEach(Preset.allCases) { p in
+                        Text(p.rawValue).tag(p)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: preset) { _, newPreset in
+                    switch newPreset {
+                    case .native:
+                        state.lmStudioMode = false
+                    case .lmStudio:
+                        state.lmStudioUrl = "http://localhost:1234"
+                        state.lmStudioMode = true
+                    case .ollama:
+                        state.lmStudioUrl = "http://localhost:11434/v1"
+                        state.lmStudioMode = true
+                    case .custom:
+                        state.lmStudioMode = true
+                    }
+                }
+
+                if preset != .native {
+                    HStack {
+                        Text("URL")
+                            .frame(width: 40, alignment: .leading)
+                        TextField("http://localhost:1234", text: $state.lmStudioUrl)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit {
+                                Task {
+                                    try? await BackendClient.shared.setBackendMode(
+                                        lmStudio: true,
+                                        lmStudioUrl: state.lmStudioUrl
+                                    )
+                                }
+                            }
+                    }
+                    Text("Loca forwards chat requests to this OpenAI-compatible server and skips its own inference backend.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding(.horizontal, 20)
+        .padding(.top, 20)
+        .onAppear {
+            if !state.lmStudioMode {
+                preset = .native
+            } else if state.lmStudioUrl.contains("11434") {
+                preset = .ollama
+            } else if state.lmStudioUrl.contains("1234") {
+                preset = .lmStudio
+            } else {
+                preset = .custom
+            }
+        }
     }
 }
 

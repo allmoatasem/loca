@@ -621,3 +621,11 @@ struct StartupStatus: Decodable {
     let progress: Int
     var detail: String?
 }
+
+
+// MARK: - Backend mode
+
+struct BackendModeResponse: Decodable {
+    let lm_studio: Bool
+    let lm_studio_url: String
+}

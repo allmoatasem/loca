@@ -9,7 +9,8 @@ Loca manages its own inference backend (MLX on Apple Silicon, llama.cpp everywhe
 ## Features
 
 ### Inference
-- **No cloud, no subscriptions** — drives `mlx_lm.server` (Apple Silicon) and `llama-server` (all platforms) directly; no LM Studio or Ollama required
+- **Native backend** — drives `mlx_lm.server` (Apple Silicon) and `llama-server` (all platforms) directly; no LM Studio or Ollama required
+- **External server toggle** — switch to LM Studio, Ollama, or any OpenAI-compatible server from Preferences → Inference
 - **MLX + GGUF** — MLX directories for native Apple Silicon speed; GGUF for cross-platform compatibility
 - **Vision** — image uploads with multi-modal support; auto-detects vision capability from `config.json` and GGUF mmproj files
 - **Voice mode** — speech-to-text via mlx-whisper with voice activity detection; transcribes and sends automatically

@@ -380,6 +380,23 @@ actor BackendClient {
         return try JSONDecoder().decode(SystemStats.self, from: data)
     }
 
+    // MARK: - Backend mode (native vs LM Studio)
+
+    func getBackendMode() async throws -> BackendModeResponse {
+        let (data, _) = try await get("/api/backend/mode")
+        return try JSONDecoder().decode(BackendModeResponse.self, from: data)
+    }
+
+    func setBackendMode(lmStudio: Bool, lmStudioUrl: String) async throws {
+        let (_, resp) = try await patchRaw("/api/backend/mode", body: [
+            "lm_studio": lmStudio,
+            "lm_studio_url": lmStudioUrl,
+        ])
+        if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
+            throw BackendError.http(http.statusCode)
+        }
+    }
+
     // MARK: - Startup status
 
     /// Reads /tmp/loca-startup-status.json written by start_services.sh.
