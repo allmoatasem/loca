@@ -109,10 +109,10 @@ class MemPalaceMemoryPlugin(MemoryPlugin):
             )
             return [
                 {
-                    "id": r["id"],
-                    "content": r["content"],
+                    "id": r.get("source_file", ""),
+                    "content": r["text"],
                     "type": r.get("room", "general"),
-                    "created": r.get("timestamp", ""),
+                    "created": "",
                     "score": round(1.0 - r.get("distance", 1.0), 4),
                 }
                 for r in result.get("results", [])

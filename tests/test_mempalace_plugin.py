@@ -18,11 +18,14 @@ def _make_fake_mempalace(collection: MagicMock) -> None:
     fake_searcher.search_memories.return_value = {
         "results": [
             {
-                "id": "abc123",
-                "content": "User prefers Python over JavaScript.",
+                "text": "User prefers Python over JavaScript.",
+                "wing": "loca",
                 "room": "preferences",
-                "timestamp": "2026-04-15T10:00:00",
+                "source_file": "loca-chat",
+                "similarity": 0.9,
                 "distance": 0.1,
+                "matched_via": "drawer",
+                "bm25_score": 0.0,
             }
         ]
     }
