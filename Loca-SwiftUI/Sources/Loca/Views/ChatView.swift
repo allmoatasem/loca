@@ -351,7 +351,9 @@ struct MessagesScrollView: View {
     }
 
     private var externalServerName: String {
-        state.lmStudioUrl.contains("11434") ? "Ollama" : "LM Studio"
+        if state.lmStudioUrl.contains("11434") { return "Ollama" }
+        if state.lmStudioUrl.contains("1234")  { return "LM Studio" }
+        return "Inference server"
     }
 
     private var noModelsDownloadedView: some View {

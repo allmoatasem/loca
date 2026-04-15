@@ -174,7 +174,6 @@ private struct ExternalServerSection: View {
         case native   = "Native"
         case lmStudio = "LM Studio"
         case ollama   = "Ollama"
-        case custom   = "Custom"
 
         var id: String { rawValue }
         var defaultUrl: String? {
@@ -182,7 +181,6 @@ private struct ExternalServerSection: View {
             case .native:   return nil
             case .lmStudio: return "http://localhost:1234"
             case .ollama:   return "http://localhost:11434/v1"
-            case .custom:   return nil
             }
         }
     }
@@ -191,13 +189,14 @@ private struct ExternalServerSection: View {
 
     var body: some View {
         Form {
-            Section("Backend") {
-                Picker("Server", selection: $preset) {
+            Section {
+                Picker("", selection: $preset) {
                     ForEach(Preset.allCases) { p in
                         Text(p.rawValue).tag(p)
                     }
                 }
                 .pickerStyle(.segmented)
+                .labelsHidden()
                 .onChange(of: preset) { _, newPreset in
                     switch newPreset {
                     case .native:
@@ -208,8 +207,6 @@ private struct ExternalServerSection: View {
                     case .ollama:
                         state.lmStudioUrl = "http://localhost:11434/v1"
                         state.lmStudioMode = true
-                    case .custom:
-                        state.lmStudioMode = true
                     }
                 }
 
@@ -217,7 +214,7 @@ private struct ExternalServerSection: View {
                     HStack {
                         Text("URL")
                             .frame(width: 40, alignment: .leading)
-                        TextField("http://localhost:1234", text: $state.lmStudioUrl)
+                        TextField(preset.defaultUrl ?? "http://localhost:1234", text: $state.lmStudioUrl)
                             .textFieldStyle(.roundedBorder)
                             .onSubmit {
                                 Task {
@@ -228,10 +225,16 @@ private struct ExternalServerSection: View {
                                 }
                             }
                     }
-                    Text("Loca forwards chat requests to this OpenAI-compatible server and skips its own inference backend.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
                 }
+
+                Text(preset == .native
+                     ? "Loca runs its own inference engine (mlx_lm on Apple Silicon, llama-server elsewhere). Models are managed in the Models tab."
+                     : "Loca forwards LLM requests to this server. Its own features (memory, vault, research) remain active; only inference is delegated.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+            } header: {
+                Text("Inference Engine")
             }
         }
         .formStyle(.grouped)
@@ -242,10 +245,8 @@ private struct ExternalServerSection: View {
                 preset = .native
             } else if state.lmStudioUrl.contains("11434") {
                 preset = .ollama
-            } else if state.lmStudioUrl.contains("1234") {
-                preset = .lmStudio
             } else {
-                preset = .custom
+                preset = .lmStudio
             }
         }
     }
@@ -509,11 +510,11 @@ private struct ServerPrefsTab: View {
                         }
                         .padding(.top, 2)
 
-                        Text("Enter a hostname or IP address. Use a Tailscale IP (e.g. 100.x.x.x) to connect to a remote machine running Loca's backend.")
+                        Text("The host where Loca's backend proxy runs. Normally this is localhost. Change it to a Tailscale IP (e.g. 100.x.x.x) to offload the entire Loca stack — inference, memory, vault — to a more powerful machine.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     } header: {
-                        Text("Remote Loca Server")
+                        Text("Remote Loca Backend")
                     }
 
                     Section {
