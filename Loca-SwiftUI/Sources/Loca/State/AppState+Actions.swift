@@ -97,7 +97,7 @@ extension AppState {
     // MARK: - Downloads
 
     func _pauseDownload() async {
-        guard let dl = activeDownload, !dl.done, dl.error == nil else { return }
+        guard let dl = activeDownload, !dl.done, dl.error == nil, !dl.downloadId.isEmpty else { return }
         try? await BackendClient.shared.pauseDownload(id: dl.downloadId)
         activeDownload?.paused = true
         activeDownload?.speedMbps = 0
@@ -111,15 +111,28 @@ extension AppState {
     }
 
     func _startDownload(repoId: String, filename: String?, format: String) {
+        // Show progress immediately so the UI isn't stuck with no feedback.
+        // When resuming a paused download, preserve the last known percent and
+        // total size so the bar doesn't jump back to 0% / indeterminate.
+        if activeDownload == nil {
+            activeDownload = ActiveDownload(
+                repoId: repoId, filename: filename, format: format,
+                downloadId: "", percent: -1
+            )
+        } else {
+            // Resume path — clear transient state while keeping progress figures
+            activeDownload?.paused = false
+            activeDownload?.downloadId = ""
+            activeDownload?.error = nil
+            activeDownload?.speedMbps = 0
+            activeDownload?.etaSeconds = 0
+        }
         Task {
             do {
                 let dlId = try await BackendClient.shared.startDownload(
                     repoId: repoId, filename: filename, format: format
                 )
-                activeDownload = ActiveDownload(
-                    repoId: repoId, filename: filename, format: format,
-                    downloadId: dlId, percent: -1
-                )
+                activeDownload?.downloadId = dlId
                 await _pollDownload(dlId)
             } catch {
                 activeDownload?.error = error.localizedDescription
@@ -276,6 +289,25 @@ extension AppState {
 
     func _send(_ text: String, attachments: [UploadResult] = []) async {
         guard !isStreaming else { return }
+
+        // Guard: no model available in native mode — show a helpful prompt instead
+        // of a raw connection error.
+        if isBackendReady && !lmStudioMode && !isRemoteServer {
+            if localModels.isEmpty {
+                messages.append(ChatMessage(role: "user", content: .text(text)))
+                messages.append(ChatMessage(role: "assistant", content: .text(
+                    "⚠️ No models downloaded yet. Open **Settings → Models** to download a model first."
+                )))
+                return
+            }
+            if !localModels.contains(where: { $0.is_loaded }) {
+                messages.append(ChatMessage(role: "user", content: .text(text)))
+                messages.append(ChatMessage(role: "assistant", content: .text(
+                    "⚠️ No model is loaded. Open **Settings → Models** and tap **Load** next to a model."
+                )))
+                return
+            }
+        }
 
         // Guard: reject images for non-vision models
         let imageAttachments = attachments.filter { $0.type == "image" }

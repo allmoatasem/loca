@@ -129,7 +129,7 @@ struct ChatView: View {
 
     private func sendIfReady() {
         let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !state.isStreaming, !trimmed.isEmpty || !attachments.isEmpty else { return }
+        guard !state.isStreaming, !state.isLoadingModel, !trimmed.isEmpty || !attachments.isEmpty else { return }
         let t   = inputText
         let att = attachments
         inputText   = ""
@@ -863,7 +863,13 @@ struct InputBar: View {
                 FormatButton(icon: "text.alignleft",
                              help: "Code block (```)")                 { inputActions.codeBlock() }
                 Spacer()
-                if state.isStreaming {
+                if state.isLoadingModel {
+                    HStack(spacing: 4) {
+                        ProgressView().scaleEffect(0.55)
+                        Text("Loading model…").font(.system(size: 11)).foregroundColor(.secondary)
+                    }
+                    .padding(.trailing, 4)
+                } else if state.isStreaming {
                     HStack(spacing: 4) {
                         ProgressView().scaleEffect(0.55)
                         Text("Generating…").font(.system(size: 11)).foregroundColor(.secondary)
@@ -976,6 +982,7 @@ struct InputBar: View {
 
     private var canSend: Bool {
         !state.isStreaming &&
+        !state.isLoadingModel &&
         (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
     }
 

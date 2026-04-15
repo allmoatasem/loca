@@ -92,5 +92,11 @@ echo "Installing to $DEST…"
 rsync -a --delete "$BUNDLE/" "$DEST/"
 
 codesign --sign - --force --deep --entitlements "$ENTITLEMENTS" "$DEST"
+
+# Re-register with Launch Services so the Dock picks up the updated icon
+touch "$DEST"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+    -f "$DEST" 2>/dev/null || true
+
 echo "Updated ~/Applications/Loca.app"
 echo "Done — open Loca.app to launch."
