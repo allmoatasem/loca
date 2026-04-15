@@ -33,10 +33,10 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from .inference_backend import InferenceBackend
 from .model_manager import ModelManager
 from .orchestrator import Orchestrator
+from .plugin_manager import PluginManager
 from .store import (
     add_memory,
     delete_conversation,
-    delete_memory,
     get_conversation,
     list_conversations,
     list_memories,
@@ -44,7 +44,6 @@ from .store import (
     patch_conversation,
     save_conversation,
     search_conversations,
-    update_memory,
 )
 from .voice_backend import VoiceBackend
 
@@ -78,6 +77,7 @@ _inference_backend: InferenceBackend | None = None
 _model_manager: ModelManager | None = None
 _orchestrator: Orchestrator | None = None
 _voice_backend: VoiceBackend | None = None
+_plugin_manager: PluginManager | None = None
 
 # In-memory download job tracking
 _download_jobs:  dict[str, asyncio.Queue]  = {}   # download_id → progress queue
@@ -89,18 +89,26 @@ _recs_cache_lock: asyncio.Lock | None      = None  # ensures only one build runs
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    global _config, _inference_backend, _model_manager, _orchestrator, _voice_backend
+    global _config, _inference_backend, _model_manager, _orchestrator, _voice_backend, _plugin_manager
 
     _config = _load_config()
     _inference_backend = InferenceBackend(_config)
     _model_manager = ModelManager(_config, _inference_backend)
     _voice_backend = VoiceBackend(_config)
-    _orchestrator = Orchestrator(_config, _model_manager, voice_backend=_voice_backend)
+    _plugin_manager = PluginManager(_config, _inference_backend)
+    await _plugin_manager.start()
+    _orchestrator = Orchestrator(
+        _config, _model_manager,
+        voice_backend=_voice_backend,
+        memory_plugin=_plugin_manager.memory_plugin,
+    )
 
     logger.info("Loca proxy started")
     asyncio.create_task(_build_recs_cache())
     yield
     # Shutdown
+    if _plugin_manager:
+        await _plugin_manager.stop()
     if _inference_backend:
         await _inference_backend.stop()
 
@@ -440,6 +448,9 @@ async def load_model(request: Request) -> JSONResponse:
         model_name, api_base = await _model_manager.load(
             name, ctx_size, n_gpu_layers, batch_size, num_threads
         )
+        # Backfill embeddings for memories stored before a model was available
+        if _orchestrator:
+            asyncio.create_task(_orchestrator.backfill_embeddings())
         return JSONResponse({"ok": True, "name": model_name, "api_base": api_base})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -766,19 +777,42 @@ async def api_add_memory(request: Request) -> JSONResponse:
 
 
 @app.patch("/api/memories/{mem_id}")
-async def api_update_memory(mem_id: str, request: Request) -> JSONResponse:
+async def api_update_memory_plugin(mem_id: str, request: Request) -> JSONResponse:
+    """Update memory content and clear its embedding so it's re-embedded on next recall."""
+    assert _plugin_manager is not None
     body = await request.json()
     content = body.get("content", "").strip()
     if not content:
         return JSONResponse({"error": "content is required"}, status_code=400)
-    update_memory(mem_id, content)
+    _plugin_manager.memory_plugin.update(mem_id, content)
     return JSONResponse({"ok": True})
 
 
 @app.delete("/api/memories/{mem_id}")
 async def api_delete_memory(mem_id: str) -> JSONResponse:
-    delete_memory(mem_id)
+    assert _plugin_manager is not None
+    _plugin_manager.memory_plugin.delete(mem_id)
     return JSONResponse({"ok": True})
+
+
+@app.get("/api/memories/recall")
+async def api_recall_memories(q: str, limit: int = 5) -> JSONResponse:
+    """Semantic (or keyword) search over stored memories."""
+    assert _plugin_manager is not None
+    if not q.strip():
+        return JSONResponse({"memories": []})
+    results = await _plugin_manager.memory_plugin.recall(q.strip(), limit=limit)
+    return JSONResponse({"memories": results})
+
+
+# ---------------------------------------------------------------------------
+# Plugin status
+# ---------------------------------------------------------------------------
+
+@app.get("/api/plugins")
+async def api_plugins() -> JSONResponse:
+    assert _plugin_manager is not None
+    return JSONResponse(_plugin_manager.status())
 
 
 @app.get("/api/hardware")

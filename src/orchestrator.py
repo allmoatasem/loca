@@ -22,6 +22,7 @@ import httpx
 from .hardware_profiler import get_hardware_profile
 from .memory_extractor import extract_memories
 from .model_manager import ModelManager
+from .plugins.memory_plugin import MemoryPlugin
 from .router import Model, RouteResult, route
 from .store import add_memory, get_memories_context
 from .tools.file_ops import file_read, file_write
@@ -40,7 +41,13 @@ _TOOL_CALL_RE = re.compile(
 
 
 class Orchestrator:
-    def __init__(self, config: dict, model_manager: ModelManager, voice_backend: VoiceBackend | None = None):
+    def __init__(
+        self,
+        config: dict,
+        model_manager: ModelManager,
+        voice_backend: VoiceBackend | None = None,
+        memory_plugin: MemoryPlugin | None = None,
+    ):
         self.config = config
         self.mm = model_manager
         self._search_cfg = config.get("search", {})
@@ -49,6 +56,7 @@ class Orchestrator:
         self._max_tool_calls: int = self._routing_cfg.get("max_tool_calls_per_turn", 5)
         self._hw = get_hardware_profile()
         self.voice = voice_backend
+        self._memory: MemoryPlugin | None = memory_plugin
 
     # ------------------------------------------------------------------
     # Public entrypoint
@@ -82,7 +90,13 @@ class Orchestrator:
             system_prompt = system_prompt_override
         else:
             system_prompt = _build_system_prompt(result.model, model_name, self._hw)
-        mem_ctx = get_memories_context()
+
+        # Memory injection: use semantic recall if plugin available, else legacy bulk inject
+        if self._memory:
+            relevant = await self._memory.recall(user_message, limit=6)
+            mem_ctx = self._memory.format_for_prompt(relevant)
+        else:
+            mem_ctx = get_memories_context()
         if mem_ctx:
             system_prompt = f"{system_prompt}\n\n{mem_ctx}"
 
@@ -404,7 +418,16 @@ class Orchestrator:
     async def extract_and_save_memories(
         self, messages: list[dict], conv_id: str | None = None
     ) -> list[dict]:
-        """Run three-pass memory extraction, persist results, return saved list."""
+        """
+        Store memories from a conversation.
+
+        If the memory plugin is available, store key user messages verbatim
+        (no lossy LLM extraction).  Falls back to the three-pass LLM extractor
+        for backward compatibility when no plugin is configured.
+        """
+        if self._memory:
+            return await self._store_verbatim(messages, conv_id)
+        # Legacy path: LLM extraction
         model_name, api_base = await self.mm.ensure_loaded(Model.GENERAL)
         extracted = await extract_memories(messages, model_name, api_base)
         saved = []
@@ -413,6 +436,42 @@ class Orchestrator:
                 mid = add_memory(fact, conv_id=conv_id, type=mem_type)
                 saved.append({"id": mid, "content": fact, "type": mem_type})
         return saved
+
+    async def _store_verbatim(
+        self, messages: list[dict], conv_id: str | None
+    ) -> list[dict]:
+        """
+        Store the last user message(s) verbatim.
+
+        We store only user-role messages — they contain facts, preferences, and
+        corrections in the user's own words, which is exactly what we want to
+        surface in future conversations.  Assistant turns are usually hedged and
+        don't add durable facts.
+        """
+        assert self._memory is not None
+        saved = []
+        user_msgs = [
+            m for m in messages
+            if m.get("role") == "user"
+            and isinstance(m.get("content"), str)
+            and len(m["content"].strip()) > 20   # skip trivial one-liners
+        ]
+        # Store at most the 3 most recent user messages to keep memories focused
+        for msg in user_msgs[-3:]:
+            text = msg["content"].strip()
+            mid = await self._memory.store(
+                text, {"conv_id": conv_id, "type": "user_fact"}
+            )
+            saved.append({"id": mid, "content": text, "type": "user_fact"})
+        return saved
+
+    async def backfill_embeddings(self) -> None:
+        """
+        Called once after the inference backend becomes ready.
+        Generates embeddings for any memories stored without one.
+        """
+        if self._memory and hasattr(self._memory, "backfill_embeddings"):
+            await self._memory.backfill_embeddings()  # type: ignore[union-attr]
 
     # ------------------------------------------------------------------
     # Search helper
