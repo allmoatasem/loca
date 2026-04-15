@@ -10,6 +10,7 @@ working, just without memory recall.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .memory_plugin import MemoryPlugin
@@ -22,6 +23,19 @@ _DECISION_WORDS = {"decided", "decision", "went with", "chose", "because of", "w
 _PREFERENCE_WORDS = {"prefer", "always", "never", "i like", "i hate", "i love", "i want", "style"}
 _PROBLEM_WORDS = {"bug", "crash", "error", "failed", "broken", "issue", "exception", "traceback"}
 _MILESTONE_WORDS = {"fixed", "solved", "working", "finally", "got it", "done", "completed"}
+
+
+def _iso_to_unix(iso: str) -> float:
+    """Convert a MemPalace filed_at ISO string to a Unix timestamp. Returns 0.0 on failure."""
+    if not iso:
+        return 0.0
+    try:
+        dt = datetime.fromisoformat(iso)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    except Exception:
+        return 0.0
 
 
 def _classify_room(text: str) -> str:
@@ -107,12 +121,13 @@ class MemPalaceMemoryPlugin(MemoryPlugin):
                 wing="loca",
                 n_results=limit,
             )
+            now = datetime.now(timezone.utc).timestamp()
             return [
                 {
                     "id": r.get("source_file", ""),
                     "content": r["text"],
                     "type": r.get("room", "general"),
-                    "created": "",
+                    "created": now,
                     "score": round(1.0 - r.get("distance", 1.0), 4),
                 }
                 for r in result.get("results", [])
@@ -133,12 +148,14 @@ class MemPalaceMemoryPlugin(MemoryPlugin):
                 limit=200,
                 include=["documents", "metadatas"],
             )
+            docs = result.get("documents") or []
+            metas = result.get("metadatas") or []
             return [
                 {
                     "id": doc_id,
-                    "content": result["documents"][i] if result.get("documents") and i < len(result["documents"]) else "",
-                    "type": (result["metadatas"][i].get("room", "general") if result.get("metadatas") and i < len(result["metadatas"]) else "general"),
-                    "created": (result["metadatas"][i].get("timestamp", "") if result.get("metadatas") and i < len(result["metadatas"]) else ""),
+                    "content": docs[i] if i < len(docs) else "",
+                    "type": metas[i].get("room", "general") if i < len(metas) else "general",
+                    "created": _iso_to_unix(metas[i].get("filed_at", "")) if i < len(metas) else 0.0,
                 }
                 for i, doc_id in enumerate(result.get("ids", []))
             ]
