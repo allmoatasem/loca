@@ -447,38 +447,46 @@ class TestBackendRetry:
 
 class TestMemoryExtraction:
     @pytest.mark.asyncio
-    async def test_extract_and_save_calls_store(self):
+    async def test_extract_and_save_returns_empty_without_plugin(self):
+        """Without a memory plugin, extract_and_save_memories returns []."""
         orch, mm = _make_orchestrator()
         messages = [
-            {"role": "user", "content": "I love hiking"},
+            {"role": "user", "content": "I love hiking and outdoor adventures"},
             {"role": "assistant", "content": "That's great!"},
         ]
-        fake_memories = {"user_fact": ["User loves hiking"]}
-
-        with patch("src.orchestrator.extract_memories", new_callable=AsyncMock, return_value=fake_memories) as mock_extract, \
-             patch("src.orchestrator.add_memory", return_value="mem-001") as mock_add:
-            saved = await orch.extract_and_save_memories(messages, conv_id="conv-1")
-
-        mock_extract.assert_awaited_once()
-        mock_add.assert_called_once_with("User loves hiking", conv_id="conv-1", type="user_fact")
-        assert len(saved) == 1
-        assert saved[0]["content"] == "User loves hiking"
-        assert saved[0]["type"] == "user_fact"
-        assert saved[0]["id"] == "mem-001"
+        saved = await orch.extract_and_save_memories(messages, conv_id="conv-1")
+        assert saved == []
 
     @pytest.mark.asyncio
-    async def test_extract_multiple_types(self):
+    async def test_extract_and_save_with_memory_plugin(self):
+        """With a memory plugin, extract_and_save_memories stores the pair verbatim."""
+        from src.plugins.memory_plugin import MemoryPlugin
         orch, mm = _make_orchestrator()
-        fake_memories = {
-            "user_fact": ["User is a developer"],
-            "preference": ["Prefers dark mode"],
-        }
+        mock_plugin = MagicMock(spec=MemoryPlugin)
+        mock_plugin.store = AsyncMock(return_value="mem-001")
+        orch._memory = mock_plugin
 
-        with patch("src.orchestrator.extract_memories", new_callable=AsyncMock, return_value=fake_memories), \
-             patch("src.orchestrator.add_memory", return_value="mem-x"):
-            saved = await orch.extract_and_save_memories([{"role": "user", "content": "hi"}])
+        messages = [
+            {"role": "user", "content": "I love hiking and outdoor adventures"},
+            {"role": "assistant", "content": "That's wonderful!"},
+        ]
+        saved = await orch.extract_and_save_memories(messages, conv_id="conv-1")
 
-        assert len(saved) == 2
-        types = {m["type"] for m in saved}
-        assert "user_fact" in types
-        assert "preference" in types
+        mock_plugin.store.assert_awaited_once()
+        assert len(saved) == 1
+        assert saved[0]["id"] == "mem-001"
+        assert saved[0]["type"] == "conversation"
+
+    @pytest.mark.asyncio
+    async def test_extract_skips_short_user_messages(self):
+        """Messages shorter than 20 chars should not be stored."""
+        from src.plugins.memory_plugin import MemoryPlugin
+        orch, mm = _make_orchestrator()
+        mock_plugin = MagicMock(spec=MemoryPlugin)
+        mock_plugin.store = AsyncMock(return_value="mem-x")
+        orch._memory = mock_plugin
+
+        messages = [{"role": "user", "content": "hi"}]
+        saved = await orch.extract_and_save_memories(messages)
+        mock_plugin.store.assert_not_awaited()
+        assert saved == []
