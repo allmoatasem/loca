@@ -11,6 +11,8 @@ inference:
   llama_server: llama-server  # binary name or full path to llama-server
   active_model: null       # relative path from models_dir to load on startup
                            # e.g. "gguf/qwen2.5-7b-q4_k_m.gguf"
+  external_server: false   # set true to route inference to an external OpenAI-compatible server
+  external_server_url: http://localhost:1234  # e.g. LM Studio :1234 or Ollama :11434/v1
 
 # ── Model routing ────────────────────────────────────────────────────────────
 # These names map routing modes → display names.

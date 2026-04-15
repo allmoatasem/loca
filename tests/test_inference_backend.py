@@ -194,3 +194,56 @@ async def test_stop_terminates_process():
     mock_proc.terminate.assert_called_once()
     assert b._proc is None
     assert b._current_model is None
+
+
+# ── LM Studio mode ────────────────────────────────────────────────────────────
+
+LM_STUDIO_CONFIG = {
+    "inference": {
+        "port": 18080,
+        "models_dir": "/tmp/test_loca_models",
+        "ctx_size": 4096,
+        "backend": "auto",
+        "llama_server": "llama-server",
+        "lm_studio": True,
+        "lm_studio_url": "http://localhost:1234",
+    }
+}
+
+
+def test_lm_studio_mode_api_base():
+    b = InferenceBackend(LM_STUDIO_CONFIG)
+    assert b.lm_studio_mode is True
+    assert b.api_base() == "http://localhost:1234"
+
+
+def test_lm_studio_mode_is_running_returns_true():
+    b = InferenceBackend(LM_STUDIO_CONFIG)
+    assert b.is_running() is True
+
+
+@pytest.mark.asyncio
+async def test_lm_studio_mode_start_is_noop():
+    b = InferenceBackend(LM_STUDIO_CONFIG)
+    # Should not raise; no subprocess is started
+    await b.start("/some/model.gguf")
+    assert b._proc is None
+
+
+@pytest.mark.asyncio
+async def test_lm_studio_mode_stop_is_noop():
+    b = InferenceBackend(LM_STUDIO_CONFIG)
+    # Should not raise even with no process
+    await b.stop()
+    assert b._proc is None
+
+
+def test_native_mode_api_base():
+    b = make_backend()
+    assert b.api_base() == "http://localhost:18080"
+
+
+def test_lm_studio_defaults_to_false():
+    b = make_backend()
+    assert b.lm_studio_mode is False
+    assert b.lm_studio_url == "http://localhost:1234"

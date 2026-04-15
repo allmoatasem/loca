@@ -237,6 +237,20 @@ final class AppState: ObservableObject {
     @Published var voiceConfig: VoiceConfigResponse?
     @Published var showVoiceSetup    = false
 
+    // MARK: - Backend mode (native vs LM Studio)
+
+    @Published var lmStudioMode: Bool = UserDefaults.standard.bool(forKey: "lmStudioMode") {
+        didSet {
+            UserDefaults.standard.set(lmStudioMode, forKey: "lmStudioMode")
+            Task { try? await BackendClient.shared.setBackendMode(lmStudio: lmStudioMode, lmStudioUrl: lmStudioUrl) }
+        }
+    }
+    @Published var lmStudioUrl: String = UserDefaults.standard.string(forKey: "lmStudioUrl") ?? "http://localhost:1234" {
+        didSet {
+            UserDefaults.standard.set(lmStudioUrl, forKey: "lmStudioUrl")
+        }
+    }
+
     // MARK: - Conversation search
 
     @Published var conversationQuery   = ""

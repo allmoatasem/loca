@@ -46,6 +46,15 @@ class InferenceBackend:
         self.preferred_backend: str = inf.get("backend", "auto")
         self.llama_server_bin: str = inf.get("llama_server", "llama-server")
 
+        # External server mode (LM Studio / Ollama / custom) — skips subprocess management
+        # Accepts both new key (external_server) and old key (lm_studio) for backward compat
+        self.lm_studio_mode: bool = bool(
+            inf.get("external_server", inf.get("lm_studio", False))
+        )
+        self.lm_studio_url: str = str(
+            inf.get("external_server_url", inf.get("lm_studio_url", "http://localhost:1234"))
+        )
+
         self._proc: asyncio.subprocess.Process | None = None
         self._current_model: str | None = None        # display name (basename)
         self._current_model_path: str | None = None   # full path — used as "model" field in API calls
@@ -67,6 +76,9 @@ class InferenceBackend:
         num_threads: int | None = None,
     ) -> None:
         """Start the inference server for the given model path."""
+        if self.lm_studio_mode:
+            logger.info("LM Studio mode — skipping local backend start")
+            return
         async with self._load_lock:
             await self._start_locked(model_path, ctx_size, n_gpu_layers, batch_size, num_threads)
 
@@ -123,6 +135,8 @@ class InferenceBackend:
 
     async def stop(self) -> None:
         """Gracefully terminate the inference server."""
+        if self.lm_studio_mode:
+            return
         if not self._proc:
             return
         if self._proc.returncode is not None:
@@ -155,7 +169,19 @@ class InferenceBackend:
         await self.start(model_path, ctx_size, n_gpu_layers, batch_size, num_threads)
 
     async def health_check(self) -> bool:
-        """Return True if the backend is responding to /health."""
+        """Return True if the backend is responding."""
+        if self.lm_studio_mode:
+            # Try common health endpoints — LM Studio: /health, Ollama: root /
+            base = self.lm_studio_url.rstrip("/")
+            for path in ("/health", "/api/health", "/"):
+                try:
+                    async with httpx.AsyncClient(timeout=3.0) as client:
+                        resp = await client.get(f"{base}{path}")
+                        if resp.status_code == 200:
+                            return True
+                except Exception:
+                    continue
+            return False
         if self._proc and self._proc.returncode is not None:
             return False
         try:
@@ -166,6 +192,8 @@ class InferenceBackend:
             return False
 
     def is_running(self) -> bool:
+        if self.lm_studio_mode:
+            return True  # assume LM Studio is running; health_check will verify
         return self._proc is not None and self._proc.returncode is None
 
     def current_model(self) -> str | None:
@@ -188,6 +216,8 @@ class InferenceBackend:
         return self._current_backend
 
     def api_base(self) -> str:
+        if self.lm_studio_mode:
+            return self.lm_studio_url
         return f"http://localhost:{self.port}"
 
     # ------------------------------------------------------------------

@@ -319,6 +319,57 @@ async def active_model() -> JSONResponse:
     })
 
 
+@app.get("/api/backend/mode")
+async def get_backend_mode() -> JSONResponse:
+    """Return the current backend mode (native vs LM Studio)."""
+    assert _inference_backend is not None
+    return JSONResponse({
+        "lm_studio": _inference_backend.lm_studio_mode,
+        "lm_studio_url": _inference_backend.lm_studio_url,
+    })
+
+
+@app.patch("/api/backend/mode")
+async def set_backend_mode(request: Request) -> JSONResponse:
+    """Switch between native inference backend and LM Studio at runtime."""
+    assert _inference_backend is not None
+    body = await request.json()
+    lm_studio: bool = bool(body.get("lm_studio", False))
+    lm_studio_url: str = str(body.get("lm_studio_url", "http://localhost:1234")).strip()
+    if not lm_studio_url:
+        lm_studio_url = "http://localhost:1234"
+
+    if _inference_backend.lm_studio_mode and not lm_studio:
+        # Switching back to native — nothing running yet, that's fine
+        logger.info("Switching to native inference backend")
+    elif not _inference_backend.lm_studio_mode and lm_studio:
+        # Switching to LM Studio — stop the managed process
+        await _inference_backend.stop()
+        logger.info(f"Switching to LM Studio at {lm_studio_url}")
+
+    _inference_backend.lm_studio_mode = lm_studio
+    _inference_backend.lm_studio_url = lm_studio_url
+
+    # Persist to config.yaml
+    _config.setdefault("inference", {})["external_server"] = lm_studio
+    _config["inference"]["external_server_url"] = lm_studio_url
+    # Remove legacy keys if present
+    _config["inference"].pop("lm_studio", None)
+    _config["inference"].pop("lm_studio_url", None)
+    config_path = os.environ.get(
+        "ORCHESTRATOR_CONFIG",
+        os.path.join(os.path.dirname(__file__), "..", "config.yaml"),
+    )
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.dump(_config, f, default_flow_style=False, allow_unicode=True)
+
+    return JSONResponse({
+        "ok": True,
+        "lm_studio": lm_studio,
+        "lm_studio_url": lm_studio_url,
+    })
+
+
 @app.post("/api/models/load")
 async def load_model(request: Request) -> JSONResponse:
     """Load a local model into the inference backend."""
