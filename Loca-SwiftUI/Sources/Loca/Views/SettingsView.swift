@@ -149,10 +149,13 @@ private struct DownloadedModelsTab: View {
             if state.isLoadingModel && state.selectedModelId == m.name {
                 ProgressView().scaleEffect(0.7)
             } else if !m.is_loaded {
-                Button("Load") { state.selectedModelId = m.name }
-                    .controlSize(.small)
-                    .buttonStyle(.bordered)
-                    .help("Load this model into the inference backend")
+                Button("Load") {
+                    state.selectedModelId = m.name
+                    state.loadModel(m.name, ctxSize: state.contextWindow)
+                }
+                .controlSize(.small)
+                .buttonStyle(.bordered)
+                .help("Load this model into the inference backend")
             } else {
                 Button {
                     state.unloadModel()

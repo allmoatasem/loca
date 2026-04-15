@@ -242,31 +242,54 @@ class ModelManager:
         try:
             if target_format == "gguf" and filename:
                 dest = target_dir / filename
-                if dest.exists():
-                    yield DownloadProgress(100, done=True)
-                    return
+                resume_from = dest.stat().st_size if dest.exists() else 0
 
                 import httpx
                 hf_url = f"https://huggingface.co/{repo_id}/resolve/main/{filename}"
+                headers = {"Range": f"bytes={resume_from}-"} if resume_from > 0 else {}
                 async with httpx.AsyncClient(timeout=None, follow_redirects=True) as client:
-                    async with client.stream("GET", hf_url) as resp:
+                    async with client.stream("GET", hf_url, headers=headers) as resp:
+                        if resp.status_code == 416:
+                            # Server says range not satisfiable — file is already complete
+                            yield DownloadProgress(100, done=True)
+                            return
                         resp.raise_for_status()
-                        total = int(resp.headers.get("content-length", 0))
 
-                        # Pre-flight disk check
-                        if total > 0:
+                        # Derive total size: Content-Range for resumed requests,
+                        # Content-Length for fresh starts.
+                        content_range = resp.headers.get("content-range", "")
+                        if content_range:
+                            import re as _re
+                            m = _re.search(r"/(\d+)$", content_range)
+                            total = int(m.group(1)) if m else 0
+                        else:
+                            total = int(resp.headers.get("content-length", 0))
+
+                        # Server ignored Range header — restart from scratch
+                        if resp.status_code == 200 and resume_from > 0:
+                            resume_from = 0
+
+                        # Already complete?
+                        if total > 0 and resume_from >= total:
+                            yield DownloadProgress(100, done=True)
+                            return
+
+                        # Pre-flight disk check against remaining bytes
+                        remaining = (total - resume_from) if total else 0
+                        if remaining > 0:
                             free = shutil.disk_usage(target_dir).free
-                            if total > free:
+                            if remaining > free:
                                 yield DownloadProgress(0, error=(
-                                    f"Not enough disk space: model is {total/1e9:.1f} GB "
+                                    f"Not enough disk space: need {remaining/1e9:.1f} GB "
                                     f"but only {free/1e9:.1f} GB free"
                                 ))
                                 return
 
-                        downloaded = 0
+                        downloaded = resume_from
                         t0 = time.monotonic()
+                        mode = "ab" if resume_from > 0 else "wb"
                         try:
-                            with open(dest, "wb") as f:
+                            with open(dest, mode) as f:
                                 async for chunk in resp.aiter_bytes(1024 * 1024):
                                     f.write(chunk)
                                     downloaded += len(chunk)
@@ -276,12 +299,14 @@ class ModelManager:
                                     pct = (downloaded / total * 100) if total else -1
                                     eta = ((total - downloaded) / speed) if (total and speed > 0) else 0
                                     yield DownloadProgress(
-                                        percent=pct,
+                                        percent=min(pct, 99.0) if pct >= 0 else -1,
                                         speed_mbps=round(speed_mb, 2),
                                         eta_s=round(eta),
+                                        total_bytes=total,
                                     )
                         except Exception:
-                            dest.unlink(missing_ok=True)
+                            if mode == "wb":
+                                dest.unlink(missing_ok=True)
                             raise
                 yield DownloadProgress(100, done=True)
 
