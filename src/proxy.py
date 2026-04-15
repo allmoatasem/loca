@@ -186,6 +186,11 @@ async def openai_chat(request: Request) -> Response:
 
     usage = response_data.get("usage") or {}
 
+    # Store the exchange verbatim in memory (fire-and-forget)
+    if content:
+        full_messages = messages + [{"role": "assistant", "content": content}]
+        asyncio.create_task(_orchestrator.extract_and_save_memories(full_messages))
+
     return JSONResponse(content={
         "id": response_data.get("id", "chatcmpl-local"),
         "object": "chat.completion",
@@ -218,6 +223,7 @@ async def _openai_stream_response(
     actual_model = model_override or model_hint or "local"
     search_triggered = False
     memory_injected = False
+    reply_chunks: list[str] = []
     try:
         gen = cast(AsyncIterator[str | dict], await orchestrator.handle(
             messages, has_image=has_image, stream=True,
@@ -236,6 +242,7 @@ async def _openai_stream_response(
                     memory_injected = bool(chunk.get("__memory__", False))
                 continue
             output_chars += len(chunk)
+            reply_chunks.append(chunk)
             delta = {"role": "assistant", "content": chunk}
             payload = json.dumps({
                 "id": "chatcmpl-local",
@@ -271,6 +278,11 @@ async def _openai_stream_response(
     })
     yield f"data: {usage_payload}\n\n".encode()
     yield b"data: [DONE]\n\n"
+    # Store the exchange verbatim in memory (fire-and-forget, after stream is done)
+    full_reply = "".join(reply_chunks)
+    if full_reply:
+        full_messages = messages + [{"role": "assistant", "content": full_reply}]
+        asyncio.create_task(orchestrator.extract_and_save_memories(full_messages))
 
 
 # ---------------------------------------------------------------------------
