@@ -49,6 +49,15 @@ struct AcknowledgementsView: View {
                         AckItem(name: "python-multipart",   author: "Andrew Dunham & contributors",  license: "Apache 2.0", url: "https://github.com/Kludex/python-multipart"),
                         AckItem(name: "Playwright",         author: "Microsoft",                     license: "Apache 2.0", url: "https://github.com/microsoft/playwright-python"),
                     ])
+                    AckSection(title: "Voice", items: [
+                        AckItem(name: "mlx-whisper", author: "Apple & contributors", license: "MIT", url: "https://github.com/ml-explore/mlx-examples/tree/main/whisper"),
+                        AckItem(name: "mlx-audio",   author: "Apple & contributors", license: "MIT", url: "https://github.com/ml-explore/mlx-audio"),
+                    ])
+                    AckSection(title: "Memory", items: [
+                        AckItem(name: "MemPalace",  author: "MemPalace contributors",    license: "MIT",        url: "https://github.com/MemPalace/mempalace"),
+                        AckItem(name: "ChromaDB",   author: "Chroma Core contributors",  license: "Apache 2.0", url: "https://github.com/chroma-core/chroma"),
+                        AckItem(name: "sqlite-vec", author: "Alex Garcia",               license: "MIT",        url: "https://github.com/asg017/sqlite-vec"),
+                    ])
                     AckSection(title: "Tools & Services", items: [
                         AckItem(name: "llmfit",       author: "Alex Jones",              license: "MIT",       url: "https://github.com/AlexsJones/llmfit"),
                         AckItem(name: "SearXNG",      author: "SearXNG contributors",    license: "AGPL-3.0",  url: "https://github.com/searxng/searxng"),
