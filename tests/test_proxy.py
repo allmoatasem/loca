@@ -65,11 +65,20 @@ def client():
     }
     mock_voice.list_voice_models.return_value = []
 
+    mock_memory_plugin = MagicMock()
+    mock_memory_plugin.recall = AsyncMock(return_value=[])
+    mock_plugin_mgr = MagicMock()
+    mock_plugin_mgr.memory_plugin = mock_memory_plugin
+    mock_plugin_mgr.start = AsyncMock()
+    mock_plugin_mgr.stop = AsyncMock()
+    mock_plugin_mgr.status.return_value = {"memory": {"type": "builtin", "status": "running"}}
+
     with patch("src.proxy._load_config", return_value=minimal_config), \
          patch("src.proxy.InferenceBackend", return_value=mock_backend), \
          patch("src.proxy.ModelManager", return_value=mock_mm), \
          patch("src.proxy.Orchestrator", return_value=mock_orch), \
          patch("src.proxy.VoiceBackend", return_value=mock_voice), \
+         patch("src.proxy.PluginManager", return_value=mock_plugin_mgr), \
          patch("src.proxy._build_recs_cache", new_callable=AsyncMock), \
          patch("asyncio.create_task"):
         from src.proxy import app
@@ -79,6 +88,8 @@ def client():
             c._mock_mm = mock_mm
             c._mock_orch = mock_orch
             c._mock_voice = mock_voice
+            c._mock_memory_plugin = mock_memory_plugin
+            c._mock_plugin_mgr = mock_plugin_mgr
             yield c
 
 
@@ -182,11 +193,10 @@ class TestMemoriesAPI:
         assert r.json() == {"id": "mem-001"}
 
     def test_update_memory(self, client):
-        with patch("src.proxy.update_memory") as mock_upd:
-            r = client.patch("/api/memories/m1", json={"content": "Updated content"})
+        r = client.patch("/api/memories/m1", json={"content": "Updated content"})
         assert r.status_code == 200
         assert r.json() == {"ok": True}
-        mock_upd.assert_called_once_with("m1", "Updated content")
+        client._mock_memory_plugin.update.assert_called_once_with("m1", "Updated content")
 
     def test_update_memory_empty_content_rejected(self, client):
         r = client.patch("/api/memories/m1", json={"content": "   "})
@@ -194,11 +204,10 @@ class TestMemoriesAPI:
         assert "error" in r.json()
 
     def test_delete_memory(self, client):
-        with patch("src.proxy.delete_memory") as mock_del:
-            r = client.delete("/api/memories/m1")
+        r = client.delete("/api/memories/m1")
         assert r.status_code == 200
         assert r.json() == {"ok": True}
-        mock_del.assert_called_once_with("m1")
+        client._mock_memory_plugin.delete.assert_called_once_with("m1")
 
 
 # ---------------------------------------------------------------------------
