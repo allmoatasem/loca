@@ -32,7 +32,9 @@ def _obsidian_config_path() -> Path | None:
         p = Path.home() / ".config" / "obsidian" / "obsidian.json"
     elif system == "Windows":
         appdata = os.environ.get("APPDATA", "")
-        p = Path(appdata) / "obsidian" / "obsidian.json" if appdata else None
+        if not appdata:
+            return None
+        p = Path(appdata) / "obsidian" / "obsidian.json"
     else:
         return None
     if p and p.is_file():

@@ -8,16 +8,31 @@ Loca manages its own inference backend (MLX on Apple Silicon, llama.cpp everywhe
 
 ## Features
 
-- **No dependencies on LM Studio or Ollama** — drives `mlx_lm.server` and `llama-server` directly
-- **MLX + GGUF models** — use MLX directories for Apple Silicon speed or GGUF files for cross-platform
-- **Hardware-aware model discovery** — llmfit analyses your RAM/GPU and recommends the best MLX and GGUF models for your machine, with live fit scores, tokens/sec estimates, and format filters
-- **In-app model management** — download from Hugging Face with real-time progress, pause/resume/cancel, switch models, delete, set context window
-- **Persistent memory** — three types: user facts, verified knowledge, and corrections; injected into every conversation
-- **Web search** — SearXNG + trafilatura, with optional Playwright deep research mode for dynamic sites
-- **Tool use** — web_search, web_fetch, file_read, file_write, shell_exec, image_describe
+### Inference
+- **No cloud, no subscriptions** — drives `mlx_lm.server` (Apple Silicon) and `llama-server` (all platforms) directly; no LM Studio or Ollama required
+- **MLX + GGUF** — MLX directories for native Apple Silicon speed; GGUF for cross-platform compatibility
+- **Vision** — image uploads with multi-modal support; auto-detects vision capability from `config.json` and GGUF mmproj files
+- **Voice mode** — speech-to-text via mlx-whisper with voice activity detection; transcribes and sends automatically
+
+### Model management
+- **Hardware-aware discovery** — llmfit analyses your RAM/GPU and ranks models by fit score, with tokens/sec estimates, format filters, and 491+ models paginated
+- **In-app downloads** — fetch from Hugging Face with real-time progress, pause/resume/cancel, and disk-space guard
+- **Performance tuning** — hardware-aware suggestions for GPU layers, batch size, and CPU threads
+
+### Intelligence
+- **Persistent memory** — three types (user facts, verified knowledge, corrections) injected into every conversation
+- **Obsidian vault** — read-only vault analyser: stats, orphan notes, link graph, tags, folder structure
+- **Web search** — SearXNG + trafilatura; optional Playwright deep research mode for dynamic sites
+- **Tool use** — `web_search`, `web_fetch`, `file_read`, `file_write`, `shell_exec`, `image_describe`
+- **Typo and intent handling** — system prompt understands informal/shorthand input
+
+### App
 - **Conversation history** — SQLite-backed, searchable, with folders and starring
-- **Native macOS app** — SwiftUI shell with WKWebView; also works in any browser
-- **Cross-platform** — macOS, Linux, Windows (browser interface)
+- **App preferences** — theme, context window, inference recipes, system prompt override
+- **Lockdown mode** — disable web search and Playwright with one toggle
+- **Remote server** — connect to a Loca backend on a remote machine (e.g. via Tailscale); configurable from Preferences → Server
+- **Native macOS app** — SwiftUI shell with WKWebView; also runs in any browser on Linux and Windows
+- **Glossary + Philosophy** — in-app reference pages for AI/ML terms and Loca's design principles
 
 ---
 

@@ -172,6 +172,17 @@ final class AppState: ObservableObject {
         didSet { UserDefaults.standard.set(systemPromptOverride, forKey: "systemPromptOverride") }
     }
 
+    // MARK: - Server connection
+
+    @Published var serverHost: String = UserDefaults.standard.string(forKey: "serverHost") ?? "localhost" {
+        didSet {
+            UserDefaults.standard.set(serverHost, forKey: "serverHost")
+            Task { await BackendClient.shared.updateBaseURL(host: serverHost) }
+        }
+    }
+
+    var isRemoteServer: Bool { serverHost != "localhost" && serverHost != "127.0.0.1" }
+
     // MARK: - Performance params (backend tuning, applied at model load time)
 
     @Published var nGpuLayers: Int = {
