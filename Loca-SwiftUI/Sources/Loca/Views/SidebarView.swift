@@ -87,29 +87,29 @@ struct SidebarView: View {
     private var localModelPicker: some View {
         VStack(alignment: .leading, spacing: 6) {
             if !state.localModels.isEmpty {
-                HStack(spacing: 6) {
-                    modelMenuButton
-                    if state.isLoadingModel {
-                        ProgressView()
-                            .controlSize(.small)
-                            .frame(width: 16, height: 16)
-                    } else if state.activeModelName != nil {
-                        Button {
-                            state.unloadModel()
-                        } label: {
-                            Image(systemName: "eject.fill")
-                                .font(.system(size: 11))
+                Picker("Model", selection: $state.selectedModelId) {
+                    ForEach(state.localModels) { m in
+                        HStack(spacing: 4) {
+                            Text(m.name).lineLimit(1)
+                            Text(m.formatLabel)
+                                .font(.system(size: 9))
                                 .foregroundColor(.secondary)
                         }
-                        .buttonStyle(.plain)
-                        .nativeTooltip("Eject model — unload from memory")
+                        .tag(m.name as String?)
                     }
                 }
-                if let err = state.modelLoadError {
-                    Text(err)
-                        .font(.system(size: 10))
-                        .foregroundColor(.red)
-                        .lineLimit(2)
+                .labelsHidden()
+                .help(state.localModels.first(where: { $0.name == state.selectedModelId })
+                    .map { "\($0.name) · \($0.formatLabel) · \($0.sizeLabel)" } ?? "Select a model")
+                .onChange(of: state.selectedModelId) {
+                    // Only auto-load when the user switches away from an already-loaded model.
+                    // On startup, selectedModelId is set programmatically — guard against
+                    // treating that as user intent to load.
+                    if let name = state.selectedModelId,
+                       state.activeModelName != nil,
+                       name != state.activeModelName {
+                        state.loadModel(name, ctxSize: state.contextWindow)
+                    }
                 }
             }
             Button {
@@ -122,56 +122,6 @@ struct SidebarView: View {
             .buttonStyle(.plain)
             .help("Download models, get hardware-optimised recommendations, load or delete models.")
         }
-    }
-
-    private var modelMenuButton: some View {
-        Menu {
-            ForEach(state.localModels) { m in
-                Button {
-                    state.selectedModelId = m.name
-                    state.loadModel(m.name, ctxSize: state.contextWindow)
-                } label: {
-                    HStack {
-                        Text(m.name)
-                        Spacer()
-                        Text(m.formatLabel)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .disabled(state.isLoadingModel)
-                // Checkmark rendered by macOS for the active item
-                if m.name == state.activeModelName {
-                    Divider()
-                }
-            }
-        } label: {
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(state.activeModelName != nil ? Color.green : Color.secondary.opacity(0.4))
-                    .frame(width: 6, height: 6)
-                Text(state.activeModelName
-                    ?? state.selectedModelId
-                    ?? state.localModels.first?.name
-                    ?? "No model")
-                    .font(.system(size: 12))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 9))
-                    .foregroundColor(.secondary)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .frame(maxWidth: .infinity)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
-        }
-        .menuStyle(.borderlessButton)
-        .help(state.localModels.first(where: { $0.name == (state.activeModelName ?? state.selectedModelId) })
-            .map { "\($0.name) · \($0.formatLabel) · \($0.sizeLabel)" }
-            ?? "Select a model to load")
     }
 
     private var capabilityPicker: some View {
@@ -196,6 +146,7 @@ struct SidebarView: View {
     }
 
     private func ctxLabel(_ n: Int) -> String { n >= 1024 ? "\(n / 1024)K" : "\(n)" }
+    private func shortModelName(_ id: String) -> String { id.split(separator: "/").last.map(String.init) ?? id }
 
     // MARK: - Conversation list
 
