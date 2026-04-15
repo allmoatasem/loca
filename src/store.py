@@ -92,6 +92,18 @@ def _migrate(c: sqlite3.Connection) -> None:
     CREATE INDEX IF NOT EXISTS idx_vault_links_from ON vault_links(vault_path, from_note);
     CREATE INDEX IF NOT EXISTS idx_vault_links_to   ON vault_links(vault_path, to_note);
     """)
+
+    # Vault analyser v2 — idempotent column additions
+    vault_cols = {r[1] for r in c.execute("PRAGMA table_info(vault_notes)")}
+    for col, defn in [
+        ("is_daily_note", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("tasks",         "TEXT NOT NULL DEFAULT '[]'"),
+        ("properties",    "TEXT NOT NULL DEFAULT '{}'"),
+        ("body_snippet",  "TEXT NOT NULL DEFAULT ''"),
+    ]:
+        if col not in vault_cols:
+            c.execute(f"ALTER TABLE vault_notes ADD COLUMN {col} {defn}")
+
     c.commit()
 
 
@@ -222,8 +234,9 @@ def upsert_vault_note(note: dict) -> None:
         c.execute(
             """INSERT INTO vault_notes
                    (id, vault_path, rel_path, title, word_count, tags, headings,
-                    created, modified, content_hash, indexed_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created, modified, content_hash, indexed_at,
+                    is_daily_note, tasks, properties, body_snippet)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(vault_path, rel_path) DO UPDATE SET
                     title        = excluded.title,
                     word_count   = excluded.word_count,
@@ -232,12 +245,20 @@ def upsert_vault_note(note: dict) -> None:
                     created      = excluded.created,
                     modified     = excluded.modified,
                     content_hash = excluded.content_hash,
-                    indexed_at   = excluded.indexed_at""",
+                    indexed_at   = excluded.indexed_at,
+                    is_daily_note = excluded.is_daily_note,
+                    tasks        = excluded.tasks,
+                    properties   = excluded.properties,
+                    body_snippet = excluded.body_snippet""",
             (
                 note["id"], note["vault_path"], note["rel_path"], note["title"],
                 note["word_count"], json.dumps(note["tags"]), json.dumps(note["headings"]),
                 note.get("created"), note.get("modified"),
                 note["content_hash"], note["indexed_at"],
+                1 if note.get("is_daily_note") else 0,
+                json.dumps(note.get("tasks", [])),
+                json.dumps(note.get("properties", {})),
+                note.get("body_snippet", ""),
             ),
         )
         c.commit()
@@ -281,6 +302,8 @@ def list_vault_notes(vault_path: str) -> list[dict]:
         d = dict(r)
         d["tags"] = json.loads(d["tags"])
         d["headings"] = json.loads(d["headings"])
+        d["tasks"] = json.loads(d.get("tasks") or "[]")
+        d["properties"] = json.loads(d.get("properties") or "{}")
         result.append(d)
     return result
 
