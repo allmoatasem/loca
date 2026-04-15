@@ -55,14 +55,19 @@ class PluginManager:
         mem_cfg = self._config.get("memory", {})
         plugin_type = mem_cfg.get("type", "builtin")
 
-        if plugin_type == "external":
+        if plugin_type == "mempalace":
+            from .plugins.mempalace_plugin import MemPalaceMemoryPlugin
+            plugin = MemPalaceMemoryPlugin()
+            if plugin._available:
+                self._memory = plugin
+                logger.info("Memory plugin: MemPalace (verbatim + semantic search)")
+            else:
+                self._memory = BuiltinMemoryPlugin(self._backend)
+                logger.warning("MemPalace unavailable — fell back to built-in memory plugin")
+        elif plugin_type == "external":
             await self._start_external("memory", mem_cfg)
-            # TODO: wire ExternalMemoryPlugin once MemPalace ARM64 issue is resolved
-            logger.warning(
-                "External memory plugin configured but not yet wired — "
-                "falling back to built-in."
-            )
             self._memory = BuiltinMemoryPlugin(self._backend)
+            logger.warning("External plugin type not fully wired — using built-in")
         else:
             self._memory = BuiltinMemoryPlugin(self._backend)
             logger.info("Memory plugin: built-in (verbatim + semantic retrieval)")
@@ -97,19 +102,20 @@ class PluginManager:
         mem_running = (
             self._procs["memory"].returncode is None
             if "memory" in self._procs
-            else (mem_type == "builtin")  # built-in is always "running"
+            else True  # built-in and mempalace are always "running" (in-process)
         )
+        descriptions = {
+            "builtin": "Verbatim storage + semantic retrieval via local embeddings",
+            "mempalace": "MemPalace verbatim storage + semantic search (ChromaDB)",
+            "external": f"External plugin on port {mem_cfg.get('port', '?')}",
+        }
         return {
             "plugins": [
                 {
                     "name": "memory",
                     "type": mem_type,
                     "running": mem_running,
-                    "description": (
-                        "Verbatim storage + semantic retrieval via local embeddings"
-                        if mem_type == "builtin"
-                        else f"External plugin on port {mem_cfg.get('port', '?')}"
-                    ),
+                    "description": descriptions.get(mem_type, mem_type),
                 }
             ]
         }

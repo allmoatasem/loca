@@ -20,11 +20,10 @@ from typing import Any, AsyncIterator, cast
 import httpx
 
 from .hardware_profiler import get_hardware_profile
-from .memory_extractor import extract_memories
 from .model_manager import ModelManager
 from .plugins.memory_plugin import MemoryPlugin
 from .router import Model, RouteResult, route
-from .store import add_memory, get_memories_context
+from .store import get_memories_context
 from .tools.file_ops import file_read, file_write
 from .tools.shell import shell_exec
 from .tools.web_fetch import web_fetch
@@ -91,9 +90,10 @@ class Orchestrator:
         else:
             system_prompt = _build_system_prompt(result.model, model_name, self._hw)
 
-        # Memory injection: use semantic recall if plugin available, else legacy bulk inject
+        # Memory injection: recall using last 3 messages for conversational context
         if self._memory:
-            relevant = await self._memory.recall(user_message, limit=6)
+            recall_query = _build_recall_query(messages)
+            relevant = await self._memory.recall(recall_query, limit=6)
             mem_ctx = self._memory.format_for_prompt(relevant)
         else:
             mem_ctx = get_memories_context()
@@ -418,51 +418,52 @@ class Orchestrator:
     async def extract_and_save_memories(
         self, messages: list[dict], conv_id: str | None = None
     ) -> list[dict]:
-        """
-        Store memories from a conversation.
-
-        If the memory plugin is available, store key user messages verbatim
-        (no lossy LLM extraction).  Falls back to the three-pass LLM extractor
-        for backward compatibility when no plugin is configured.
-        """
+        """Store the last conversation exchange verbatim via the memory plugin."""
         if self._memory:
             return await self._store_verbatim(messages, conv_id)
-        # Legacy path: LLM extraction
-        model_name, api_base = await self.mm.ensure_loaded(Model.GENERAL)
-        extracted = await extract_memories(messages, model_name, api_base)
-        saved = []
-        for mem_type, facts in extracted.items():
-            for fact in facts:
-                mid = add_memory(fact, conv_id=conv_id, type=mem_type)
-                saved.append({"id": mid, "content": fact, "type": mem_type})
-        return saved
+        return []
 
     async def _store_verbatim(
         self, messages: list[dict], conv_id: str | None
     ) -> list[dict]:
         """
-        Store the last user message(s) verbatim.
+        Store the last user+assistant exchange verbatim.
 
-        We store only user-role messages — they contain facts, preferences, and
-        corrections in the user's own words, which is exactly what we want to
-        surface in future conversations.  Assistant turns are usually hedged and
-        don't add durable facts.
+        Storing the pair gives MemPalace full context for room classification
+        (decisions, preferences, problems, etc.) rather than just the user side.
         """
         assert self._memory is not None
         saved = []
-        user_msgs = [
-            m for m in messages
-            if m.get("role") == "user"
-            and isinstance(m.get("content"), str)
-            and len(m["content"].strip()) > 20   # skip trivial one-liners
-        ]
-        # Store at most the 3 most recent user messages to keep memories focused
-        for msg in user_msgs[-3:]:
-            text = msg["content"].strip()
-            mid = await self._memory.store(
-                text, {"conv_id": conv_id, "type": "user_fact"}
-            )
-            saved.append({"id": mid, "content": text, "type": "user_fact"})
+
+        # Find the last user message and its following assistant reply
+        last_user_idx: int | None = None
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "user":
+                last_user_idx = i
+                break
+
+        if last_user_idx is None:
+            return []
+
+        user_content = messages[last_user_idx].get("content", "")
+        if not isinstance(user_content, str) or len(user_content.strip()) < 20:
+            return []
+
+        # Look for the immediately following assistant message
+        assistant_content = ""
+        if last_user_idx + 1 < len(messages):
+            next_msg = messages[last_user_idx + 1]
+            if next_msg.get("role") == "assistant":
+                assistant_content = next_msg.get("content", "")
+
+        if assistant_content:
+            text = f"User: {user_content.strip()}\n\nAssistant: {assistant_content.strip()}"
+        else:
+            text = user_content.strip()
+
+        mid = await self._memory.store(text, {"conv_id": conv_id})
+        if mid is not None:
+            saved.append({"id": mid, "content": text[:120] + ("..." if len(text) > 120 else ""), "type": "conversation"})
         return saved
 
     async def backfill_embeddings(self) -> None:
@@ -596,3 +597,20 @@ def _extract_tool_call(text: str) -> tuple[str, dict] | None:
     except json.JSONDecodeError:
         args = {}
     return tool_name, args
+
+
+def _build_recall_query(messages: list[dict]) -> str:
+    """
+    Build a recall query from the last 3 user+assistant messages.
+
+    Using multiple turns gives MemPalace enough conversational thread to surface
+    memories relevant to the current topic, not just the last keyword typed.
+    """
+    recent: list[str] = []
+    for msg in messages[-6:]:  # last 6 entries covers ~3 pairs
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+        if role not in ("user", "assistant") or not isinstance(content, str):
+            continue
+        recent.append(content.strip())
+    return " ".join(recent)[-2000:]  # cap at 2000 chars to avoid huge queries

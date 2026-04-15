@@ -35,11 +35,9 @@ from .model_manager import ModelManager
 from .orchestrator import Orchestrator
 from .plugin_manager import PluginManager
 from .store import (
-    add_memory,
     delete_conversation,
     get_conversation,
     list_conversations,
-    list_memories,
     list_vault_notes,
     patch_conversation,
     save_conversation,
@@ -188,6 +186,11 @@ async def openai_chat(request: Request) -> Response:
 
     usage = response_data.get("usage") or {}
 
+    # Store the exchange verbatim in memory (fire-and-forget)
+    if content:
+        full_messages = messages + [{"role": "assistant", "content": content}]
+        asyncio.create_task(_orchestrator.extract_and_save_memories(full_messages))
+
     return JSONResponse(content={
         "id": response_data.get("id", "chatcmpl-local"),
         "object": "chat.completion",
@@ -220,6 +223,7 @@ async def _openai_stream_response(
     actual_model = model_override or model_hint or "local"
     search_triggered = False
     memory_injected = False
+    reply_chunks: list[str] = []
     try:
         gen = cast(AsyncIterator[str | dict], await orchestrator.handle(
             messages, has_image=has_image, stream=True,
@@ -238,6 +242,7 @@ async def _openai_stream_response(
                     memory_injected = bool(chunk.get("__memory__", False))
                 continue
             output_chars += len(chunk)
+            reply_chunks.append(chunk)
             delta = {"role": "assistant", "content": chunk}
             payload = json.dumps({
                 "id": "chatcmpl-local",
@@ -273,6 +278,11 @@ async def _openai_stream_response(
     })
     yield f"data: {usage_payload}\n\n".encode()
     yield b"data: [DONE]\n\n"
+    # Store the exchange verbatim in memory (fire-and-forget, after stream is done)
+    full_reply = "".join(reply_chunks)
+    if full_reply:
+        full_messages = messages + [{"role": "assistant", "content": full_reply}]
+        asyncio.create_task(orchestrator.extract_and_save_memories(full_messages))
 
 
 # ---------------------------------------------------------------------------
@@ -762,17 +772,19 @@ async def api_delete_conversation(conv_id: str) -> JSONResponse:
 
 @app.get("/api/memories")
 async def api_list_memories(type: str | None = None) -> JSONResponse:
-    return JSONResponse({"memories": list_memories(type=type)})
+    assert _plugin_manager is not None
+    memories = _plugin_manager.memory_plugin.list_all(type=type)
+    return JSONResponse({"memories": memories})
 
 
 @app.post("/api/memories")
 async def api_add_memory(request: Request) -> JSONResponse:
+    assert _plugin_manager is not None
     body = await request.json()
-    mid = add_memory(
-        content=body.get("content", ""),
-        conv_id=body.get("conv_id"),
-        type=body.get("type", "user_fact"),
-    )
+    content = body.get("content", "").strip()
+    if not content:
+        return JSONResponse({"error": "content is required"}, status_code=400)
+    mid = await _plugin_manager.memory_plugin.store(content, {})
     return JSONResponse({"id": mid})
 
 

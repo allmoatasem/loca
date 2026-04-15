@@ -77,14 +77,8 @@ proxy:
   port: 8000
 
 # ── Plugins ──────────────────────────────────────────────────────────────────
-# Plugins extend Loca with additional capabilities.
-# memory.type: builtin  — verbatim storage + semantic search via local embeddings
-# memory.type: external — subprocess plugin (e.g. MemPalace); set command + port
+# memory.type: builtin   — verbatim storage + semantic search via local embeddings
+# memory.type: mempalace — MemPalace verbatim storage + ChromaDB semantic search
 plugins:
   memory:
-    type: builtin
-    # To use MemPalace once its macOS ARM64 issues are resolved:
-    # type: external
-    # command: ["mempalace-server", "--port", "8090"]
-    # port: 8090
-    # install_cmd: "pip install mempalace"
+    type: mempalace
