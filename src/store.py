@@ -6,12 +6,21 @@ on macOS, or ~/.loca/data/loca.db on Linux/Windows.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import platform
 import sqlite3
 import time
 import uuid
 from pathlib import Path
+
+try:
+    import sqlite_vec
+    _SQLITE_VEC_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _SQLITE_VEC_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
 
 
 def _default_data_dir() -> Path:
@@ -31,6 +40,13 @@ def _conn() -> sqlite3.Connection:
     c = sqlite3.connect(str(_DB_PATH), check_same_thread=False)
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA journal_mode=WAL")
+    if _SQLITE_VEC_AVAILABLE:
+        try:
+            c.enable_load_extension(True)
+            sqlite_vec.load(c)
+            c.enable_load_extension(False)
+        except Exception as exc:  # pragma: no cover
+            logger.warning(f"sqlite-vec failed to load, falling back to Python cosine: {exc}")
     _migrate(c)
     return c
 
@@ -250,6 +266,34 @@ def list_memories_without_embeddings(limit: int = 200) -> list[dict]:
             "SELECT id, content, type FROM memories WHERE embedding IS NULL "
             "ORDER BY created DESC LIMIT ?", (limit,)
         )]
+
+
+def search_memories_semantic_sql(query_blob: bytes, limit: int = 5) -> list[dict]:
+    """
+    Find memories most similar to `query_blob` using sqlite-vec's vec_distance_cosine.
+
+    Requires sqlite-vec to be loaded (see _conn). Falls back gracefully: returns []
+    if the extension is unavailable, letting the caller use Python-side fallback.
+
+    `query_blob` must be the same packed float32 BLOB format produced by
+    BuiltinMemoryPlugin._pack().  Returns rows ordered by ascending cosine
+    distance (closest first).
+    """
+    if not _SQLITE_VEC_AVAILABLE:
+        return []
+    with _conn() as c:
+        rows = c.execute(
+            """
+            SELECT id, content, type, created, conv_id,
+                   vec_distance_cosine(embedding, ?) AS distance
+            FROM memories
+            WHERE embedding IS NOT NULL
+            ORDER BY distance ASC
+            LIMIT ?
+            """,
+            (query_blob, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # ── Vault ────────────────────────────────────────────────────────────────────

@@ -31,9 +31,9 @@ import httpx
 from ..store import (
     add_memory,
     delete_memory,
-    get_memory_embedding,
     list_memories,
     list_memories_without_embeddings,
+    search_memories_semantic_sql,
     set_memory_embedding,
     update_memory,
 )
@@ -129,18 +129,6 @@ class BuiltinMemoryPlugin(MemoryPlugin):
     def _pack(embedding: list[float]) -> bytes:
         return struct.pack(f"{len(embedding)}f", *embedding)
 
-    @staticmethod
-    def _unpack(blob: bytes) -> list[float]:
-        n = len(blob) // 4
-        return list(struct.unpack(f"{n}f", blob))
-
-    @staticmethod
-    def _cosine(a: list[float], b: list[float]) -> float:
-        dot = sum(x * y for x, y in zip(a, b))
-        na = sum(x * x for x in a) ** 0.5
-        nb = sum(x * x for x in b) ** 0.5
-        return dot / (na * nb + 1e-8) if (na and nb) else 0.0
-
     # ------------------------------------------------------------------
     # MemoryPlugin interface
     # ------------------------------------------------------------------
@@ -157,34 +145,28 @@ class BuiltinMemoryPlugin(MemoryPlugin):
         return mid
 
     async def recall(self, query: str, limit: int = 5) -> list[dict]:
-        all_mems = list_memories(limit=500)
-        if not all_mems:
-            return []
-
         query_embedding = await self._embed(query)
 
         if query_embedding:
-            scored: list[tuple[float, dict]] = []
-            for m in all_mems:
-                blob = get_memory_embedding(m["id"])
-                if blob:
-                    mem_emb = self._unpack(blob)
-                    score = self._cosine(query_embedding, mem_emb)
-                    scored.append((score, m))
-                else:
-                    scored.append((0.0, m))
-            scored.sort(key=lambda x: x[0], reverse=True)
-            return [m for _, m in scored[:limit]]
-        else:
-            # Keyword fallback: case-insensitive word overlap
-            query_words = set(re.findall(r"\w+", query.lower()))
-            scored = []
-            for m in all_mems:
-                mem_words = set(re.findall(r"\w+", m["content"].lower()))
-                overlap = len(query_words & mem_words)
-                scored.append((overlap, m))
-            scored.sort(key=lambda x: x[0], reverse=True)
-            return [m for _, m in scored[:limit] if scored[0][0] > 0]
+            # Fast path: sqlite-vec C-speed cosine distance (O(n) in C, not Python)
+            query_blob = self._pack(query_embedding)
+            results = search_memories_semantic_sql(query_blob, limit=limit)
+            if results:
+                return results
+            # sqlite-vec unavailable or no embedded memories yet — fall through
+
+        # Keyword fallback: case-insensitive word overlap
+        all_mems = list_memories(limit=500)
+        if not all_mems:
+            return []
+        query_words = set(re.findall(r"\w+", query.lower()))
+        scored: list[tuple[int, dict]] = []
+        for m in all_mems:
+            mem_words = set(re.findall(r"\w+", m["content"].lower()))
+            overlap = len(query_words & mem_words)
+            scored.append((overlap, m))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [m for _, m in scored[:limit] if scored[0][0] > 0]
 
     def list_all(self, type: str | None = None) -> list[dict]:
         return list_memories(limit=500, type=type)
