@@ -80,14 +80,11 @@ class TestMemPalaceMemoryPlugin:
             plugin._collection = None
         assert plugin._available is False
 
-    @pytest.mark.asyncio
     async def test_store_returns_id(self):
         plugin = self._make_plugin()
         mid = await plugin.store("I prefer Python.", {})
-        assert isinstance(mid, str)
-        assert len(mid) > 0
+        assert mid == ""  # MemPalace manages its own IDs; store() does not return one
 
-    @pytest.mark.asyncio
     async def test_store_when_unavailable_returns_empty(self):
         from src.plugins.mempalace_plugin import MemPalaceMemoryPlugin
         # Create plugin instance that bypasses _try_init — simulates unavailable state
@@ -98,21 +95,20 @@ class TestMemPalaceMemoryPlugin:
         mid = await plugin.store("anything", {})
         assert mid == ""
 
-    @pytest.mark.asyncio
     async def test_recall_returns_formatted_results(self):
         plugin = self._make_plugin()
         results = await plugin.recall("Python preference", limit=5)
         assert len(results) == 1
         assert results[0]["content"] == "User prefers Python over JavaScript."
         assert results[0]["type"] == "preferences"
+        assert "score" in results[0]
+        assert isinstance(results[0]["score"], float)
 
-    @pytest.mark.asyncio
     async def test_recall_empty_query_returns_empty(self):
         plugin = self._make_plugin()
         results = await plugin.recall("", limit=5)
         assert results == []
 
-    @pytest.mark.asyncio
     async def test_recall_when_unavailable_returns_empty(self):
         from src.plugins.mempalace_plugin import MemPalaceMemoryPlugin
         plugin = MemPalaceMemoryPlugin.__new__(MemPalaceMemoryPlugin)

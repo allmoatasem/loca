@@ -9,9 +9,7 @@ working, just without memory recall.
 """
 from __future__ import annotations
 
-import hashlib
 import logging
-import time
 from pathlib import Path
 
 from .memory_plugin import MemoryPlugin
@@ -63,12 +61,13 @@ class MemPalaceMemoryPlugin(MemoryPlugin):
             self._collection = get_collection(self._palace_path)
             self._available = True
             logger.info("MemPalace memory plugin ready at %s", self._palace_path)
-        except Exception as exc:
+        except ImportError:
             logger.warning(
-                "MemPalace unavailable (%s) — memory disabled. "
-                "Install with: pip install mempalace 'chromadb>=1.5.4'",
-                exc,
+                "MemPalace not installed — memory disabled. "
+                "Install with: pip install mempalace 'chromadb>=1.5.4'"
             )
+        except Exception as exc:
+            logger.warning("MemPalace failed to initialise (%s) — memory disabled.", exc)
 
     # ------------------------------------------------------------------
     # MemoryPlugin interface
@@ -79,8 +78,8 @@ class MemPalaceMemoryPlugin(MemoryPlugin):
             return ""
         try:
             from mempalace.miner import add_drawer  # noqa: PLC0415
-            source = f"loca-chat-{int(time.time())}"
-            chunk_index = 0
+            source = "loca-chat"
+            chunk_index = 0  # each store() call is treated as a fresh single-chunk document
             add_drawer(
                 self._collection,
                 wing="loca",
@@ -90,7 +89,9 @@ class MemPalaceMemoryPlugin(MemoryPlugin):
                 chunk_index=chunk_index,
                 agent="loca",
             )
-            return hashlib.sha256(f"{source}{chunk_index}".encode()).hexdigest()[:16]
+            # MemPalace assigns its own internal ID; we cannot recover it from add_drawer.
+            # Callers must use list_all() to obtain IDs for delete/update.
+            return ""
         except Exception as exc:
             logger.warning("MemPalace store failed: %s", exc)
             return ""
@@ -112,6 +113,7 @@ class MemPalaceMemoryPlugin(MemoryPlugin):
                     "content": r["content"],
                     "type": r.get("room", "general"),
                     "created": r.get("timestamp", ""),
+                    "score": round(1.0 - r.get("distance", 1.0), 4),
                 }
                 for r in result.get("results", [])
             ]
@@ -134,9 +136,9 @@ class MemPalaceMemoryPlugin(MemoryPlugin):
             return [
                 {
                     "id": doc_id,
-                    "content": (result["documents"] or [""])[i],
-                    "type": ((result["metadatas"] or [{}])[i]).get("room", "general"),
-                    "created": ((result["metadatas"] or [{}])[i]).get("timestamp", ""),
+                    "content": result["documents"][i] if result.get("documents") and i < len(result["documents"]) else "",
+                    "type": (result["metadatas"][i].get("room", "general") if result.get("metadatas") and i < len(result["metadatas"]) else "general"),
+                    "created": (result["metadatas"][i].get("timestamp", "") if result.get("metadatas") and i < len(result["metadatas"]) else ""),
                 }
                 for i, doc_id in enumerate(result.get("ids", []))
             ]
