@@ -286,7 +286,6 @@ final class AppState: ObservableObject {
     func pauseDownload()  { Task { await _pauseDownload() } }
     func resumeDownload() {
         guard let dl = activeDownload, dl.paused else { return }
-        activeDownload?.paused = false
         _startDownload(repoId: dl.repoId, filename: dl.filename, format: dl.format)
     }
     func cancelDownload() { Task { await _cancelDownload() } }

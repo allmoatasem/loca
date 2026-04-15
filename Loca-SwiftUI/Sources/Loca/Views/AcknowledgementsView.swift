@@ -27,7 +27,7 @@ struct AcknowledgementsView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    Text("Loca v0.13.0")
+                    Text("Loca v0.14.0")
                         .font(.system(size: 22, weight: .bold))
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.bottom, 4)
