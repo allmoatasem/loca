@@ -631,3 +631,17 @@ struct BackendModeResponse: Decodable {
     let lm_studio: Bool
     let lm_studio_url: String
 }
+
+// MARK: - Server status
+
+struct ServerStatus: Decodable {
+    /// "native" | "lm_studio" | "ollama" | "custom"
+    let mode: String
+    // Native fields
+    let model_loaded: Bool?
+    let model_name: String?
+    // External fields
+    let server_running: Bool?
+    let models: [String]?
+    let url: String?
+}

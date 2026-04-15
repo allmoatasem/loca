@@ -187,21 +187,23 @@ async def test_ensure_loaded_returns_running_backend(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_ensure_loaded_starts_active_model(tmp_path):
+async def test_ensure_loaded_raises_when_nothing_loaded(tmp_path):
+    """ensure_loaded no longer auto-starts — user must load explicitly."""
+    from src.inference_backend import InferenceBackendError
     from src.router import Model
     cfg = make_config(str(tmp_path))
     cfg["inference"]["active_model"] = "gguf/starter.gguf"
     mock_backend = MagicMock(spec=InferenceBackend)
     mock_backend.is_running.return_value = False
-    mock_backend.current_model.return_value = "starter.gguf"
+    mock_backend.current_model.return_value = None
     mock_backend.api_base.return_value = "http://localhost:18080"
     mock_backend.start = AsyncMock()
     mock_backend.restart = AsyncMock()
-    mock_backend.health_check = AsyncMock(return_value=False)
     mm = ModelManager(cfg, mock_backend)
 
     gguf_file = mm.gguf_dir / "starter.gguf"
     gguf_file.write_bytes(b"x" * 1024)
 
-    await mm.ensure_loaded(Model.GENERAL)
-    mock_backend.start.assert_called_once()
+    with pytest.raises(InferenceBackendError, match="No model is loaded"):
+        await mm.ensure_loaded(Model.GENERAL)
+    mock_backend.start.assert_not_called()

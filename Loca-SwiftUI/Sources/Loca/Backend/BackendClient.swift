@@ -409,6 +409,21 @@ actor BackendClient {
         }
     }
 
+    // MARK: - Server status
+
+    func fetchServerStatus() async throws -> ServerStatus {
+        let (data, _) = try await get("/api/server-status")
+        return try JSONDecoder().decode(ServerStatus.self, from: data)
+    }
+
+    func startExternalServer() async throws {
+        struct Empty: Encodable {}
+        let (_, resp) = try await post("/api/server/start", body: Empty())
+        if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
+            throw BackendError.http(http.statusCode)
+        }
+    }
+
     // MARK: - Startup status
 
     /// Reads /tmp/loca-startup-status.json written by start_services.sh.

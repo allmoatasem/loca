@@ -97,17 +97,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _voice_backend = VoiceBackend(_config)
     _orchestrator = Orchestrator(_config, _model_manager, voice_backend=_voice_backend)
 
-    # Auto-start the active model if configured
-    active_rel = _config.get("inference", {}).get("active_model")
-    if active_rel:
-        active_path = _inference_backend.models_dir / active_rel
-        if active_path.exists():
-            logger.info(f"Auto-starting inference backend with: {active_path}")
-            try:
-                await _inference_backend.start(str(active_path))
-            except Exception as e:
-                logger.warning(f"Could not auto-start inference backend: {e}")
-
     logger.info("Loca proxy started")
     asyncio.create_task(_build_recs_cache())
     yield
@@ -368,6 +357,71 @@ async def set_backend_mode(request: Request) -> JSONResponse:
         "lm_studio": lm_studio,
         "lm_studio_url": lm_studio_url,
     })
+
+
+@app.get("/api/server-status")
+async def server_status() -> JSONResponse:
+    """Return model/server availability for the current inference mode."""
+    assert _model_manager is not None
+    assert _inference_backend is not None
+
+    if _inference_backend.lm_studio_mode:
+        url = _inference_backend.lm_studio_url.rstrip("/")
+        # Detect server type from URL
+        if "11434" in url:
+            mode = "ollama"
+        elif "1234" in url:
+            mode = "lm_studio"
+        else:
+            mode = "custom"
+
+        running = False
+        models: list[str] = []
+        try:
+            import httpx as _httpx
+            async with _httpx.AsyncClient(timeout=3.0) as client:
+                r = await client.get(f"{url}/models")
+                if r.status_code == 200:
+                    running = True
+                    data = r.json()
+                    models = [m.get("id", "") for m in data.get("data", [])]
+        except Exception:
+            pass
+
+        return JSONResponse({
+            "mode": mode,
+            "server_running": running,
+            "models": models,
+            "url": url,
+        })
+    else:
+        loaded = _inference_backend.current_model()
+        return JSONResponse({
+            "mode": "native",
+            "model_loaded": loaded is not None,
+            "model_name": loaded,
+        })
+
+
+@app.post("/api/server/start")
+async def start_external_server() -> JSONResponse:
+    """Attempt to open the configured external inference server app."""
+    assert _inference_backend is not None
+    if not _inference_backend.lm_studio_mode:
+        return JSONResponse({"error": "Not in external server mode"}, status_code=400)
+
+    import subprocess as _subprocess
+    url = _inference_backend.lm_studio_url
+    app_name = "Ollama" if "11434" in url else "LM Studio"
+    try:
+        _subprocess.Popen(
+            ["open", "-a", app_name],
+            stdout=_subprocess.DEVNULL,
+            stderr=_subprocess.DEVNULL,
+        )
+        return JSONResponse({"ok": True, "app": app_name})
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
 
 
 @app.post("/api/models/load")

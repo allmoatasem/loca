@@ -299,17 +299,153 @@ struct MessagesScrollView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 20) {
             HStack(spacing: 0) {
                 Text("Lo").font(.system(size: 28, weight: .bold))
                 Text("ca").font(.system(size: 28, weight: .bold)).foregroundColor(.accentColor)
             }
+            modelStateView
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.top, 80)
+    }
+
+    @ViewBuilder
+    private var modelStateView: some View {
+        if state.lmStudioMode {
+            // External server (LM Studio / Ollama)
+            if state.externalServerRunning == nil {
+                // Still checking
+                HStack(spacing: 8) {
+                    ProgressView().scaleEffect(0.7)
+                    Text("Connecting to \(externalServerName)…")
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                }
+            } else if state.externalServerRunning == false {
+                externalServerOffView
+            } else if state.externalModels.isEmpty {
+                externalNoModelsView
+            } else {
+                Text("How can I help?")
+                    .font(.system(size: 15))
+                    .foregroundColor(.secondary)
+            }
+        } else if !state.isRemoteServer {
+            // Native mode
+            if state.localModels.isEmpty {
+                noModelsDownloadedView
+            } else if !state.localModels.contains(where: { $0.is_loaded }) {
+                noModelLoadedView
+            } else {
+                Text("How can I help?")
+                    .font(.system(size: 15))
+                    .foregroundColor(.secondary)
+            }
+        } else {
+            // Remote server — just show the prompt
             Text("How can I help?")
                 .font(.system(size: 15))
                 .foregroundColor(.secondary)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.top, 120)
+    }
+
+    private var externalServerName: String {
+        if state.lmStudioUrl.contains("11434") { return "Ollama" }
+        if state.lmStudioUrl.contains("1234")  { return "LM Studio" }
+        return "Inference server"
+    }
+
+    private var noModelsDownloadedView: some View {
+        modelStatusCard(
+            icon: "arrow.down.circle",
+            iconColor: .secondary,
+            title: "No models downloaded",
+            subtitle: "Download a model to get started.",
+            actions: {
+                AnyView(Button("Open Models") { state.isSettingsOpen = true }
+                    .buttonStyle(.borderedProminent).controlSize(.regular))
+            }
+        )
+    }
+
+    private var noModelLoadedView: some View {
+        modelStatusCard(
+            icon: "cpu",
+            iconColor: .secondary,
+            title: "No model loaded",
+            subtitle: "Load a model in Settings → Models to start chatting.",
+            actions: {
+                AnyView(Button("Open Models") { state.isSettingsOpen = true }
+                    .buttonStyle(.borderedProminent).controlSize(.regular))
+            }
+        )
+    }
+
+    private var externalServerOffView: some View {
+        modelStatusCard(
+            icon: "network.slash",
+            iconColor: .orange,
+            title: "\(externalServerName) is not running",
+            subtitle: "Start \(externalServerName) to connect.",
+            actions: {
+                AnyView(HStack(spacing: 10) {
+                    Button {
+                        state.startExternalServer()
+                    } label: {
+                        HStack(spacing: 6) {
+                            if state.isStartingExternalServer {
+                                ProgressView().scaleEffect(0.7)
+                            } else {
+                                Image(systemName: "play.circle")
+                            }
+                            Text("Open \(externalServerName)")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(state.isStartingExternalServer)
+
+                    Button("Check Again") { state.checkServerStatus() }
+                        .buttonStyle(.bordered)
+                })
+            }
+        )
+    }
+
+    private var externalNoModelsView: some View {
+        modelStatusCard(
+            icon: "tray",
+            iconColor: .secondary,
+            title: "No models in \(externalServerName)",
+            subtitle: "Load a model in \(externalServerName), then tap Refresh.",
+            actions: {
+                AnyView(Button("Refresh") { state.checkServerStatus() }
+                    .buttonStyle(.bordered))
+            }
+        )
+    }
+
+    private func modelStatusCard(
+        icon: String,
+        iconColor: Color,
+        title: String,
+        subtitle: String,
+        actions: () -> AnyView
+    ) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 30))
+                .foregroundColor(iconColor)
+            Text(title)
+                .font(.system(size: 14, weight: .medium))
+            Text(subtitle)
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 280)
+            actions()
+                .padding(.top, 2)
+        }
     }
 }
 

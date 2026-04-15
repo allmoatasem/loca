@@ -205,25 +205,10 @@ class ModelManager:
         if self.backend.is_running():
             return self.backend.current_model_path() or "local", self.backend.api_base()
 
-        # Not running — try active_model from config
-        active_rel = self.config.get("inference", {}).get("active_model")
-        if active_rel:
-            active_path = self.models_dir / active_rel
-            if active_path.exists():
-                logger.info(f"Auto-starting backend with: {active_path}")
-                await self.backend.start(str(active_path))
-                return self.backend.current_model_path() or "local", self.backend.api_base()
-
-        # Fall back to first available local model
-        local_models = self.list_local()
-        if local_models:
-            logger.info(f"Auto-starting backend with first available model: {local_models[0].name}")
-            await self.backend.start(local_models[0].path)
-            return self.backend.current_model_path() or "local", self.backend.api_base()
-
+        # No model loaded — require explicit user action rather than auto-starting.
         raise InferenceBackendError(
-            "No model is loaded and no models found in models_dir. "
-            "Download a model first via the settings panel."
+            "No model is loaded. "
+            "Load a model via Settings → Models to start chatting."
         )
 
     # ------------------------------------------------------------------

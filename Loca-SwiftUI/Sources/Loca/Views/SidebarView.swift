@@ -102,7 +102,12 @@ struct SidebarView: View {
                 .help(state.localModels.first(where: { $0.name == state.selectedModelId })
                     .map { "\($0.name) · \($0.formatLabel) · \($0.sizeLabel)" } ?? "Select a model")
                 .onChange(of: state.selectedModelId) {
-                    if let name = state.selectedModelId, name != state.activeModelName {
+                    // Only auto-load when the user switches away from an already-loaded model.
+                    // On startup, selectedModelId is set programmatically — guard against
+                    // treating that as user intent to load.
+                    if let name = state.selectedModelId,
+                       state.activeModelName != nil,
+                       name != state.activeModelName {
                         state.loadModel(name, ctxSize: state.contextWindow)
                     }
                 }
