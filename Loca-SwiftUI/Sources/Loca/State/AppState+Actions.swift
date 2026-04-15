@@ -196,15 +196,16 @@ extension AppState {
                     if line.hasPrefix("data: "),
                        let data = String(line.dropFirst(6)).data(using: .utf8),
                        let p = try? JSONDecoder().decode(DownloadProgress.self, from: data) {
+                        // Check for terminal events first — don't let a cancelled/error
+                        // event overwrite the last known progress percent.
+                        if let err = p.error {
+                            if err != "cancelled" { activeDownload?.error = err }
+                            return
+                        }
                         activeDownload?.percent    = p.percent
                         activeDownload?.speedMbps  = p.speed_mbps
                         activeDownload?.etaSeconds = p.eta_s
                         if let tb = p.total_bytes, tb > 0 { activeDownload?.totalBytes = tb }
-                        if let err = p.error {
-                            // "cancelled" is not an error — it means we paused/cancelled
-                            if err != "cancelled" { activeDownload?.error = err }
-                            return
-                        }
                         if p.done {
                             activeDownload?.done = true
                             activeDownload?.percent = 100
