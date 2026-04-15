@@ -175,20 +175,20 @@ class TestConversationsAPI:
 class TestMemoriesAPI:
     def test_list_memories(self, client):
         mems = [{"id": "m1", "content": "User likes Python", "type": "user_fact"}]
-        with patch("src.proxy.list_memories", return_value=mems):
-            r = client.get("/api/memories")
+        client._mock_memory_plugin.list_all.return_value = mems
+        r = client.get("/api/memories")
         assert r.status_code == 200
         assert r.json()["memories"] == mems
 
     def test_list_memories_with_type_filter(self, client):
-        with patch("src.proxy.list_memories", return_value=[]) as mock_list:
-            r = client.get("/api/memories?type=user_fact")
+        client._mock_memory_plugin.list_all.return_value = []
+        r = client.get("/api/memories?type=user_fact")
         assert r.status_code == 200
-        mock_list.assert_called_once_with(type="user_fact")
+        client._mock_memory_plugin.list_all.assert_called_once_with(type="user_fact")
 
     def test_add_memory(self, client):
-        with patch("src.proxy.add_memory", return_value="mem-001"):
-            r = client.post("/api/memories", json={"content": "Likes hiking", "type": "user_fact"})
+        client._mock_memory_plugin.store = AsyncMock(return_value="mem-001")
+        r = client.post("/api/memories", json={"content": "Likes hiking", "type": "user_fact"})
         assert r.status_code == 200
         assert r.json() == {"id": "mem-001"}
 

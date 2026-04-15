@@ -35,11 +35,9 @@ from .model_manager import ModelManager
 from .orchestrator import Orchestrator
 from .plugin_manager import PluginManager
 from .store import (
-    add_memory,
     delete_conversation,
     get_conversation,
     list_conversations,
-    list_memories,
     list_vault_notes,
     patch_conversation,
     save_conversation,
@@ -762,17 +760,19 @@ async def api_delete_conversation(conv_id: str) -> JSONResponse:
 
 @app.get("/api/memories")
 async def api_list_memories(type: str | None = None) -> JSONResponse:
-    return JSONResponse({"memories": list_memories(type=type)})
+    assert _plugin_manager is not None
+    memories = _plugin_manager.memory_plugin.list_all(type=type)
+    return JSONResponse({"memories": memories})
 
 
 @app.post("/api/memories")
 async def api_add_memory(request: Request) -> JSONResponse:
+    assert _plugin_manager is not None
     body = await request.json()
-    mid = add_memory(
-        content=body.get("content", ""),
-        conv_id=body.get("conv_id"),
-        type=body.get("type", "user_fact"),
-    )
+    content = body.get("content", "").strip()
+    if not content:
+        return JSONResponse({"error": "content is required"}, status_code=400)
+    mid = await _plugin_manager.memory_plugin.store(content, {})
     return JSONResponse({"id": mid})
 
 
