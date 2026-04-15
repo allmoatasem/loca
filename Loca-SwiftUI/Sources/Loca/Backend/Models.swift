@@ -523,6 +523,7 @@ struct VaultScanResult: Decodable {
 struct VaultStats: Decodable {
     let note_count: Int; let link_count: Int; let total_words: Int
     let tag_count: Int; let top_tags: [TagCount]; let folder_count: Int
+    let daily_note_count: Int?; let open_tasks: Int?; let done_tasks: Int?
     struct TagCount: Decodable, Identifiable { let tag: String; let count: Int; var id: String { tag } }
 }
 
@@ -558,7 +559,8 @@ struct LinkSuggestion: Decodable, Identifiable {
 }
 
 struct VaultSearchResult: Decodable, Identifiable {
-    let rel_path: String; let title: String; let tags: [String]; let word_count: Int
+    let rel_path: String; let title: String; let tags: [String]
+    let score: Double?; let snippet: String?; let is_daily_note: Bool?; let tasks_count: Int?
     var id: String { rel_path }
 }
 

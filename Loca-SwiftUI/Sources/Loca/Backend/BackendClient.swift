@@ -373,6 +373,18 @@ actor BackendClient {
         return try JSONDecoder().decode(VaultAnalysis.self, from: data)
     }
 
+    func semanticSearch(path: String, query: String, limit: Int = 20) async throws -> [VaultSearchResult] {
+        var comps = URLComponents(url: base, resolvingAgainstBaseURL: false)!
+        comps.path = "/api/vault/semantic-search"
+        comps.queryItems = [
+            URLQueryItem(name: "path", value: path),
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "limit", value: "\(limit)"),
+        ]
+        let (data, _) = try await session.data(from: comps.url!)
+        return try JSONDecoder().decode(VaultSearchResponse.self, from: data).results
+    }
+
     // MARK: - System stats
 
     func systemStats() async throws -> SystemStats {

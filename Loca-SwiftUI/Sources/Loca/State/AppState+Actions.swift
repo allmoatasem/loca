@@ -474,6 +474,18 @@ extension AppState {
         isVaultAnalysing = false
     }
 
+    func _vaultSearch(_ query: String) async {
+        guard !selectedVaultPath.isEmpty, !query.trimmingCharacters(in: .whitespaces).isEmpty else {
+            vaultSearchResults = []
+            return
+        }
+        isVaultSearching = true
+        vaultSearchError = nil
+        do { vaultSearchResults = try await BackendClient.shared.semanticSearch(path: selectedVaultPath, query: query) }
+        catch { vaultSearchError = error.localizedDescription }
+        isVaultSearching = false
+    }
+
     // MARK: - System stats
 
     private func _scheduleStatsPoll() {
