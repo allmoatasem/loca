@@ -22,3 +22,5 @@ playwright>=1.40.0
 pytest-playwright>=0.4.4
 pytest-xdist>=3.5.0
 sqlite-vec>=0.1.0
+mempalace>=0.1.0
+chromadb>=1.5.4
