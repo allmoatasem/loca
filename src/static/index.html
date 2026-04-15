@@ -218,6 +218,24 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 /* Keep legacy id selector working */
 #model-select { width: 100%; }
 
+/* Model picker action row */
+#model-picker-wrap { display: flex; flex-direction: column; gap: 5px; }
+#model-picker-actions { display: flex; align-items: center; gap: 6px; min-height: 24px; }
+#model-status-row { display: flex; align-items: center; gap: 5px; padding: 2px 0; }
+.mpk-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.mpk-dot-on  { background: #2ecc71; }
+.mpk-dot-off { background: var(--border); }
+.mpk-btn {
+  font-size: 11px; font-weight: 500;
+  padding: 3px 10px; border-radius: 5px; border: 1px solid transparent;
+  cursor: pointer; line-height: 1.5; transition: background .12s, opacity .12s;
+}
+.mpk-btn:disabled { opacity: .45; cursor: default; }
+.mpk-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.mpk-primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+.mpk-danger  { background: transparent; color: #e74c3c; border-color: #e74c3c; }
+.mpk-danger:hover:not(:disabled)  { background: rgba(231,76,60,.08); }
+
 #model-desc {
   font-size: 11px;
   color: var(--text-muted);
@@ -1551,9 +1569,20 @@ code[class*="language-"] {
 
     <div id="model-section" style="border-top:none;padding-top:0">
       <label>Model</label>
-      <select id="model-select" class="model-select" onchange="_refreshAttachWarnings()">
-        <option value="">Loading…</option>
-      </select>
+      <div id="model-picker-wrap">
+        <select id="model-select" class="model-select" onchange="_onModelPickerChange()">
+          <option value="">Loading…</option>
+        </select>
+        <div id="model-picker-actions">
+          <button id="model-load-btn"  class="mpk-btn mpk-primary" onclick="_loadSelectedModel()"  style="display:none">Load</button>
+          <button id="model-eject-btn" class="mpk-btn mpk-danger"  onclick="_ejectCurrentModel()" style="display:none">Eject</button>
+          <span   id="model-loading-indicator" style="display:none;font-size:11px;color:var(--text-muted)">Loading…</span>
+        </div>
+        <div id="model-status-row" style="display:none">
+          <span class="mpk-dot mpk-dot-on"></span>
+          <span id="model-status-name" style="font-size:11px;color:var(--text-muted)"></span>
+        </div>
+      </div>
     </div>
 
     <div id="model-section" style="border-top:none;padding-top:0">
@@ -2065,26 +2094,115 @@ function selectMode(btn) {
 
 // ── Model picker ──────────────────────────────────────────────────────────────
 function _modelBasename(id) {
-  // mlx_lm returns the full filesystem path as model id — show just the name
   return id.includes('/') ? id.split('/').filter(Boolean).pop() : id;
 }
 
+// Track the currently active (loaded) model name so we can show status.
+let _activeModelName = null;
+
 async function refreshModelPicker() {
-  const sel = document.getElementById('model-select');
+  const sel    = document.getElementById('model-select');
+  const loadBtn  = document.getElementById('model-load-btn');
+  const ejectBtn = document.getElementById('model-eject-btn');
+  const statusRow = document.getElementById('model-status-row');
+  const statusName = document.getElementById('model-status-name');
+
   try {
-    const { data = [] } = await (await fetch('/v1/models')).json();
-    if (data.length) {
-      sel.innerHTML = data.map(m =>
-        `<option value="${esc(m.id)}">${esc(_modelBasename(m.id))}</option>`
-      ).join('');
+    // Fetch all downloaded models
+    const { models: local = [] } = await (await fetch('/api/local-models')).json();
+    // Fetch which one is currently loaded
+    const active = await (await fetch('/api/models/active')).json();
+    _activeModelName = active.running ? _modelBasename(active.name || '') : null;
+
+    if (local.length) {
+      const prevVal = sel.value;
+      sel.innerHTML = local.map(m => {
+        const name = _modelBasename(m.name);
+        const loaded = m.is_loaded ? ' ●' : '';
+        return `<option value="${esc(m.name)}">${esc(name)}${loaded}  ${esc(m.format || '')}</option>`;
+      }).join('');
+      // Restore previous selection or default to the loaded model
+      const loadedEntry = local.find(m => m.is_loaded);
+      if (prevVal && local.some(m => m.name === prevVal)) {
+        sel.value = prevVal;
+      } else if (loadedEntry) {
+        sel.value = loadedEntry.name;
+      }
     } else {
-      sel.innerHTML = '<option value="">No model loaded</option>';
+      sel.innerHTML = '<option value="">No local models — download one first</option>';
     }
+
+    // Show status bar when a model is loaded
+    if (_activeModelName) {
+      statusRow.style.display = 'flex';
+      statusName.textContent = _activeModelName + ' loaded';
+    } else {
+      statusRow.style.display = 'none';
+    }
+
+    _updateModelPickerButtons();
   } catch (_) {
     sel.innerHTML = '<option value="">Backend unavailable</option>';
+    statusRow.style.display = 'none';
+    if (loadBtn) loadBtn.style.display = 'none';
+    if (ejectBtn) ejectBtn.style.display = 'none';
   }
   _refreshVisionFlag();
 }
+
+function _updateModelPickerButtons() {
+  const sel      = document.getElementById('model-select');
+  const loadBtn  = document.getElementById('model-load-btn');
+  const ejectBtn = document.getElementById('model-eject-btn');
+  if (!sel || !loadBtn || !ejectBtn) return;
+
+  const selected = _modelBasename(sel.value);
+  const isSelectedLoaded = _activeModelName && selected === _activeModelName;
+
+  loadBtn.style.display  = (!isSelectedLoaded && sel.value) ? 'inline-block' : 'none';
+  ejectBtn.style.display = isSelectedLoaded ? 'inline-block' : 'none';
+}
+
+function _onModelPickerChange() {
+  _updateModelPickerButtons();
+  _refreshAttachWarnings();
+}
+
+async function _loadSelectedModel() {
+  const sel     = document.getElementById('model-select');
+  const loadBtn = document.getElementById('model-load-btn');
+  const indicator = document.getElementById('model-loading-indicator');
+  const name = sel.value;
+  if (!name) return;
+  loadBtn.style.display = 'none';
+  indicator.style.display = 'inline';
+  const ctxSize = parseInt(document.getElementById('ctx-select')?.value || '32768', 10);
+  try {
+    await fetch('/api/models/load', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, ctx_size: ctxSize}),
+    });
+  } finally {
+    indicator.style.display = 'none';
+    await refreshModelPicker();
+  }
+}
+
+async function _ejectCurrentModel() {
+  const ejectBtn  = document.getElementById('model-eject-btn');
+  const indicator = document.getElementById('model-loading-indicator');
+  ejectBtn.style.display = 'none';
+  indicator.style.display = 'inline';
+  try {
+    await fetch('/api/models/unload', {method: 'POST'});
+  } finally {
+    indicator.style.display = 'none';
+    _activeModelName = null;
+    await refreshModelPicker();
+  }
+}
+
 refreshModelPicker();
 _applyLockdown();
 
@@ -2768,6 +2886,10 @@ function setStreaming(v) {
   streaming = v;
   document.getElementById('send-btn').disabled = v;
   document.getElementById('model-select').disabled = v;
+  const lb = document.getElementById('model-load-btn');
+  const eb = document.getElementById('model-eject-btn');
+  if (lb) lb.disabled = v;
+  if (eb) eb.disabled = v;
   document.querySelectorAll('.mode-tab').forEach(b => b.disabled = v);
   // Keep input editable so user can compose the next message while waiting
   if (!v) document.getElementById('input').focus();
