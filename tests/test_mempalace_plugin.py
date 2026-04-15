@@ -168,3 +168,7 @@ class TestMemPalaceMemoryPlugin:
     def test_classify_room_general_fallback(self):
         from src.plugins.mempalace_plugin import _classify_room
         assert _classify_room("The weather is nice today") == "general"
+
+    def test_classify_room_milestones(self):
+        from src.plugins.mempalace_plugin import _classify_room
+        assert _classify_room("Finally got it working and done") == "milestones"
