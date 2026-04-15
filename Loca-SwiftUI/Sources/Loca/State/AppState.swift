@@ -240,12 +240,25 @@ final class AppState: ObservableObject {
     @Published var voiceConfig: VoiceConfigResponse?
     @Published var showVoiceSetup    = false
 
+    // MARK: - External server status (LM Studio / Ollama)
+
+    /// nil = not yet checked; true/false = last known reachability
+    @Published var externalServerRunning: Bool? = nil
+    @Published var externalModels: [String] = []
+    @Published var isStartingExternalServer = false
+
     // MARK: - Backend mode (native vs LM Studio)
 
     @Published var lmStudioMode: Bool = UserDefaults.standard.bool(forKey: "lmStudioMode") {
         didSet {
             UserDefaults.standard.set(lmStudioMode, forKey: "lmStudioMode")
             Task { try? await BackendClient.shared.setBackendMode(lmStudio: lmStudioMode, lmStudioUrl: lmStudioUrl) }
+            if lmStudioMode {
+                // Reset status so the UI re-checks immediately
+                externalServerRunning = nil
+                externalModels = []
+                if isBackendReady { checkServerStatus() }
+            }
         }
     }
     @Published var lmStudioUrl: String = UserDefaults.standard.string(forKey: "lmStudioUrl") ?? "http://localhost:1234" {
@@ -295,5 +308,7 @@ final class AppState: ObservableObject {
     func selectVaultPath(_ path: String) { selectedVaultPath = path; analyseVault() }
     func vaultSearch(_ query: String) { Task { await _vaultSearch(query) } }
     func fetchVoiceConfig() { Task { do { voiceConfig = try await BackendClient.shared.fetchVoiceConfig() } catch {} } }
+    func checkServerStatus()   { Task { await _checkServerStatus() } }
+    func startExternalServer() { Task { await _startExternalServer() } }
 }
 

@@ -19,9 +19,47 @@ extension AppState {
                     await _loadConversationList()
                     await _loadMemories()
                     _scheduleStatsPoll()
+                    if lmStudioMode {
+                        await _checkServerStatus()
+                        _scheduleServerStatusPoll()
+                    }
                     break
                 }
                 try? await Task.sleep(for: .seconds(0.75))
+            }
+        }
+    }
+
+    // MARK: - External server status
+
+    func _checkServerStatus() async {
+        guard isBackendReady else { return }
+        if let status = try? await BackendClient.shared.fetchServerStatus() {
+            if status.mode != "native" {
+                externalServerRunning = status.server_running ?? false
+                externalModels = status.models ?? []
+            }
+        }
+    }
+
+    func _startExternalServer() async {
+        isStartingExternalServer = true
+        do {
+            try await BackendClient.shared.startExternalServer()
+            // Give the server a few seconds to start up, then recheck
+            try? await Task.sleep(for: .seconds(4))
+            await _checkServerStatus()
+        } catch {
+            // Non-fatal — user will see "not running" state still
+        }
+        isStartingExternalServer = false
+    }
+
+    private func _scheduleServerStatusPoll() {
+        Task {
+            while isBackendReady && lmStudioMode {
+                try? await Task.sleep(for: .seconds(8))
+                await _checkServerStatus()
             }
         }
     }

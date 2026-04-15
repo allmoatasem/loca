@@ -86,12 +86,6 @@ private struct InferencePrefsTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // ── Backend selector ────────────────────────────────────────
-            ExternalServerSection()
-
-            Divider()
-                .padding(.horizontal, 20)
-
             Text("Recipe")
                 .font(.headline)
                 .padding(.horizontal, 20)
@@ -485,46 +479,57 @@ private struct ServerPrefsTab: View {
     }
 
     var body: some View {
-        Form {
-            Section {
-                HStack {
-                    Text("Backend host")
-                        .frame(width: 120, alignment: .leading)
-                    TextField("localhost", text: $hostInput)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { applyHost() }
-                    Button("Connect") { applyHost() }
-                        .disabled(hostInput.trimmingCharacters(in: .whitespacesAndNewlines) == state.serverHost)
-                }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                // ── Backend / inference source ───────────────────────────
+                ExternalServerSection()
 
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(statusColor)
-                        .frame(width: 8, height: 8)
-                    Text(statusLabel)
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-                .padding(.top, 2)
+                Divider().padding(.horizontal, 20)
 
-                Text("Enter a hostname or IP address. Use a Tailscale IP (e.g. 100.x.x.x) to connect to a remote machine running Loca's backend.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            } header: {
-                Text("Remote Server")
-            }
+                // ── Remote Loca backend (Tailscale) ─────────────────────
+                Form {
+                    Section {
+                        HStack {
+                            Text("Backend host")
+                                .frame(width: 120, alignment: .leading)
+                            TextField("localhost", text: $hostInput)
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit { applyHost() }
+                            Button("Connect") { applyHost() }
+                                .disabled(hostInput.trimmingCharacters(in: .whitespacesAndNewlines) == state.serverHost)
+                        }
 
-            Section {
-                Button("Reset to localhost") {
-                    hostInput = "localhost"
-                    applyHost()
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(statusColor)
+                                .frame(width: 8, height: 8)
+                            Text(statusLabel)
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.top, 2)
+
+                        Text("Enter a hostname or IP address. Use a Tailscale IP (e.g. 100.x.x.x) to connect to a remote machine running Loca's backend.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    } header: {
+                        Text("Remote Loca Server")
+                    }
+
+                    Section {
+                        Button("Reset to localhost") {
+                            hostInput = "localhost"
+                            applyHost()
+                        }
+                        .disabled(state.serverHost == "localhost")
+                    }
                 }
-                .disabled(state.serverHost == "localhost")
+                .formStyle(.grouped)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 20)
             }
         }
-        .formStyle(.grouped)
-        .padding(20)
-        .frame(width: 540)
+        .frame(width: 540, height: 520)
         .onAppear {
             hostInput = state.serverHost
             checkConnection()
