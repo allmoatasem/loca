@@ -710,7 +710,7 @@ private struct KnowledgePrefsTab: View {
         }
         .formStyle(.grouped)
         .padding(20)
-        .frame(width: 540)
+        .frame(width: 540, height: 520)
         .task { await loadHistory() }
     }
 
