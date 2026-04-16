@@ -5,6 +5,7 @@ on macOS, or ~/.loca/data/loca.db on Linux/Windows.
 """
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import os
@@ -33,6 +34,10 @@ def _default_data_dir() -> Path:
 
 
 _DB_PATH = _default_data_dir() / "loca.db"
+
+
+def _utcnow() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
 def _conn() -> sqlite3.Connection:
@@ -121,6 +126,18 @@ def _migrate(c: sqlite3.Connection) -> None:
     ]:
         if col not in vault_cols:
             c.execute(f"ALTER TABLE vault_notes ADD COLUMN {col} {defn}")
+
+    # Import history tracking
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS import_history (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        source      TEXT NOT NULL,
+        path        TEXT NOT NULL,
+        stored      INTEGER NOT NULL,
+        skipped     INTEGER NOT NULL,
+        imported_at TEXT NOT NULL
+    );
+    """)
 
     c.commit()
 
@@ -423,3 +440,25 @@ def get_memories_context(limit_per_type: int = 10) -> str:
 
     body = "\n\n".join(sections)
     return f"<memory>\n{body}\n</memory>"
+
+
+# ── Import History ───────────────────────────────────────────────────────────
+
+def add_import_record(source: str, path: str, stored: int, skipped: int) -> None:
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO import_history (source, path, stored, skipped, imported_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (source, path, stored, skipped, _utcnow()),
+        )
+        c.commit()
+
+
+def list_import_history(limit: int = 50) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT source, path, stored, skipped, imported_at "
+            "FROM import_history ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in rows]
