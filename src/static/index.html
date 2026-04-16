@@ -1997,6 +1997,7 @@ code[class*="language-"] {
       <button class="prefs-tab active" onclick="switchPrefsTab(this,'general')">General</button>
       <button class="prefs-tab" onclick="switchPrefsTab(this,'inference')">Inference</button>
       <button class="prefs-tab" onclick="switchPrefsTab(this,'system-prompt')">System Prompt</button>
+      <button class="prefs-tab" onclick="switchPrefsTab(this,'knowledge')">Knowledge</button>
     </div>
     <div id="prefs-body"></div>
   </div>
@@ -3655,12 +3656,37 @@ function _renderPrefsTab(tab) {
         <div class="param-row"><label>Repeat Penalty</label><input type="range" min="1" max="2" step="0.01" value="${p.repeat_penalty}" oninput="prefParam('repeat_penalty',parseFloat(this.value));this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)"><span class="param-val">${p.repeat_penalty.toFixed(2)}</span></div>
         <div class="param-row"><label>Max Tokens</label><input type="range" min="128" max="8192" step="64" value="${p.max_tokens}" oninput="prefParam('max_tokens',parseInt(this.value));this.nextElementSibling.textContent=this.value"><span class="param-val">${p.max_tokens}</span></div>
       </div>`;
-  } else {
+  } else if (tab === 'system-prompt') {
     body.innerHTML = `
       <div class="prefs-section-title">System Prompt Override</div>
       <textarea id="prefs-sysprompt" placeholder="Leave empty to use Loca's built-in mode-aware prompts (recommended). If set, this replaces the system prompt for all conversations." oninput="prefSetSysPrompt(this.value)">${p.system_prompt}</textarea>
       <div class="prefs-hint" style="margin-top:6px">Loca's built-in prompts are mode-aware (General, Code, Thinking, Vision) and include hardware context. An override applies to all modes.</div>
       ${p.system_prompt ? `<button onclick="prefClearSysPrompt()" style="margin-top:10px;background:none;border:1px solid var(--border);border-radius:6px;padding:5px 12px;font-size:12px;color:#e74c3c;cursor:pointer">Clear Override</button>` : ''}`;
+  } else if (tab === 'knowledge') {
+    body.innerHTML = `
+      <div class="prefs-section-title">Import Knowledge</div>
+      <div class="prefs-row" style="flex-direction:column;align-items:flex-start;gap:8px;border-bottom:none;">
+        <div style="display:flex;gap:8px;width:100%;">
+          <input id="import-path-input" type="text" placeholder="Path to file, folder, or URL…"
+            style="flex:1;font-size:12px;padding:6px 10px;border:1px solid var(--border);
+                   border-radius:6px;background:var(--bg);color:var(--text);" />
+          <button onclick="startImport()" id="import-btn" style="font-size:12px;padding:6px 14px;
+            border-radius:6px;background:var(--accent);color:#fff;border:none;cursor:pointer;">
+            Import
+          </button>
+        </div>
+        <div id="import-progress-wrap" style="display:none;width:100%;">
+          <div style="height:4px;background:var(--border);border-radius:2px;overflow:hidden;">
+            <div id="import-progress-bar" style="height:100%;background:var(--accent);
+                 width:0%;transition:width 0.2s;"></div>
+          </div>
+          <div id="import-status" style="font-size:11px;color:var(--text-muted);margin-top:4px;"></div>
+        </div>
+        <div id="import-history-wrap" style="width:100%;font-size:11px;color:var(--text-muted);">
+          <div id="import-history-list"></div>
+        </div>
+      </div>`;
+    loadImportHistory();
   }
 }
 
@@ -3869,6 +3895,76 @@ async function triggerExtract() {
 
 // Load memory count on start
 loadMemCount();
+
+// ── Knowledge Import ──────────────────────────────────────────────────────────
+
+async function startImport() {
+  const path = document.getElementById('import-path-input').value.trim();
+  if (!path) return;
+  const btn = document.getElementById('import-btn');
+  const wrap = document.getElementById('import-progress-wrap');
+  const bar = document.getElementById('import-progress-bar');
+  const status = document.getElementById('import-status');
+  btn.disabled = true;
+  btn.textContent = 'Importing…';
+  wrap.style.display = 'block';
+  bar.style.width = '0%';
+  status.textContent = 'Starting…';
+  try {
+    const resp = await fetch('/api/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    });
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
+        let evt;
+        try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+        if (evt.status === 'extracting') {
+          status.textContent = `Detected: ${evt.adapter} (${evt.total} chunks)`;
+        } else if (evt.status === 'progress') {
+          const pct = evt.total ? Math.round(100 * evt.current / evt.total) : 0;
+          bar.style.width = pct + '%';
+          status.textContent = `${evt.current}/${evt.total} chunks — ${evt.skipped} duplicates skipped`;
+        } else if (evt.status === 'done') {
+          bar.style.width = '100%';
+          status.textContent = `\u2713 ${evt.stored} stored, ${evt.skipped} skipped`;
+          loadImportHistory();
+        } else if (evt.status === 'error') {
+          status.textContent = `\u2717 ${evt.message}`;
+        }
+      }
+    }
+  } catch (e) {
+    status.textContent = `\u2717 ${e.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Import';
+  }
+}
+
+async function loadImportHistory() {
+  try {
+    const resp = await fetch('/api/import/history');
+    const { imports = [] } = await resp.json();
+    const list = document.getElementById('import-history-list');
+    if (!list) return;
+    if (!imports.length) { list.innerHTML = ''; return; }
+    list.innerHTML = '<div style="margin-top:6px;font-weight:500;">Past imports:</div>' +
+      imports.map(r =>
+        `<div style="margin-top:2px;">${r.source} — ${r.stored} chunks — ${new Date(r.imported_at).toLocaleDateString()} — <span style="opacity:0.6">${r.path}</span></div>`
+      ).join('');
+  } catch (_) { /* ignore */ }
+}
 </script>
 </body>
 </html>
