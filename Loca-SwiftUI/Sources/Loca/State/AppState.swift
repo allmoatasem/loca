@@ -62,6 +62,8 @@ final class AppState: ObservableObject {
     // MARK: - Memories
 
     @Published var memories: [Memory] = []
+    @Published var memoriesTotal: Int = 0
+    @Published var isLoadingMoreMemories: Bool = false
     @Published var isMemoryPanelOpen          = false
     @Published var isAcknowledgementsOpen     = false
     @Published var isGlossaryOpen             = false
@@ -281,6 +283,7 @@ final class AppState: ObservableObject {
     func deleteConversation(_ id: String) { Task { await _deleteConversation(id) } }
     func send(_ text: String, attachments: [UploadResult] = []) { Task { await _send(text, attachments: attachments) } }
     func loadMemories()         { Task { await _loadMemories() } }
+    func loadMoreMemories() async { await _loadMoreMemories() }
     func extractMemories()      { Task { await _extractMemories() } }
     func pollSystemStats()      { Task { await _pollSystemStats() } }
     func reloadConversations()  { Task { await _loadConversationList() } }

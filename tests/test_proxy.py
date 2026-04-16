@@ -175,16 +175,20 @@ class TestConversationsAPI:
 class TestMemoriesAPI:
     def test_list_memories(self, client):
         mems = [{"id": "m1", "content": "User likes Python", "type": "user_fact"}]
-        client._mock_memory_plugin.list_all.return_value = mems
+        client._mock_memory_plugin.list_paged.return_value = {"items": mems, "total": 1}
         r = client.get("/api/memories")
         assert r.status_code == 200
-        assert r.json()["memories"] == mems
+        body = r.json()
+        assert body["memories"] == mems
+        assert body["total"] == 1
 
     def test_list_memories_with_type_filter(self, client):
-        client._mock_memory_plugin.list_all.return_value = []
+        client._mock_memory_plugin.list_paged.return_value = {"items": [], "total": 0}
         r = client.get("/api/memories?type=user_fact")
         assert r.status_code == 200
-        client._mock_memory_plugin.list_all.assert_called_once_with(type="user_fact")
+        client._mock_memory_plugin.list_paged.assert_called_once_with(
+            type="user_fact", limit=50, offset=0
+        )
 
     def test_add_memory(self, client):
         client._mock_memory_plugin.store = AsyncMock(return_value="mem-001")

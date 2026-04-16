@@ -495,6 +495,14 @@ struct Memory: Decodable, Identifiable {
 
 struct MemoryListResponse: Decodable {
     let memories: [Memory]
+    let total: Int?
+    let limit: Int?
+    let offset: Int?
+}
+
+struct MemoryPage {
+    let items: [Memory]
+    let total: Int
 }
 
 // MARK: - Import

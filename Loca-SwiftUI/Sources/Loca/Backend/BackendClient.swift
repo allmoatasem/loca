@@ -237,6 +237,12 @@ actor BackendClient {
         return try JSONDecoder().decode(MemoryListResponse.self, from: data).memories
     }
 
+    func listMemoriesPaged(limit: Int = 50, offset: Int = 0) async throws -> MemoryPage {
+        let (data, _) = try await get("/api/memories?limit=\(limit)&offset=\(offset)")
+        let resp = try JSONDecoder().decode(MemoryListResponse.self, from: data)
+        return MemoryPage(items: resp.memories, total: resp.total ?? resp.memories.count)
+    }
+
     func addMemory(content: String) async throws -> String {
         let (data, _) = try await post("/api/memories", body: ["content": content])
         return try JSONDecoder().decode(AddMemoryResponse.self, from: data).id

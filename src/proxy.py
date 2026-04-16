@@ -772,10 +772,19 @@ async def api_delete_conversation(conv_id: str) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 @app.get("/api/memories")
-async def api_list_memories(type: str | None = None) -> JSONResponse:
+async def api_list_memories(
+    type: str | None = None, limit: int = 50, offset: int = 0
+) -> JSONResponse:
     assert _plugin_manager is not None
-    memories = _plugin_manager.memory_plugin.list_all(type=type)
-    return JSONResponse({"memories": memories})
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+    page = _plugin_manager.memory_plugin.list_paged(type=type, limit=limit, offset=offset)
+    return JSONResponse({
+        "memories": page["items"],
+        "total": page["total"],
+        "limit": limit,
+        "offset": offset,
+    })
 
 
 @app.post("/api/memories")

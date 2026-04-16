@@ -2,14 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
-
-try:
-    from mempalace.miner import add_drawer  # type: ignore
-except Exception:  # MemPalace optional at import time
-    def add_drawer(*_args, **_kwargs):  # type: ignore
-        raise ImportError("mempalace not available")
 
 from ..plugins.mempalace_plugin import _classify_room
 from ..store import add_import_record
@@ -25,6 +20,35 @@ _MAX_WORDS = 800  # chunks exceeding this are split further
 
 def _content_hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
+
+
+def _store_chunk(collection, chunk: Chunk, chunk_index: int, content_hash: str) -> None:
+    """Upsert a chunk into the MemPalace collection with full import metadata.
+
+    Stores content_hash so future imports can dedupe via `where={content_hash: h}`.
+    """
+    source_file = f"{chunk.source}:{chunk.title}"
+    room = _classify_room(chunk.text)
+    drawer_id = (
+        f"drawer_loca_{room}_"
+        f"{hashlib.sha256((source_file + str(chunk_index)).encode()).hexdigest()[:24]}"
+    )
+    now_iso = datetime.now(timezone.utc).isoformat()
+    metadata = {
+        "wing": "loca",
+        "room": room,
+        "source_file": source_file,
+        "chunk_index": chunk_index,
+        "added_by": "loca-import",
+        "filed_at": now_iso,
+        "source": chunk.source,
+        "title": chunk.title,
+        "content_hash": content_hash,
+        "imported_at": now_iso,
+    }
+    if chunk.created_at:
+        metadata["original_created_at"] = chunk.created_at
+    collection.upsert(documents=[chunk.text], ids=[drawer_id], metadatas=[metadata])
 
 
 def _split_large_chunk(chunk: Chunk) -> list[Chunk]:
@@ -118,15 +142,7 @@ class ImportService:
                 continue
 
             try:
-                add_drawer(
-                    self._plugin.collection,
-                    wing="loca",
-                    room=_classify_room(chunk.text),
-                    content=chunk.text,
-                    source_file=f"{chunk.source}:{chunk.title}",
-                    chunk_index=i,
-                    agent="loca-import",
-                )
+                _store_chunk(self._plugin.collection, chunk, i, h)
                 stored += 1
             except Exception as exc:
                 logger.warning("Failed to store chunk %d: %s", i, exc)

@@ -464,7 +464,25 @@ extension AppState {
     // MARK: - Memories
 
     func _loadMemories() async {
-        do { memories = try await BackendClient.shared.listMemories() } catch {}
+        do {
+            let page = try await BackendClient.shared.listMemoriesPaged(limit: 50, offset: 0)
+            memories = page.items
+            memoriesTotal = page.total
+        } catch {}
+    }
+
+    func _loadMoreMemories() async {
+        guard !isLoadingMoreMemories else { return }
+        isLoadingMoreMemories = true
+        defer { isLoadingMoreMemories = false }
+        do {
+            let page = try await BackendClient.shared.listMemoriesPaged(
+                limit: 50, offset: memories.count
+            )
+            let existing = Set(memories.map(\.id))
+            memories.append(contentsOf: page.items.filter { !existing.contains($0.id) })
+            memoriesTotal = page.total
+        } catch {}
     }
 
     func _extractMemories() async {

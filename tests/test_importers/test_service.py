@@ -66,7 +66,7 @@ async def test_run_yields_progress_and_done(tmp_path):
     collection.get.return_value = {"ids": []}  # no duplicates
     svc = _make_service(collection=collection)
     events = []
-    with patch("src.importers.service.add_drawer"), \
+    with patch("src.importers.service._store_chunk"), \
          patch("src.importers.service.add_import_record"):
         async for event in svc.run(f):
             events.append(event)
@@ -84,11 +84,11 @@ async def test_duplicate_chunk_is_skipped(tmp_path):
     collection.get.return_value = {"ids": ["existing-id"]}  # hash exists
     svc = _make_service(collection=collection)
     events = []
-    with patch("src.importers.service.add_drawer") as mock_add, \
+    with patch("src.importers.service._store_chunk") as mock_store, \
          patch("src.importers.service.add_import_record"):
         async for event in svc.run(f):
             events.append(event)
-    mock_add.assert_not_called()
+    mock_store.assert_not_called()
     done = next(e for e in events if e["status"] == "done")
     assert done["skipped"] == 1
     assert done["stored"] == 0

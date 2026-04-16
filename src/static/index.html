@@ -3202,13 +3202,18 @@ function relTime(ts) {
 loadConvList();
 
 // ── Memory panel ───────────────────────────────────────────────────────────────
+const _MEM_PAGE_SIZE = 50;
+let _memOffset = 0;
+let _memTotal = 0;
+
 async function loadMemCount() {
+  // Lightweight: fetches just 1 row to read total; updates the sidebar label.
   try {
-    const { memories = [] } = await (await fetch('/api/memories')).json();
+    const r = await (await fetch(`/api/memories?limit=1&offset=0`)).json();
+    _memTotal = r.total ?? (r.memories || []).length;
     document.getElementById('mem-count').textContent =
-      memories.length ? `${memories.length} fact${memories.length > 1 ? 's' : ''}` : 'empty';
-    return memories;
-  } catch (_) { return []; }
+      _memTotal ? `${_memTotal} fact${_memTotal > 1 ? 's' : ''}` : 'empty';
+  } catch (_) { _memTotal = 0; }
 }
 
 // ── Models panel ──────────────────────────────────────────────────────────────
@@ -3825,32 +3830,75 @@ async function _vSearchRun() {
   }
 }
 
-async function renderMemList() {
-  const mems = await loadMemCount();
-  const list = document.getElementById('mem-list');
-  if (!mems.length) {
-    list.innerHTML = `<div id="mem-empty">
-      No memories yet.<br><br>
-      Click <strong>Extract memories from current conversation</strong> above,
-      or start a new conversation — extraction runs automatically when you switch conversations.
-      <br><br>You can also add facts manually using the field above.
-    </div>`;
-    return;
-  }
-  list.innerHTML = mems.map(m => `
+function _memItemHTML(m) {
+  return `
     <div class="mem-item" id="mem-${esc(m.id)}">
       <div class="mem-body">
         <div class="mem-content">${esc(m.content)}</div>
         <div class="mem-date">${new Date(m.created * 1000).toLocaleDateString()}</div>
       </div>
       <button class="mem-del" onclick="deleteMem('${esc(m.id)}')" title="Delete">×</button>
-    </div>`).join('');
+    </div>`;
+}
+
+function _memLoadMoreHTML() {
+  if (_memOffset >= _memTotal) return '';
+  const remaining = _memTotal - _memOffset;
+  return `<button id="mem-load-more"
+    style="margin:12px auto;display:block;padding:8px 16px;font-size:12px;
+           border:1px solid var(--border);border-radius:6px;background:var(--bg-2);
+           color:var(--text);cursor:pointer;"
+    onclick="loadMoreMems()">Load ${Math.min(_MEM_PAGE_SIZE, remaining)} more
+      (${_memOffset} of ${_memTotal} shown)</button>`;
+}
+
+async function renderMemList() {
+  _memOffset = 0;
+  const list = document.getElementById('mem-list');
+  list.innerHTML = '<div style="padding:12px;color:var(--text-dim);font-size:12px;">Loading…</div>';
+  try {
+    const r = await (await fetch(`/api/memories?limit=${_MEM_PAGE_SIZE}&offset=0`)).json();
+    const mems = r.memories || [];
+    _memTotal = r.total ?? mems.length;
+    document.getElementById('mem-count').textContent =
+      _memTotal ? `${_memTotal} fact${_memTotal > 1 ? 's' : ''}` : 'empty';
+    _memOffset = mems.length;
+    if (!mems.length) {
+      list.innerHTML = `<div id="mem-empty">
+        No memories yet.<br><br>
+        Click <strong>Extract memories from current conversation</strong> above,
+        or start a new conversation — extraction runs automatically when you switch conversations.
+        <br><br>You can also add facts manually using the field above.
+      </div>`;
+      return;
+    }
+    list.innerHTML = mems.map(_memItemHTML).join('') + _memLoadMoreHTML();
+  } catch (e) {
+    list.innerHTML = `<div style="padding:12px;color:var(--text-dim);">Failed to load: ${esc(e.message)}</div>`;
+  }
+}
+
+async function loadMoreMems() {
+  const btn = document.getElementById('mem-load-more');
+  if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+  try {
+    const r = await (await fetch(`/api/memories?limit=${_MEM_PAGE_SIZE}&offset=${_memOffset}`)).json();
+    const mems = r.memories || [];
+    _memTotal = r.total ?? _memTotal;
+    _memOffset += mems.length;
+    btn?.remove();
+    const list = document.getElementById('mem-list');
+    list.insertAdjacentHTML('beforeend', mems.map(_memItemHTML).join('') + _memLoadMoreHTML());
+  } catch (_) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
+  }
 }
 
 async function deleteMem(id) {
   try {
     await fetch(`/api/memories/${id}`, { method: 'DELETE' });
     document.getElementById(`mem-${id}`)?.remove();
+    _memOffset = Math.max(0, _memOffset - 1);
     loadMemCount();
   } catch (_) {}
 }

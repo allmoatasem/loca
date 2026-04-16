@@ -225,15 +225,28 @@ def delete_conversation(conv_id: str) -> None:
 MEMORY_TYPES = ("user_fact", "knowledge", "correction")
 
 
-def list_memories(limit: int = 200, type: str | None = None) -> list[dict]:
+def list_memories(
+    limit: int = 200, type: str | None = None, offset: int = 0
+) -> list[dict]:
     with _conn() as c:
         if type:
             return [dict(r) for r in c.execute(
-                "SELECT * FROM memories WHERE type=? ORDER BY created DESC LIMIT ?", (type, limit)
+                "SELECT * FROM memories WHERE type=? ORDER BY created DESC LIMIT ? OFFSET ?",
+                (type, limit, offset),
             )]
         return [dict(r) for r in c.execute(
-            "SELECT * FROM memories ORDER BY created DESC LIMIT ?", (limit,)
+            "SELECT * FROM memories ORDER BY created DESC LIMIT ? OFFSET ?",
+            (limit, offset),
         )]
+
+
+def count_memories(type: str | None = None) -> int:
+    with _conn() as c:
+        if type:
+            row = c.execute("SELECT COUNT(*) FROM memories WHERE type=?", (type,)).fetchone()
+        else:
+            row = c.execute("SELECT COUNT(*) FROM memories").fetchone()
+        return row[0] if row else 0
 
 
 def add_memory(content: str, conv_id: str | None = None, type: str = "user_fact") -> str:

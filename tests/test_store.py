@@ -275,3 +275,11 @@ def test_vault_notes_isolated_by_path():
         store_module.upsert_vault_note(note)
     assert len(store_module.list_vault_notes("/v1")) == 1
     assert len(store_module.list_vault_notes("/v2")) == 1
+
+
+# ── Import history ────────────────────────────────────────────────────────────
+
+def test_add_and_list_import_record():
+    store_module.add_import_record(source="anthropic", path="/tmp/export", stored=10, skipped=2)
+    history = store_module.list_import_history()
+    assert any(r["source"] == "anthropic" and r["stored"] == 10 for r in history)

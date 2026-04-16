@@ -29,8 +29,3 @@ def test_concrete_adapter_must_implement_all_methods():
         Bad()
 
 
-def test_add_and_list_import_record():
-    from src.store import add_import_record, list_import_history
-    add_import_record(source="anthropic", path="/tmp/export", stored=10, skipped=2)
-    history = list_import_history()
-    assert any(r["source"] == "anthropic" and r["stored"] == 10 for r in history)
