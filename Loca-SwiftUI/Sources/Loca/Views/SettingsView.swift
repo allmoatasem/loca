@@ -298,8 +298,8 @@ private struct DiscoverTab: View {
                     categoryFilter
                 } else {
                     Picker("", selection: $hfFormat) {
-                        Text("GGUF").tag("gguf")
                         Text("MLX").tag("mlx")
+                        Text("GGUF").tag("gguf")
                     }
                     .pickerStyle(.segmented)
                     .frame(width: 100)
