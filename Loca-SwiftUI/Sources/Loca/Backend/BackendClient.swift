@@ -264,6 +264,13 @@ actor BackendClient {
         return try JSONDecoder().decode(PluginStatusResponse.self, from: data)
     }
 
+    // MARK: - Import
+
+    func fetchImportHistory() async throws -> [ImportHistoryItem] {
+        let (data, _) = try await get("/api/import/history")
+        return try JSONDecoder().decode(ImportHistoryResponse.self, from: data).imports
+    }
+
     // MARK: - Voice
 
     func transcribeAudio(_ audioData: Data, mimeType: String = "audio/wav") async throws -> String {
