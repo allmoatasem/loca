@@ -89,3 +89,31 @@ def test_openai_can_handle_export_with_mapping(tmp_path):
 def test_openai_cannot_handle_anthropic_export():
     from src.importers.adapters.openai import OpenAIAdapter
     assert OpenAIAdapter().can_handle(FIXTURE_DIR) is False
+
+
+def test_pdf_can_handle(tmp_path):
+    from src.importers.adapters.pdf import PDFAdapter
+    f = tmp_path / "doc.pdf"
+    f.write_bytes(b"%PDF-1.4")
+    assert PDFAdapter().can_handle(f) is True
+
+
+def test_pdf_cannot_handle_md(tmp_path):
+    from src.importers.adapters.pdf import PDFAdapter
+    f = tmp_path / "doc.md"
+    f.write_text("hello")
+    assert PDFAdapter().can_handle(f) is False
+
+
+def test_epub_can_handle(tmp_path):
+    from src.importers.adapters.epub import EpubAdapter
+    f = tmp_path / "book.epub"
+    f.write_bytes(b"PK")
+    assert EpubAdapter().can_handle(f) is True
+
+
+def test_docx_can_handle(tmp_path):
+    from src.importers.adapters.docx import DocxAdapter
+    f = tmp_path / "doc.docx"
+    f.write_bytes(b"PK")
+    assert DocxAdapter().can_handle(f) is True
