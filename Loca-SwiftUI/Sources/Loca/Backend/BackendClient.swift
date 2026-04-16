@@ -238,7 +238,15 @@ actor BackendClient {
     }
 
     func listMemoriesPaged(limit: Int = 50, offset: Int = 0) async throws -> MemoryPage {
-        let (data, _) = try await get("/api/memories?limit=\(limit)&offset=\(offset)")
+        var components = URLComponents(
+            url: base.appendingPathComponent("api/memories"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "offset", value: String(offset)),
+        ]
+        let (data, _) = try await session.data(from: components.url!)
         let resp = try JSONDecoder().decode(MemoryListResponse.self, from: data)
         return MemoryPage(items: resp.memories, total: resp.total ?? resp.memories.count)
     }
@@ -260,8 +268,15 @@ actor BackendClient {
     }
 
     func recallMemories(query: String, limit: Int = 5) async throws -> [Memory] {
-        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
-        let (data, _) = try await get("/api/memories/recall?q=\(encoded)&limit=\(limit)")
+        var components = URLComponents(
+            url: base.appendingPathComponent("api/memories/recall"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        let (data, _) = try await session.data(from: components.url!)
         return try JSONDecoder().decode(MemoryListResponse.self, from: data).memories
     }
 
