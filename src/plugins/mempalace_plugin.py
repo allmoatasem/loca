@@ -83,6 +83,16 @@ class MemPalaceMemoryPlugin(MemoryPlugin):
         except Exception as exc:
             logger.warning("MemPalace failed to initialise (%s) — memory disabled.", exc)
 
+    @property
+    def collection(self):
+        """The underlying ChromaDB collection. None if MemPalace unavailable."""
+        return self._collection
+
+    @property
+    def palace_path(self) -> str:
+        """Path to the MemPalace palace directory."""
+        return self._palace_path
+
     # ------------------------------------------------------------------
     # MemoryPlugin interface
     # ------------------------------------------------------------------

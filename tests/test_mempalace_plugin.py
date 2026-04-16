@@ -171,3 +171,20 @@ class TestMemPalaceMemoryPlugin:
     def test_classify_room_milestones(self):
         from src.plugins.mempalace_plugin import _classify_room
         assert _classify_room("Finally got it working and done") == "milestones"
+
+
+def test_plugin_exposes_collection_and_palace_path():
+    """Test that MemPalaceMemoryPlugin exposes collection and palace_path properties."""
+    collection = MagicMock()
+    _make_fake_mempalace(collection)
+    try:
+        from src.plugins.mempalace_plugin import MemPalaceMemoryPlugin
+        with patch("src.plugins.mempalace_plugin._PALACE_PATH") as mock_path:
+            mock_path.exists.return_value = True
+            mock_path.__str__ = lambda s: "/fake/palace"
+            plugin = MemPalaceMemoryPlugin()
+        assert plugin.collection is collection
+        assert plugin.palace_path == "/fake/palace"
+        assert isinstance(plugin.palace_path, str)
+    finally:
+        _remove_fake_mempalace()
