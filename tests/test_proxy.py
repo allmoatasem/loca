@@ -612,3 +612,16 @@ class TestVoiceAPI:
     def test_speech_requires_input(self, client):
         r = client.post("/v1/audio/speech", json={"input": ""})
         assert r.status_code == 400
+
+
+class TestImportAPI:
+    def test_import_history_returns_list(self, client):
+        resp = client.get("/api/import/history")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "imports" in data
+        assert isinstance(data["imports"], list)
+
+    def test_import_rejects_missing_path(self, client):
+        resp = client.post("/api/import", json={})
+        assert resp.status_code == 422
