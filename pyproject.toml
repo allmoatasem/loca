@@ -1,6 +1,9 @@
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "network: tests that require live network services (SearXNG, HF API)",
+]
 
 [tool.coverage.run]
 source = ["src"]
