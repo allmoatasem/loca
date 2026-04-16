@@ -8,12 +8,10 @@ struct SettingsView: View {
     enum Tab: String, CaseIterable {
         case downloaded = "Downloaded"
         case discover   = "Discover"
-        case knowledge  = "Knowledge"
         var icon: String {
             switch self {
             case .downloaded: return "internaldrive"
             case .discover:   return "cpu"
-            case .knowledge:  return "book.closed"
             }
         }
     }
@@ -46,7 +44,6 @@ struct SettingsView: View {
             switch tab {
             case .downloaded: DownloadedModelsTab()
             case .discover:   DiscoverTab()
-            case .knowledge:  KnowledgeTab()
             }
 
             // ── Download status bar (persistent across all tabs) ──────────
@@ -947,171 +944,6 @@ private struct DownloadStatusBar: View {
         let s = Int(s)
         if s < 60 { return "\(s)s" }
         return "\(s / 60)m \(s % 60)s"
-    }
-}
-
-// MARK: - Knowledge Tab
-
-private struct KnowledgeTab: View {
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                ImportSection()
-                    .padding(20)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
-// MARK: - Import Knowledge section
-
-private struct ImportSection: View {
-    @State private var importPath = ""
-    @State private var isImporting = false
-    @State private var progressPct: Double = 0
-    @State private var statusText = ""
-    @State private var history: [ImportHistoryItem] = []
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("IMPORT KNOWLEDGE")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(.secondary)
-                .tracking(0.8)
-
-            HStack(spacing: 8) {
-                TextField("Path to file, folder, or URL…", text: $importPath)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 12))
-
-                Button("File…") {
-                    let panel = NSOpenPanel()
-                    panel.canChooseFiles = true
-                    panel.canChooseDirectories = false
-                    panel.allowsMultipleSelection = false
-                    if panel.runModal() == .OK {
-                        importPath = panel.url?.path ?? ""
-                    }
-                }
-                .controlSize(.small)
-
-                Button("Folder…") {
-                    let panel = NSOpenPanel()
-                    panel.canChooseFiles = false
-                    panel.canChooseDirectories = true
-                    panel.allowsMultipleSelection = false
-                    if panel.runModal() == .OK {
-                        importPath = panel.url?.path ?? ""
-                    }
-                }
-                .controlSize(.small)
-
-                Button(isImporting ? "Importing…" : "Import") {
-                    Task { await runImport() }
-                }
-                .controlSize(.small)
-                .buttonStyle(.borderedProminent)
-                .disabled(importPath.isEmpty || isImporting)
-            }
-
-            if isImporting || !statusText.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    ProgressView(value: progressPct)
-                        .progressViewStyle(.linear)
-                    Text(statusText)
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-            }
-
-            if !history.isEmpty {
-                Divider()
-                Text("Past imports")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.secondary)
-                ForEach(history) { item in
-                    HStack {
-                        Text(item.source)
-                            .font(.system(size: 11, weight: .medium))
-                        Text("—")
-                        Text("\(item.stored) chunks")
-                            .font(.system(size: 11))
-                        Spacer()
-                        Text(item.importedDate)
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-        }
-        .task { await loadHistory() }
-    }
-
-    private func loadHistory() async {
-        history = (try? await BackendClient.shared.fetchImportHistory()) ?? []
-    }
-
-    private func runImport() async {
-        guard !importPath.isEmpty else { return }
-        isImporting = true
-        progressPct = 0
-        statusText = "Starting…"
-
-        guard let url = URL(string: "http://localhost:8000/api/import") else {
-            isImporting = false
-            return
-        }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try? JSONSerialization.data(withJSONObject: ["path": importPath])
-
-        do {
-            let (bytes, _) = try await URLSession.shared.bytes(for: req)
-            var buffer = ""
-            for try await byte in bytes {
-                let char = String(bytes: [byte], encoding: .utf8) ?? ""
-                buffer += char
-                if buffer.hasSuffix("\n\n") {
-                    let lines = buffer.components(separatedBy: "\n")
-                    for line in lines where line.hasPrefix("data: ") {
-                        let payload = String(line.dropFirst(6))
-                        if payload == "[DONE]" { break }
-                        if let data = payload.data(using: .utf8),
-                           let evt = try? JSONDecoder().decode(ImportProgressEvent.self, from: data) {
-                            await MainActor.run { handleEvent(evt) }
-                        }
-                    }
-                    buffer = ""
-                }
-            }
-        } catch {
-            statusText = "✗ \(error.localizedDescription)"
-        }
-
-        isImporting = false
-        await loadHistory()
-    }
-
-    @MainActor
-    private func handleEvent(_ evt: ImportProgressEvent) {
-        switch evt.status {
-        case "extracting":
-            statusText = "Detected: \(evt.adapter ?? "") (\(evt.total ?? 0) chunks)"
-        case "progress":
-            let current = Double(evt.current ?? 0)
-            let total = Double(evt.total ?? 1)
-            progressPct = total > 0 ? current / total : 0
-            statusText = "\(evt.current ?? 0)/\(evt.total ?? 0) — \(evt.skipped ?? 0) duplicates skipped"
-        case "done":
-            progressPct = 1.0
-            statusText = "✓ \(evt.stored ?? 0) stored, \(evt.skipped ?? 0) skipped"
-        case "error":
-            statusText = "✗ \(evt.message ?? "Unknown error")"
-        default:
-            break
-        }
     }
 }
 
