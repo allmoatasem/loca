@@ -117,3 +117,58 @@ def test_docx_can_handle(tmp_path):
     f = tmp_path / "doc.docx"
     f.write_bytes(b"PK")
     assert DocxAdapter().can_handle(f) is True
+
+
+def test_spreadsheet_can_handle_csv(tmp_path):
+    from src.importers.adapters.spreadsheet import SpreadsheetAdapter
+    f = tmp_path / "data.csv"
+    f.write_text("name,age\nAlice,30\nBob,25")
+    assert SpreadsheetAdapter().can_handle(f) is True
+
+
+def test_spreadsheet_extracts_csv_rows(tmp_path):
+    from src.importers.adapters.spreadsheet import SpreadsheetAdapter
+    f = tmp_path / "data.csv"
+    f.write_text("name,age\nAlice,30\nBob,25")
+    chunks = SpreadsheetAdapter().extract(f)
+    assert len(chunks) == 2
+    assert "Alice" in chunks[0].text
+    assert "age: 30" in chunks[0].text
+
+
+def test_json_adapter_can_handle(tmp_path):
+    from src.importers.adapters.json_adapter import JSONAdapter
+    f = tmp_path / "data.json"
+    f.write_text('{"key": "value"}')
+    assert JSONAdapter().can_handle(f) is True
+
+
+def test_json_adapter_extracts_text(tmp_path):
+    from src.importers.adapters.json_adapter import JSONAdapter
+    f = tmp_path / "data.json"
+    f.write_text('{"name": "Alice", "role": "engineer"}')
+    chunks = JSONAdapter().extract(f)
+    assert len(chunks) >= 1
+    assert "Alice" in chunks[0].text
+
+
+def test_web_adapter_can_handle_url():
+    from src.importers.adapters.web import WebAdapter
+    assert WebAdapter().can_handle(Path("https://example.com")) is True
+    assert WebAdapter().can_handle(Path("http://example.com")) is True
+    assert WebAdapter().can_handle(Path("/local/file.md")) is False
+
+
+def test_image_can_handle(tmp_path):
+    from src.importers.adapters.image import ImageAdapter
+    f = tmp_path / "photo.jpg"
+    f.write_bytes(b"\xff\xd8\xff")
+    assert ImageAdapter().can_handle(f) is True
+
+
+def test_image_skips_gracefully_without_vision_model(tmp_path):
+    from src.importers.adapters.image import ImageAdapter
+    f = tmp_path / "photo.png"
+    f.write_bytes(b"\x89PNG")
+    chunks = ImageAdapter().extract(f)
+    assert isinstance(chunks, list)
