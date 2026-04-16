@@ -172,3 +172,22 @@ def test_image_skips_gracefully_without_vision_model(tmp_path):
     f.write_bytes(b"\x89PNG")
     chunks = ImageAdapter().extract(f)
     assert isinstance(chunks, list)
+
+
+def test_directory_adapter_delegates_to_markdown(tmp_path):
+    from src.importers.adapters.directory import DirectoryAdapter
+    from src.importers.adapters.markdown import MarkdownAdapter
+    (tmp_path / "notes.md").write_text("# Hello\n\nSome content.")
+    (tmp_path / "other.xyz").write_text("unknown format")
+    adapter = DirectoryAdapter(adapters=[MarkdownAdapter()])
+    assert adapter.can_handle(tmp_path) is True
+    chunks = adapter.extract(tmp_path)
+    assert any("Hello" in c.text or "content" in c.text for c in chunks)
+
+
+def test_directory_adapter_skips_unknown_files(tmp_path):
+    from src.importers.adapters.directory import DirectoryAdapter
+    (tmp_path / "file.xyz").write_text("unknown")
+    adapter = DirectoryAdapter(adapters=[])
+    chunks = adapter.extract(tmp_path)
+    assert chunks == []
