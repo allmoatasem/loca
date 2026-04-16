@@ -79,16 +79,20 @@ class ImportService:
             return False
 
     async def run(self, path: "Path | str"):
-        path = Path(path).expanduser().resolve()
-        yield {"status": "detecting", "path": str(path)}
+        path_str = str(path)
+        if path_str.startswith(("http://", "https://")):
+            target = Path(path_str)  # keep the URL literal — WebAdapter handles str(path)
+        else:
+            target = Path(path_str).expanduser().resolve()
+        yield {"status": "detecting", "path": str(target)}
 
-        adapter = self._detect(path)
+        adapter = self._detect(target)
         if adapter is None:
             yield {"status": "error", "message": f"No adapter found for: {path}"}
             return
 
         try:
-            raw_chunks = adapter.extract(path)
+            raw_chunks = adapter.extract(target)
         except Exception as exc:
             yield {"status": "error", "message": str(exc)}
             return
@@ -131,9 +135,46 @@ class ImportService:
 
         add_import_record(
             source=adapter.source_name,
-            path=str(path),
+            path=str(target),
             stored=stored,
             skipped=skipped,
         )
 
         yield {"status": "done", "total": len(chunks), "stored": stored, "skipped": skipped}
+
+
+def build_default_service(memory_plugin: "MemPalaceMemoryPlugin") -> ImportService:
+    """Create an ImportService with all built-in adapters registered.
+
+    Order matters: specific formats before generic directory walker.
+    """
+    from .adapters.anthropic import AnthropicAdapter
+    from .adapters.directory import DirectoryAdapter
+    from .adapters.docx import DocxAdapter
+    from .adapters.epub import EpubAdapter
+    from .adapters.image import ImageAdapter
+    from .adapters.json_adapter import JSONAdapter
+    from .adapters.markdown import MarkdownAdapter
+    from .adapters.openai import OpenAIAdapter
+    from .adapters.pdf import PDFAdapter
+    from .adapters.spreadsheet import SpreadsheetAdapter
+    from .adapters.web import WebAdapter
+
+    leaf_adapters: list[BaseAdapter] = [
+        AnthropicAdapter(),
+        OpenAIAdapter(),
+        MarkdownAdapter(),
+        PDFAdapter(),
+        EpubAdapter(),
+        ImageAdapter(),
+        SpreadsheetAdapter(),
+        JSONAdapter(),
+        DocxAdapter(),
+        WebAdapter(),
+    ]
+    svc = ImportService(memory_plugin=memory_plugin)
+    for adapter in leaf_adapters:
+        svc.register(adapter)
+    # DirectoryAdapter must be last — it delegates to all leaf adapters.
+    svc.register(DirectoryAdapter(adapters=list(leaf_adapters)))
+    return svc

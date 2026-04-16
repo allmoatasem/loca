@@ -92,3 +92,19 @@ async def test_duplicate_chunk_is_skipped(tmp_path):
     done = next(e for e in events if e["status"] == "done")
     assert done["skipped"] == 1
     assert done["stored"] == 0
+
+
+def test_build_default_service_has_all_adapters():
+    from unittest.mock import MagicMock
+    from src.importers.service import build_default_service
+    plugin = MagicMock()
+    plugin.collection = MagicMock()
+    plugin.palace_path = "/fake/palace"
+    plugin._available = True
+    svc = build_default_service(plugin)
+    names = {a.source_name for a in svc._adapters}
+    assert "anthropic" in names
+    assert "openai" in names
+    assert "markdown" in names
+    assert "pdf" in names
+    assert "directory" in names

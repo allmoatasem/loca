@@ -9,7 +9,7 @@
 #   make all       — check + test + swift (CI-equivalent, no bundle)
 #   make ci        — alias for all (matches what GitHub Actions runs)
 
-.PHONY: check test e2e swift build all ci
+.PHONY: check test e2e swift build all ci import
 
 PYTHON := $(CURDIR)/.venv/bin/python3
 RUFF    := $(shell command -v ruff)
@@ -56,3 +56,9 @@ all: check test swift
 	@echo "✓ all checks passed"
 
 ci: all
+
+# ── Knowledge import ──────────────────────────────────────────────────────────
+
+import:
+	@[ "$(path)" ] || (echo "Usage: make import path=<path-or-url>"; exit 1)
+	$(PYTHON) -m src.importers.cli "$(path)"
