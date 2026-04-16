@@ -175,16 +175,20 @@ class TestConversationsAPI:
 class TestMemoriesAPI:
     def test_list_memories(self, client):
         mems = [{"id": "m1", "content": "User likes Python", "type": "user_fact"}]
-        client._mock_memory_plugin.list_all.return_value = mems
+        client._mock_memory_plugin.list_paged.return_value = {"items": mems, "total": 1}
         r = client.get("/api/memories")
         assert r.status_code == 200
-        assert r.json()["memories"] == mems
+        body = r.json()
+        assert body["memories"] == mems
+        assert body["total"] == 1
 
     def test_list_memories_with_type_filter(self, client):
-        client._mock_memory_plugin.list_all.return_value = []
+        client._mock_memory_plugin.list_paged.return_value = {"items": [], "total": 0}
         r = client.get("/api/memories?type=user_fact")
         assert r.status_code == 200
-        client._mock_memory_plugin.list_all.assert_called_once_with(type="user_fact")
+        client._mock_memory_plugin.list_paged.assert_called_once_with(
+            type="user_fact", limit=50, offset=0
+        )
 
     def test_add_memory(self, client):
         client._mock_memory_plugin.store = AsyncMock(return_value="mem-001")
@@ -612,3 +616,18 @@ class TestVoiceAPI:
     def test_speech_requires_input(self, client):
         r = client.post("/v1/audio/speech", json={"input": ""})
         assert r.status_code == 400
+
+
+class TestImportAPI:
+    def test_import_history_returns_list(self, client, tmp_path):
+        import src.store as store_module
+        with patch.object(store_module, "_DB_PATH", tmp_path / "test_loca.db"):
+            resp = client.get("/api/import/history")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "imports" in data
+        assert isinstance(data["imports"], list)
+
+    def test_import_rejects_missing_path(self, client):
+        resp = client.post("/api/import", json={})
+        assert resp.status_code == 422

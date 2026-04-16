@@ -38,6 +38,7 @@ from .store import (
     delete_conversation,
     get_conversation,
     list_conversations,
+    list_import_history,
     list_vault_notes,
     patch_conversation,
     save_conversation,
@@ -771,10 +772,19 @@ async def api_delete_conversation(conv_id: str) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 @app.get("/api/memories")
-async def api_list_memories(type: str | None = None) -> JSONResponse:
+async def api_list_memories(
+    type: str | None = None, limit: int = 50, offset: int = 0
+) -> JSONResponse:
     assert _plugin_manager is not None
-    memories = _plugin_manager.memory_plugin.list_all(type=type)
-    return JSONResponse({"memories": memories})
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+    page = _plugin_manager.memory_plugin.list_paged(type=type, limit=limit, offset=offset)
+    return JSONResponse({
+        "memories": page["items"],
+        "total": page["total"],
+        "limit": limit,
+        "offset": offset,
+    })
 
 
 @app.post("/api/memories")
@@ -815,6 +825,45 @@ async def api_recall_memories(q: str, limit: int = 5) -> JSONResponse:
         return JSONResponse({"memories": []})
     results = await _plugin_manager.memory_plugin.recall(q.strip(), limit=limit)
     return JSONResponse({"memories": results})
+
+
+# ---------------------------------------------------------------------------
+# Knowledge import
+# ---------------------------------------------------------------------------
+
+@app.post("/api/import")
+async def api_import(request: Request):  # noqa: ANN201
+    """Stream import progress as SSE events."""
+    if _plugin_manager is None or _plugin_manager.memory_plugin is None:
+        return JSONResponse({"error": "Memory plugin not configured"}, status_code=503)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=422)
+
+    path_str = body.get("path") if isinstance(body, dict) else None
+    if not path_str:
+        return JSONResponse({"error": "path is required"}, status_code=422)
+
+    from .importers.service import build_default_service  # noqa: PLC0415
+
+    svc = build_default_service(_plugin_manager.memory_plugin)  # type: ignore[arg-type]
+
+    async def _stream():
+        import json as _json  # noqa: PLC0415
+
+        async for event in svc.run(path_str):
+            yield f"data: {_json.dumps(event)}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+
+    return StreamingResponse(_stream(), media_type="text/event-stream")
+
+
+@app.get("/api/import/history")
+async def api_import_history() -> JSONResponse:
+    """Return the list of past import runs."""
+    return JSONResponse({"imports": list_import_history()})
 
 
 # ---------------------------------------------------------------------------

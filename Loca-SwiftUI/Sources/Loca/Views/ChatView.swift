@@ -1325,7 +1325,28 @@ struct MemoryPanel: View {
                         .onDelete { offsets in
                             let ids = offsets.map { displayedMemories[$0].id }
                             state.memories.removeAll { ids.contains($0.id) }
+                            state.memoriesTotal = max(0, state.memoriesTotal - ids.count)
                             for id in ids { Task { try? await BackendClient.shared.deleteMemory(id) } }
+                        }
+                        if searchText.isEmpty && state.memories.count < state.memoriesTotal {
+                            Button {
+                                Task { await state.loadMoreMemories() }
+                            } label: {
+                                HStack {
+                                    Spacer()
+                                    if state.isLoadingMoreMemories {
+                                        ProgressView().controlSize(.small)
+                                    } else {
+                                        Text("Load more (\(state.memories.count) of \(state.memoriesTotal))")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.accentColor)
+                                    }
+                                    Spacer()
+                                }
+                                .padding(.vertical, 4)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(state.isLoadingMoreMemories)
                         }
                     }
                 }

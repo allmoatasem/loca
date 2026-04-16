@@ -11,7 +11,8 @@ struct PreferencesView: View {
                 Text("Inference").tag(1)
                 Text("Performance").tag(2)
                 Text("System Prompt").tag(3)
-                Text("Server").tag(4)
+                Text("Knowledge").tag(4)
+                Text("Server").tag(5)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 20)
@@ -24,7 +25,8 @@ struct PreferencesView: View {
             case 1:  InferencePrefsTab()
             case 2:  PerformancePrefsTab()
             case 3:  SystemPromptPrefsTab()
-            case 4:  ServerPrefsTab()
+            case 4:  KnowledgePrefsTab()
+            case 5:  ServerPrefsTab()
             default: GeneralPrefsTab()
             }
         }
@@ -615,5 +617,166 @@ private struct SystemPromptPrefsTab: View {
         .formStyle(.grouped)
         .padding(20)
         .frame(width: 540)
+    }
+}
+
+// MARK: - Knowledge
+
+private struct KnowledgePrefsTab: View {
+    @State private var importPath = ""
+    @State private var isImporting = false
+    @State private var progressPct: Double = 0
+    @State private var statusText = ""
+    @State private var history: [ImportHistoryItem] = []
+
+    var body: some View {
+        Form {
+            Section {
+                VStack(alignment: .leading, spacing: 10) {
+                    TextField("Path to file, folder, or URL…", text: $importPath)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12))
+
+                    HStack(spacing: 8) {
+                        Button("Choose File…") {
+                            let panel = NSOpenPanel()
+                            panel.canChooseFiles = true
+                            panel.canChooseDirectories = false
+                            panel.allowsMultipleSelection = false
+                            if panel.runModal() == .OK {
+                                importPath = panel.url?.path ?? ""
+                            }
+                        }
+                        .controlSize(.small)
+
+                        Button("Choose Folder…") {
+                            let panel = NSOpenPanel()
+                            panel.canChooseFiles = false
+                            panel.canChooseDirectories = true
+                            panel.allowsMultipleSelection = false
+                            if panel.runModal() == .OK {
+                                importPath = panel.url?.path ?? ""
+                            }
+                        }
+                        .controlSize(.small)
+
+                        Spacer()
+
+                        Button(isImporting ? "Importing…" : "Import") {
+                            Task { await runImport() }
+                        }
+                        .controlSize(.small)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(importPath.isEmpty || isImporting)
+                    }
+
+                    if isImporting || !statusText.isEmpty {
+                        ProgressView(value: progressPct)
+                            .progressViewStyle(.linear)
+                        Text(statusText)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                }
+            } header: {
+                Text("Import Knowledge")
+            } footer: {
+                Text("Imports AI chat exports (Claude, ChatGPT), markdown, PDFs, EPUBs, DOCX, spreadsheets, images, and folders. Duplicate content is skipped automatically.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+
+            if !history.isEmpty {
+                Section {
+                    ForEach(history) { item in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(item.source)
+                                .font(.system(size: 12, weight: .medium))
+                            Text("\(item.stored) chunks")
+                                .font(.system(size: 12))
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text(item.importedDate)
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                } header: {
+                    Text("Past Imports")
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding(20)
+        .frame(width: 540, height: 520)
+        .task { await loadHistory() }
+    }
+
+    private func loadHistory() async {
+        history = (try? await BackendClient.shared.fetchImportHistory()) ?? []
+    }
+
+    private func runImport() async {
+        guard !importPath.isEmpty else { return }
+        isImporting = true
+        progressPct = 0
+        statusText = "Starting…"
+
+        guard let url = URL(string: "http://localhost:8000/api/import") else {
+            isImporting = false
+            return
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["path": importPath])
+
+        do {
+            let (bytes, _) = try await URLSession.shared.bytes(for: req)
+            var buffer = ""
+            for try await byte in bytes {
+                let char = String(bytes: [byte], encoding: .utf8) ?? ""
+                buffer += char
+                if buffer.hasSuffix("\n\n") {
+                    let lines = buffer.components(separatedBy: "\n")
+                    for line in lines where line.hasPrefix("data: ") {
+                        let payload = String(line.dropFirst(6))
+                        if payload == "[DONE]" { break }
+                        if let data = payload.data(using: .utf8),
+                           let evt = try? JSONDecoder().decode(ImportProgressEvent.self, from: data) {
+                            await MainActor.run { handleEvent(evt) }
+                        }
+                    }
+                    buffer = ""
+                }
+            }
+        } catch {
+            statusText = "✗ \(error.localizedDescription)"
+        }
+
+        isImporting = false
+        await loadHistory()
+    }
+
+    @MainActor
+    private func handleEvent(_ evt: ImportProgressEvent) {
+        switch evt.status {
+        case "extracting":
+            statusText = "Detected: \(evt.adapter ?? "") (\(evt.total ?? 0) chunks)"
+        case "progress":
+            let current = Double(evt.current ?? 0)
+            let total = Double(evt.total ?? 1)
+            progressPct = total > 0 ? current / total : 0
+            statusText = "\(evt.current ?? 0)/\(evt.total ?? 0) — \(evt.skipped ?? 0) duplicates skipped"
+        case "done":
+            progressPct = 1.0
+            statusText = "✓ \(evt.stored ?? 0) stored, \(evt.skipped ?? 0) skipped"
+        case "error":
+            statusText = "✗ \(evt.message ?? "Unknown error")"
+        default:
+            break
+        }
     }
 }

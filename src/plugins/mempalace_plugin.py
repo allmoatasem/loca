@@ -83,6 +83,16 @@ class MemPalaceMemoryPlugin(MemoryPlugin):
         except Exception as exc:
             logger.warning("MemPalace failed to initialise (%s) — memory disabled.", exc)
 
+    @property
+    def collection(self):
+        """The underlying ChromaDB collection. None if MemPalace unavailable."""
+        return self._collection
+
+    @property
+    def palace_path(self) -> str:
+        """Path to the MemPalace palace directory."""
+        return self._palace_path
+
     # ------------------------------------------------------------------
     # MemoryPlugin interface
     # ------------------------------------------------------------------
@@ -137,20 +147,27 @@ class MemPalaceMemoryPlugin(MemoryPlugin):
             return []
 
     def list_all(self, type: str | None = None) -> list[dict]:
+        """Legacy: return up to 200 memories. New code should use list_paged()."""
+        return self.list_paged(type=type, limit=200, offset=0)["items"]
+
+    def list_paged(
+        self, type: str | None = None, limit: int = 50, offset: int = 0
+    ) -> dict:
         if not self._available or self._collection is None:
-            return []
+            return {"items": [], "total": 0}
         try:
             where: dict = {"wing": "loca"}
             if type:
                 where["room"] = type
             result = self._collection.get(
                 where=where,
-                limit=200,
+                limit=limit,
+                offset=offset,
                 include=["documents", "metadatas"],
             )
             docs = result.get("documents") or []
             metas = result.get("metadatas") or []
-            return [
+            items = [
                 {
                     "id": doc_id,
                     "content": docs[i] if i < len(docs) else "",
@@ -159,9 +176,13 @@ class MemPalaceMemoryPlugin(MemoryPlugin):
                 }
                 for i, doc_id in enumerate(result.get("ids", []))
             ]
+            # Total count of matches (no pagination on this call — include=[] is cheap)
+            count_result = self._collection.get(where=where, include=[])
+            total = len(count_result.get("ids", []))
+            return {"items": items, "total": total}
         except Exception as exc:
-            logger.warning("MemPalace list_all failed: %s", exc)
-            return []
+            logger.warning("MemPalace list_paged failed: %s", exc)
+            return {"items": [], "total": 0}
 
     def delete(self, mem_id: str) -> None:
         if not self._available or self._collection is None:

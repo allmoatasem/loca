@@ -5,6 +5,7 @@ on macOS, or ~/.loca/data/loca.db on Linux/Windows.
 """
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import os
@@ -35,8 +36,12 @@ def _default_data_dir() -> Path:
 _DB_PATH = _default_data_dir() / "loca.db"
 
 
+def _utcnow() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
 def _conn() -> sqlite3.Connection:
-    _DB_PATH.parent.mkdir(exist_ok=True)
+    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(str(_DB_PATH), check_same_thread=False)
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA journal_mode=WAL")
@@ -121,6 +126,18 @@ def _migrate(c: sqlite3.Connection) -> None:
     ]:
         if col not in vault_cols:
             c.execute(f"ALTER TABLE vault_notes ADD COLUMN {col} {defn}")
+
+    # Import history tracking
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS import_history (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        source      TEXT NOT NULL,
+        path        TEXT NOT NULL,
+        stored      INTEGER NOT NULL,
+        skipped     INTEGER NOT NULL,
+        imported_at TEXT NOT NULL
+    );
+    """)
 
     c.commit()
 
@@ -208,15 +225,28 @@ def delete_conversation(conv_id: str) -> None:
 MEMORY_TYPES = ("user_fact", "knowledge", "correction")
 
 
-def list_memories(limit: int = 200, type: str | None = None) -> list[dict]:
+def list_memories(
+    limit: int = 200, type: str | None = None, offset: int = 0
+) -> list[dict]:
     with _conn() as c:
         if type:
             return [dict(r) for r in c.execute(
-                "SELECT * FROM memories WHERE type=? ORDER BY created DESC LIMIT ?", (type, limit)
+                "SELECT * FROM memories WHERE type=? ORDER BY created DESC LIMIT ? OFFSET ?",
+                (type, limit, offset),
             )]
         return [dict(r) for r in c.execute(
-            "SELECT * FROM memories ORDER BY created DESC LIMIT ?", (limit,)
+            "SELECT * FROM memories ORDER BY created DESC LIMIT ? OFFSET ?",
+            (limit, offset),
         )]
+
+
+def count_memories(type: str | None = None) -> int:
+    with _conn() as c:
+        if type:
+            row = c.execute("SELECT COUNT(*) FROM memories WHERE type=?", (type,)).fetchone()
+        else:
+            row = c.execute("SELECT COUNT(*) FROM memories").fetchone()
+        return row[0] if row else 0
 
 
 def add_memory(content: str, conv_id: str | None = None, type: str = "user_fact") -> str:
@@ -423,3 +453,25 @@ def get_memories_context(limit_per_type: int = 10) -> str:
 
     body = "\n\n".join(sections)
     return f"<memory>\n{body}\n</memory>"
+
+
+# ── Import History ───────────────────────────────────────────────────────────
+
+def add_import_record(source: str, path: str, stored: int, skipped: int) -> None:
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO import_history (source, path, stored, skipped, imported_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (source, path, stored, skipped, _utcnow()),
+        )
+        c.commit()
+
+
+def list_import_history(limit: int = 50) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT source, path, stored, skipped, imported_at "
+            "FROM import_history ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in rows]

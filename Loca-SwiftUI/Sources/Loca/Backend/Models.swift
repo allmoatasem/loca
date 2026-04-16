@@ -495,6 +495,49 @@ struct Memory: Decodable, Identifiable {
 
 struct MemoryListResponse: Decodable {
     let memories: [Memory]
+    let total: Int?
+    let limit: Int?
+    let offset: Int?
+}
+
+struct MemoryPage {
+    let items: [Memory]
+    let total: Int
+}
+
+// MARK: - Import
+
+struct ImportHistoryItem: Decodable, Identifiable {
+    let source: String
+    let path: String
+    let stored: Int
+    let skipped: Int
+    let imported_at: String
+
+    var id: String { "\(source)-\(imported_at)" }
+
+    var importedDate: String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: imported_at) {
+            return date.formatted(date: .abbreviated, time: .omitted)
+        }
+        return imported_at
+    }
+}
+
+struct ImportHistoryResponse: Decodable {
+    let imports: [ImportHistoryItem]
+}
+
+struct ImportProgressEvent: Decodable {
+    let status: String
+    let adapter: String?
+    let total: Int?
+    let current: Int?
+    let stored: Int?
+    let skipped: Int?
+    let message: String?
 }
 
 struct AddMemoryResponse: Decodable {

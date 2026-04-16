@@ -30,6 +30,7 @@ import httpx
 
 from ..store import (
     add_memory,
+    count_memories,
     delete_memory,
     list_memories,
     list_memories_without_embeddings,
@@ -68,6 +69,18 @@ class MemoryPlugin(ABC):
     @abstractmethod
     def list_all(self, type: str | None = None) -> list[dict]:
         """Return all stored memories (optionally filtered by type)."""
+
+    def list_paged(
+        self, type: str | None = None, limit: int = 50, offset: int = 0
+    ) -> dict:
+        """Return a page of memories plus the total count.
+
+        Default implementation slices `list_all()`. Backends that store
+        millions of memories should override to push paging to the storage layer.
+        """
+        items = self.list_all(type=type)
+        total = len(items)
+        return {"items": items[offset: offset + limit], "total": total}
 
     @abstractmethod
     def delete(self, mem_id: str) -> None:
@@ -170,6 +183,13 @@ class BuiltinMemoryPlugin(MemoryPlugin):
 
     def list_all(self, type: str | None = None) -> list[dict]:
         return list_memories(limit=500, type=type)
+
+    def list_paged(
+        self, type: str | None = None, limit: int = 50, offset: int = 0
+    ) -> dict:
+        items = list_memories(limit=limit, type=type, offset=offset)
+        total = count_memories(type=type)
+        return {"items": items, "total": total}
 
     def delete(self, mem_id: str) -> None:
         delete_memory(mem_id)

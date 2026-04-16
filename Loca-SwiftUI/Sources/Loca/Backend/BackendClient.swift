@@ -237,6 +237,20 @@ actor BackendClient {
         return try JSONDecoder().decode(MemoryListResponse.self, from: data).memories
     }
 
+    func listMemoriesPaged(limit: Int = 50, offset: Int = 0) async throws -> MemoryPage {
+        var components = URLComponents(
+            url: base.appendingPathComponent("api/memories"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "offset", value: String(offset)),
+        ]
+        let (data, _) = try await session.data(from: components.url!)
+        let resp = try JSONDecoder().decode(MemoryListResponse.self, from: data)
+        return MemoryPage(items: resp.memories, total: resp.total ?? resp.memories.count)
+    }
+
     func addMemory(content: String) async throws -> String {
         let (data, _) = try await post("/api/memories", body: ["content": content])
         return try JSONDecoder().decode(AddMemoryResponse.self, from: data).id
@@ -254,14 +268,28 @@ actor BackendClient {
     }
 
     func recallMemories(query: String, limit: Int = 5) async throws -> [Memory] {
-        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
-        let (data, _) = try await get("/api/memories/recall?q=\(encoded)&limit=\(limit)")
+        var components = URLComponents(
+            url: base.appendingPathComponent("api/memories/recall"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        let (data, _) = try await session.data(from: components.url!)
         return try JSONDecoder().decode(MemoryListResponse.self, from: data).memories
     }
 
     func pluginStatus() async throws -> PluginStatusResponse {
         let (data, _) = try await get("/api/plugins")
         return try JSONDecoder().decode(PluginStatusResponse.self, from: data)
+    }
+
+    // MARK: - Import
+
+    func fetchImportHistory() async throws -> [ImportHistoryItem] {
+        let (data, _) = try await get("/api/import/history")
+        return try JSONDecoder().decode(ImportHistoryResponse.self, from: data).imports
     }
 
     // MARK: - Voice
