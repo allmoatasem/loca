@@ -619,8 +619,10 @@ class TestVoiceAPI:
 
 
 class TestImportAPI:
-    def test_import_history_returns_list(self, client):
-        resp = client.get("/api/import/history")
+    def test_import_history_returns_list(self, client, tmp_path):
+        import src.store as store_module
+        with patch.object(store_module, "_DB_PATH", tmp_path / "test_loca.db"):
+            resp = client.get("/api/import/history")
         assert resp.status_code == 200
         data = resp.json()
         assert "imports" in data

@@ -41,7 +41,7 @@ def _utcnow() -> str:
 
 
 def _conn() -> sqlite3.Connection:
-    _DB_PATH.parent.mkdir(exist_ok=True)
+    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(str(_DB_PATH), check_same_thread=False)
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA journal_mode=WAL")
