@@ -96,6 +96,7 @@ async def test_duplicate_chunk_is_skipped(tmp_path):
 
 def test_build_default_service_has_all_adapters():
     from unittest.mock import MagicMock
+
     from src.importers.service import build_default_service
     plugin = MagicMock()
     plugin.collection = MagicMock()
