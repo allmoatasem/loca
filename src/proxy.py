@@ -16,11 +16,13 @@ Start with:
 
 import asyncio
 import base64
+import collections
 import io
 import json
 import logging
 import os
 import shutil
+import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, cast
@@ -114,12 +116,53 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Local AI Orchestrator Proxy", lifespan=lifespan)
 
+# Tightened CORS: Loca is local-first, so only localhost origins are allowed.
+# Non-browser callers (Swift app, curl, agentic-coding clients) don't trigger
+# CORS, so this doesn't constrain them. The `*_regex` handles arbitrary ports
+# the user might run the browser UI or dev server on.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Rate-limit buckets: {(client_ip, (method, path)): deque[timestamp]}
+# In-memory only. Resets on server restart. Sufficient for Loca's local-first
+# threat model (protects against accidental runaway scripts + HF abuse).
+_RATE_LIMITS: dict[tuple[str, str], tuple[int, int]] = {
+    # (method, exact-path): (max_requests, window_seconds)
+    ("POST", "/api/upload"): (30, 60),
+    ("POST", "/api/models/download"): (10, 60),
+    ("GET", "/api/hf-search"): (60, 60),
+}
+_RATE_LIMIT_BUCKETS: dict[tuple[str, tuple[str, str]], collections.deque[float]] = {}
+
+
+@app.middleware("http")
+async def _rate_limit(request: Request, call_next):
+    key = (request.method, request.url.path)
+    rule = _RATE_LIMITS.get(key)
+    if rule is None:
+        return await call_next(request)
+    limit, window = rule
+    ip = request.client.host if request.client else "unknown"
+    bucket_key = (ip, key)
+    now = time.monotonic()
+    bucket = _RATE_LIMIT_BUCKETS.setdefault(bucket_key, collections.deque())
+    while bucket and bucket[0] < now - window:
+        bucket.popleft()
+    if len(bucket) >= limit:
+        return JSONResponse(
+            status_code=429,
+            content={"error": {
+                "message": f"Rate limit exceeded ({limit} req / {window}s) for {key[0]} {key[1]}",
+                "type": "rate_limit_exceeded",
+            }},
+            headers={"Retry-After": str(window)},
+        )
+    bucket.append(now)
+    return await call_next(request)
 
 
 @app.middleware("http")
