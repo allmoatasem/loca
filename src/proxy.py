@@ -577,18 +577,44 @@ async def pause_download(download_id: str) -> JSONResponse:
 # /api/upload — process attached files before including them in a message
 # ---------------------------------------------------------------------------
 
+def _extract_via_adapter(adapter_cls, data: bytes, filename: str) -> str:
+    """Write bytes to a temp file, run an importer adapter, and join the chunks.
+
+    Mirrors the file → adapter → chunks flow used by the knowledge-import
+    pipeline so chat attachments and imports see the same extraction quality.
+    """
+    import tempfile  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+    suffix = Path(filename).suffix or ""
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(data)
+        tmp_path = Path(tmp.name)
+    try:
+        chunks = adapter_cls().extract(tmp_path)
+        if not chunks:
+            return f"[Could not extract text from {filename}]"
+        return "\n\n".join(c.text for c in chunks)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
 @app.post("/api/upload")
 async def api_upload(file: UploadFile = File(...)) -> JSONResponse:
     """
     Accept a file upload and return a content descriptor:
-      - image/*  → {"type": "image", "data": "data:…;base64,…", "name": …}
-      - .pdf     → {"type": "text",  "content": "<extracted text>",  "name": …}
-      - audio/*  → {"type": "audio", "name": …}   (transcription not yet supported)
-      - video/*  → {"type": "video", "name": …}
-      - other    → {"type": "text",  "content": "<utf-8 text>",  "name": …}
+      - image/*           → {"type": "image", "data": "data:…;base64,…", "name": …}
+      - .pdf              → {"type": "text",  "content": "<extracted text>", "name": …}
+      - .xlsx / .csv      → {"type": "text",  "content": "<row-by-row>",    "name": …}
+      - .docx             → {"type": "text",  "content": "<paragraphs>",    "name": …}
+      - .epub             → {"type": "text",  "content": "<chapters>",      "name": …}
+      - audio/*           → {"type": "audio", "name": …} or transcribed text
+      - video/*           → {"type": "video", "name": …}
+      - other utf-8 text  → {"type": "text",  "content": "<utf-8 text>",    "name": …}
+      - otherwise         → {"type": "binary", "name": …}
     """
     content_type = (file.content_type or "").lower()
     filename = file.filename or "upload"
+    lower_name = filename.lower()
     data = await file.read()
 
     if content_type.startswith("image/"):
@@ -599,7 +625,7 @@ async def api_upload(file: UploadFile = File(...)) -> JSONResponse:
             "name": filename,
         })
 
-    if content_type == "application/pdf" or filename.lower().endswith(".pdf"):
+    if content_type == "application/pdf" or lower_name.endswith(".pdf"):
         try:
             from pypdf import PdfReader  # type: ignore
             reader = PdfReader(io.BytesIO(data))
@@ -608,6 +634,21 @@ async def api_upload(file: UploadFile = File(...)) -> JSONResponse:
             ).strip()
         except Exception as exc:
             text = f"[Could not extract PDF text: {exc}]"
+        return JSONResponse({"type": "text", "content": text, "name": filename})
+
+    if lower_name.endswith((".xlsx", ".csv")):
+        from .importers.adapters.spreadsheet import SpreadsheetAdapter  # noqa: PLC0415
+        text = _extract_via_adapter(SpreadsheetAdapter, data, filename)
+        return JSONResponse({"type": "text", "content": text, "name": filename})
+
+    if lower_name.endswith(".docx"):
+        from .importers.adapters.docx import DocxAdapter  # noqa: PLC0415
+        text = _extract_via_adapter(DocxAdapter, data, filename)
+        return JSONResponse({"type": "text", "content": text, "name": filename})
+
+    if lower_name.endswith(".epub"):
+        from .importers.adapters.epub import EpubAdapter  # noqa: PLC0415
+        text = _extract_via_adapter(EpubAdapter, data, filename)
         return JSONResponse({"type": "text", "content": text, "name": filename})
 
     if content_type.startswith("audio/"):
