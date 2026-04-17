@@ -3,9 +3,12 @@
  * Only what's needed for Phase 2 lives here; more state lands phase by phase.
  */
 import {
+  deleteConversation as apiDelete,
   fetchActiveModel,
   fetchConversations,
   fetchLocalModels,
+  searchConversations as apiSearch,
+  unloadModel as apiUnload,
   type ConversationMeta,
   type LocalModel,
 } from './api.client';
@@ -30,6 +33,8 @@ function appStore() {
   let localModels        = $state<LocalModel[]>([]);
   let activeModelName    = $state<string | null>(null);
   let conversations      = $state<ConversationMeta[]>([]);
+  let searchResults      = $state<ConversationMeta[]>([]);
+  let searchQuery        = $state<string>('');
   let activeConvId       = $state<string | null>(null);
   let loading            = $state<boolean>(false);
   let errorMsg           = $state<string | null>(null);
@@ -53,6 +58,29 @@ function appStore() {
     }
   }
 
+  async function search(q: string): Promise<void> {
+    searchQuery = q;
+    if (!q.trim()) { searchResults = []; return; }
+    try { searchResults = await apiSearch(q); }
+    catch (e) { errorMsg = e instanceof Error ? e.message : String(e); }
+  }
+
+  async function deleteConv(id: string): Promise<void> {
+    try {
+      await apiDelete(id);
+      conversations = conversations.filter((c) => c.id !== id);
+      searchResults = searchResults.filter((c) => c.id !== id);
+      if (activeConvId === id) activeConvId = null;
+    } catch (e) {
+      errorMsg = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function unload(): Promise<void> {
+    try { await apiUnload(); activeModelName = null; }
+    catch (e) { errorMsg = e instanceof Error ? e.message : String(e); }
+  }
+
   function newConversation(): void {
     activeConvId = null;
   }
@@ -71,10 +99,15 @@ function appStore() {
     get activeModelName() { return activeModelName; },
     set activeModelName(v) { activeModelName = v; },
     get conversations() { return conversations; },
+    get searchQuery() { return searchQuery; },
+    get searchResults() { return searchResults; },
     get activeConvId() { return activeConvId; },
     get loading() { return loading; },
     get errorMsg() { return errorMsg; },
     refresh,
+    search,
+    deleteConv,
+    unload,
     newConversation,
     selectConversation,
   };

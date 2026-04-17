@@ -95,13 +95,17 @@ def _start_server(port: int) -> threading.Thread:
     # Using the real store would leak user conversation titles into the repo.
     fake_conversations = [
         {"id": "demo-1", "title": "Loca Svelte migration plan",
-         "updated": 1713360000, "created": 1713340000, "model": "qwen3.5-14b"},
+         "updated": 1713360000, "created": 1713340000, "model": "qwen3.5-14b",
+         "folder": "Engineering"},
         {"id": "demo-2", "title": "Vault Analyser v2 spike",
-         "updated": 1713280000, "created": 1713200000, "model": "qwen3.5-14b"},
+         "updated": 1713280000, "created": 1713200000, "model": "qwen3.5-14b",
+         "folder": "Engineering"},
         {"id": "demo-3", "title": "Python async patterns",
-         "updated": 1713200000, "created": 1713180000, "model": "qwen3.5-14b"},
+         "updated": 1713200000, "created": 1713180000, "model": "qwen3.5-14b",
+         "folder": "Learning"},
         {"id": "demo-4", "title": "Tuesday brainstorm",
-         "updated": 1713100000, "created": 1713080000, "model": "qwen3.5-14b"},
+         "updated": 1713100000, "created": 1713080000, "model": "qwen3.5-14b",
+         "folder": None},
     ]
     fake_models = [
         {"name": "qwen3.5-14b-instruct-4bit", "format": "mlx", "size_bytes": 8_000_000_000},
