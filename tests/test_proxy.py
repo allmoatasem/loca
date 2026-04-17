@@ -522,6 +522,20 @@ class TestSvelteUIRoute:
         # Traversal attempts should not leak files outside the UI root.
         assert r.status_code == 404 or "top secret" not in r.text
 
+    def test_ui_spa_catch_all_falls_back_to_index(self, client, monkeypatch, tmp_path):
+        """Client-side routes like /ui/preferences should serve index.html so
+        the SPA can render them. Without this, Svelte never loads and the
+        page is blank."""
+        ui_root = tmp_path / "ui"
+        ui_root.mkdir()
+        (ui_root / "index.html").write_text("<html><body>spa shell</body></html>")
+        monkeypatch.setattr("src.proxy._UI_ROOT", str(ui_root))
+
+        for path in ("/ui/preferences", "/ui/glossary", "/ui/some/nested/route"):
+            r = client.get(path)
+            assert r.status_code == 200, path
+            assert "spa shell" in r.text, path
+
 
 class TestSecurityHardening:
     """CORS + rate-limit defenses (roadmap Tier 1 #5)."""

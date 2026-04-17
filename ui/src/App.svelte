@@ -9,6 +9,7 @@
 <script lang="ts">
   import SidebarView from './lib/SidebarView.svelte';
   import GlossaryView from './lib/GlossaryView.svelte';
+  import PreferencesView from './lib/PreferencesView.svelte';
 
   let path = $state(location.pathname);
   window.addEventListener('popstate', () => { path = location.pathname; });
@@ -18,8 +19,9 @@
     path = to;
   }
 
-  const openOverlay = $derived.by<null | 'glossary'>(() => {
+  const openOverlay = $derived.by<null | 'glossary' | 'preferences'>(() => {
     if (path.endsWith('/glossary')) return 'glossary';
+    if (path.endsWith('/preferences')) return 'preferences';
     return null;
   });
 
@@ -42,14 +44,18 @@
     </div>
   </main>
 
-  {#if openOverlay === 'glossary'}
+  {#if openOverlay}
     <div
       class="overlay"
       role="presentation"
       onclick={(e) => { if (e.currentTarget === e.target) navigate('/ui'); }}
       onkeydown={onOverlayKeydown}
     >
-      <GlossaryView onClose={() => navigate('/ui')} />
+      {#if openOverlay === 'glossary'}
+        <GlossaryView onClose={() => navigate('/ui')} />
+      {:else if openOverlay === 'preferences'}
+        <PreferencesView onClose={() => navigate('/ui')} />
+      {/if}
     </div>
   {/if}
 </div>
