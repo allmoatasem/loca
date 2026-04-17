@@ -267,7 +267,7 @@ actor BackendClient {
         return try JSONDecoder().decode(ExtractMemoriesResponse.self, from: data).memories
     }
 
-    func recallMemories(query: String, limit: Int = 5) async throws -> [Memory] {
+    func recallMemories(query: String, limit: Int = 20) async throws -> [Memory] {
         var components = URLComponents(
             url: base.appendingPathComponent("api/memories/recall"),
             resolvingAgainstBaseURL: false

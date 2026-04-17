@@ -60,7 +60,7 @@ class MemoryPlugin(ABC):
         """
 
     @abstractmethod
-    async def recall(self, query: str, limit: int = 5) -> list[dict]:
+    async def recall(self, query: str, limit: int = 20) -> list[dict]:
         """
         Return up to `limit` memories most relevant to `query`.
         Each dict has: id, content, type, created, score (optional).
@@ -157,7 +157,7 @@ class BuiltinMemoryPlugin(MemoryPlugin):
             set_memory_embedding(mid, self._pack(embedding))
         return mid
 
-    async def recall(self, query: str, limit: int = 5) -> list[dict]:
+    async def recall(self, query: str, limit: int = 20) -> list[dict]:
         query_embedding = await self._embed(query)
 
         if query_embedding:
