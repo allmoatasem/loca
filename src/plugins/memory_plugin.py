@@ -109,11 +109,11 @@ class MemoryPlugin(ABC):
             return ""
         lines: list[str] = []
         used = 0
-        for m in memories:
+        for idx, m in enumerate(memories, start=1):
             content = m["content"]
             if len(content) > PER_MEMORY_CHAR_MAX:
                 content = content[: PER_MEMORY_CHAR_MAX - 1] + "…"
-            line = f"- {content}"
+            line = f"- [memory: {idx}] {content}"
             if used + len(line) + 1 > PROMPT_CHAR_BUDGET:
                 break
             lines.append(line)
@@ -121,7 +121,14 @@ class MemoryPlugin(ABC):
         if not lines:
             return ""
         body = "\n".join(lines)
-        return f"<memory>\nRelevant context from past conversations:\n{body}\n</memory>"
+        return (
+            "<memory>\n"
+            "Relevant context from past conversations. When you use one of these "
+            "facts in your reply, cite it inline with its [memory: N] tag so the "
+            "user can trace where your statement comes from.\n"
+            f"{body}\n"
+            "</memory>"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -45,7 +45,7 @@ class TestFormatForPrompt:
     def test_single_huge_memory_is_truncated(self):
         huge = "X" * (PER_MEMORY_CHAR_MAX * 5)
         out = self.plugin.format_for_prompt([{"content": huge}])
-        assert len(out) <= PROMPT_CHAR_BUDGET + 200  # tolerate wrapper header/footer
+        assert len(out) <= PROMPT_CHAR_BUDGET + 400  # tolerate wrapper header/footer + citation instruction
         # Truncation marker should be present
         assert "..." in out or "…" in out
 
@@ -53,7 +53,7 @@ class TestFormatForPrompt:
         # 50 chunks of 600 chars each = 30k chars if naively concatenated
         mems = [{"content": "C" * 600} for _ in range(50)]
         out = self.plugin.format_for_prompt(mems)
-        assert len(out) <= PROMPT_CHAR_BUDGET + 200
+        assert len(out) <= PROMPT_CHAR_BUDGET + 400
 
     def test_top_ranked_memories_prioritised(self):
         # First (most relevant) memory should appear even when later ones are dropped
@@ -61,3 +61,17 @@ class TestFormatForPrompt:
         mems.extend({"content": "C" * 600} for _ in range(50))
         out = self.plugin.format_for_prompt(mems)
         assert "UNIQUE_TOP_MARKER" in out
+
+    def test_memories_are_numbered_for_citation(self):
+        mems = [{"content": "Alpha"}, {"content": "Beta"}, {"content": "Gamma"}]
+        out = self.plugin.format_for_prompt(mems)
+        assert "[memory: 1]" in out
+        assert "[memory: 2]" in out
+        assert "[memory: 3]" in out
+
+    def test_citation_instruction_included_in_wrapper(self):
+        mems = [{"content": "Alpha"}]
+        out = self.plugin.format_for_prompt(mems)
+        # The wrapper should tell the model to cite memories it uses
+        assert "[memory:" in out
+        assert "cite" in out.lower()
