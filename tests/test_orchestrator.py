@@ -32,6 +32,7 @@ from src.orchestrator import (
     _last_user_content,
     _merge_recall_results,
     _prepend_system,
+    _rerank_memories,
 )
 from src.router import Model
 
@@ -222,6 +223,46 @@ class TestMergeRecallResults:
         ]
         merged = _merge_recall_results(buckets, limit=10)
         assert len(merged) == 3
+
+
+# ---------------------------------------------------------------------------
+# Lightweight rerank (retrieval-quality step 1c)
+# ---------------------------------------------------------------------------
+
+class TestRerankMemories:
+    def test_empty_returns_empty(self):
+        assert _rerank_memories("anything", [], keep=10) == []
+
+    def test_keep_zero_returns_empty(self):
+        mems = [{"content": "x"}]
+        assert _rerank_memories("x", mems, keep=0) == []
+
+    def test_relevant_beats_irrelevant(self):
+        mems = [
+            {"id": "unrelated", "content": "The weather was nice yesterday in Paris"},
+            {"id": "relevant", "content": "User prefers Python for backend work"},
+        ]
+        out = _rerank_memories("python backend preference", mems, keep=2)
+        assert out[0]["id"] == "relevant"
+
+    def test_very_short_category_labels_penalised(self):
+        mems = [
+            {"id": "short", "content": "python"},
+            {"id": "focused", "content": "User writes Python daily for the Loca project"},
+        ]
+        out = _rerank_memories("python", mems, keep=2)
+        assert out[0]["id"] == "focused"
+
+    def test_keep_caps_result_length(self):
+        mems = [{"id": f"m{i}", "content": f"python code sample {i}"} for i in range(20)]
+        out = _rerank_memories("python code", mems, keep=5)
+        assert len(out) == 5
+
+    def test_preserves_order_when_query_has_no_tokens(self):
+        # Query with only stopwords — fall back to original order
+        mems = [{"id": "a", "content": "X"}, {"id": "b", "content": "Y"}]
+        out = _rerank_memories("the and", mems, keep=2)
+        assert [m["id"] for m in out] == ["a", "b"]
 
 
 # ---------------------------------------------------------------------------
