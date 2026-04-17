@@ -49,3 +49,32 @@ export async function fetchConversations(): Promise<ConversationMeta[]> {
   const data = await jsonGet<{ conversations: ConversationMeta[] }>('/api/conversations');
   return data.conversations ?? [];
 }
+
+export async function searchConversations(q: string): Promise<ConversationMeta[]> {
+  const data = await jsonGet<{ conversations: ConversationMeta[] }>(
+    `/api/search/conversations?q=${encodeURIComponent(q)}`,
+  );
+  return data.conversations ?? [];
+}
+
+export async function deleteConversation(id: string): Promise<void> {
+  const r = await fetch(`/api/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!r.ok) throw new Error(`delete ${id} → HTTP ${r.status}`);
+}
+
+export async function patchConversation(
+  id: string,
+  patch: { folder?: string | null; starred?: boolean },
+): Promise<void> {
+  const r = await fetch(`/api/conversations/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  if (!r.ok) throw new Error(`patch ${id} → HTTP ${r.status}`);
+}
+
+export async function unloadModel(): Promise<void> {
+  const r = await fetch('/api/models/unload', { method: 'POST' });
+  if (!r.ok) throw new Error(`unload → HTTP ${r.status}`);
+}

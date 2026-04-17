@@ -1,8 +1,19 @@
 <!--
   SidebarView — mirrors Loca-SwiftUI/Sources/Loca/Views/SidebarView.swift.
-  Phase 2 scope: controls panel (New Conv, mode tabs, model picker, context picker),
-  a basic conversation list, and the footer nav buttons. Folders, drag-and-drop,
-  multi-select delete, and conversation rename are explicitly deferred.
+
+  Phase 2 + 2b scope:
+    - Controls: New Conversation, capability tabs, model picker + eject,
+      context picker
+    - Conversation search (server-side via /api/search/conversations)
+    - Folder grouping with an "Other" section for unfoldered items
+    - Per-row hover-to-delete button
+    - Footer nav (Glossary, Preferences, Philosophy)
+
+  Deferred to Phase 2c:
+    - Drag-and-drop between folders
+    - Multi-select delete
+    - Inline conversation rename
+    - Starred / pinned conversations
 -->
 <script lang="ts">
   import { app, CAPABILITIES } from './app-store.svelte';
@@ -12,20 +23,57 @@
   }
   let { onOpenRoute }: Props = $props();
 
-  // Load sidebar data once on mount.
   $effect(() => { void app.refresh(); });
 
   const contextOptions = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
   function ctxLabel(n: number): string { return n >= 1024 ? `${n / 1024}K` : `${n}`; }
 
   const activeModel = $derived(app.activeModelName);
-  const displayedConvs = $derived(app.conversations);
+
+  // Debounced search. When the query is non-empty we show the server-side
+  // match set; otherwise the local list.
+  let searchInput = $state<string>('');
+  let searchTimer = $state<ReturnType<typeof setTimeout> | null>(null);
+  function onSearchInput(v: string): void {
+    searchInput = v;
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { void app.search(v); }, 180);
+  }
+
+  const displayed = $derived(
+    searchInput.trim() ? app.searchResults : app.conversations,
+  );
+
+  // Group by folder. Null / empty folder → "Other" bucket (rendered last).
+  interface Group { name: string; convs: typeof displayed }
+  const groups = $derived.by<Group[]>(() => {
+    const byFolder = new Map<string, typeof displayed>();
+    for (const c of displayed) {
+      const key = c.folder && c.folder.length > 0 ? c.folder : '';
+      const list = byFolder.get(key) ?? [];
+      list.push(c);
+      byFolder.set(key, list);
+    }
+    const out: Group[] = [];
+    for (const [name, convs] of byFolder.entries()) {
+      if (name !== '') out.push({ name, convs });
+    }
+    out.sort((a, b) => a.name.localeCompare(b.name));
+    const unfoldered = byFolder.get('') ?? [];
+    if (unfoldered.length > 0) out.push({ name: out.length > 0 ? 'Other' : '', convs: unfoldered });
+    return out;
+  });
 
   function openPanel(route: string): void { onOpenRoute?.(route); }
+
+  async function onDelete(id: string, title: string, e: MouseEvent): Promise<void> {
+    e.stopPropagation();
+    if (!confirm(`Delete "${title || 'Untitled'}"? This cannot be undone.`)) return;
+    await app.deleteConv(id);
+  }
 </script>
 
 <aside class="sidebar">
-  <!-- Controls panel -->
   <div class="controls">
     <button class="new-conv" onclick={() => app.newConversation()}>
       <span class="pencil">✎</span> New Conversation
@@ -36,9 +84,7 @@
         <button
           class:active={app.selectedCapability === cap.id}
           onclick={() => (app.selectedCapability = cap.id)}
-        >
-          {cap.label}
-        </button>
+        >{cap.label}</button>
         {#if i < CAPABILITIES.length - 1}<span class="sep"></span>{/if}
       {/each}
     </div>
@@ -55,6 +101,11 @@
               <option value={m.name}>{m.name}</option>
             {/each}
           </select>
+          {#if activeModel}
+            <button class="eject" title="Eject model — unload from memory" onclick={() => app.unload()}>
+              ⏏
+            </button>
+          {/if}
         </div>
       {:else}
         <div class="model-empty">No local models yet.</div>
@@ -80,28 +131,56 @@
 
   <div class="divider"></div>
 
-  <!-- Conversation list -->
+  <div class="search-row">
+    <input
+      type="text"
+      placeholder="Search conversations…"
+      value={searchInput}
+      oninput={(e) => onSearchInput((e.currentTarget as HTMLInputElement).value)}
+    />
+    {#if searchInput.trim()}
+      <button class="clear-search" onclick={() => onSearchInput('')} aria-label="Clear search">×</button>
+    {/if}
+  </div>
+
+  <div class="divider"></div>
+
   <div class="conv-list">
     {#if app.loading}
       <div class="hint">Loading conversations…</div>
-    {:else if displayedConvs.length === 0}
-      <div class="hint">No conversations yet. Start one to see it here.</div>
+    {:else if displayed.length === 0}
+      <div class="hint">
+        {searchInput.trim() ? 'No matches.' : 'No conversations yet. Start one to see it here.'}
+      </div>
     {:else}
-      {#each displayedConvs as conv (conv.id)}
-        <button
-          class="conv-row"
-          class:active={app.activeConvId === conv.id}
-          onclick={() => app.selectConversation(conv.id)}
-        >
-          <span class="conv-title">{conv.title || 'Untitled'}</span>
-        </button>
+      {#each groups as group (group.name || '__unfoldered__')}
+        {#if group.name}
+          <div class="group-header">{group.name}</div>
+        {/if}
+        {#each group.convs as conv (conv.id)}
+          <div
+            class="conv-row"
+            class:active={app.activeConvId === conv.id}
+            role="button"
+            tabindex="0"
+            onclick={() => app.selectConversation(conv.id)}
+            onkeydown={(e) => { if (e.key === 'Enter') app.selectConversation(conv.id); }}
+          >
+            <span class="conv-title">{conv.title || 'Untitled'}</span>
+            <button
+              class="conv-del"
+              aria-label="Delete conversation"
+              title="Delete"
+              onclick={(e) => onDelete(conv.id, conv.title, e)}
+            >×</button>
+          </div>
+        {/each}
       {/each}
     {/if}
   </div>
 
   <div class="divider"></div>
 
-  <!-- Footer -->
   <nav class="footer">
     <button onclick={() => openPanel('/ui/glossary')}>Glossary</button>
     <button onclick={() => openPanel('/ui/preferences')}>Preferences</button>
@@ -121,43 +200,26 @@
     font-size: 12px;
   }
 
-  .controls {
-    padding: var(--loca-space-md);
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
+  .controls { padding: var(--loca-space-md); display: flex; flex-direction: column; gap: 10px; }
 
   .new-conv {
     background: var(--loca-color-accent);
-    color: #fff;
-    border: none;
+    color: #fff; border: none;
     border-radius: var(--loca-radius-sm);
     padding: 6px 10px;
     text-align: left;
-    font-size: 12px;
-    font-weight: 500;
+    font-size: 12px; font-weight: 500;
     cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
+    display: inline-flex; align-items: center; gap: 6px;
   }
   .new-conv:hover { background: var(--loca-color-accent-hover); }
   .pencil { font-size: 11px; }
 
-  .cap-picker {
-    display: flex;
-    border: 1px solid var(--loca-color-border);
-    border-radius: var(--loca-radius-sm);
-    overflow: hidden;
-  }
+  .cap-picker { display: flex; border: 1px solid var(--loca-color-border); border-radius: var(--loca-radius-sm); overflow: hidden; }
   .cap-picker button {
-    flex: 1;
-    background: transparent;
-    border: none;
+    flex: 1; background: transparent; border: none;
     padding: 5px 4px;
-    font-size: 11px;
-    font-weight: 500;
+    font-size: 11px; font-weight: 500;
     color: var(--loca-color-text-muted);
     cursor: pointer;
   }
@@ -165,12 +227,7 @@
     background: color-mix(in srgb, var(--loca-color-accent) 15%, transparent);
     color: var(--loca-color-accent);
   }
-  .cap-picker .sep {
-    width: 1px;
-    background: var(--loca-color-border);
-    margin: 4px 0;
-    align-self: stretch;
-  }
+  .cap-picker .sep { width: 1px; background: var(--loca-color-border); margin: 4px 0; align-self: stretch; }
 
   .model-picker { display: flex; flex-direction: column; gap: 6px; }
   .model-row {
@@ -182,41 +239,26 @@
   }
   .model-row select {
     flex: 1;
-    background: transparent;
-    border: none;
+    background: transparent; border: none;
     font-size: 12px;
     color: var(--loca-color-text);
     cursor: pointer;
     appearance: none;
   }
-  .dot {
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    background: rgba(127, 127, 127, 0.4);
-  }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(127, 127, 127, 0.4); }
   .dot.live { background: var(--loca-color-success); }
-  .model-empty {
+  .model-empty { color: var(--loca-color-text-muted); font-size: 11px; padding: 4px 2px; }
+  .link { background: none; border: none; color: var(--loca-color-accent); font-size: 11px; padding: 2px 0; text-align: left; cursor: pointer; }
+  .eject {
+    background: none; border: none;
     color: var(--loca-color-text-muted);
-    font-size: 11px;
-    padding: 4px 2px;
-  }
-  .link {
-    background: none;
-    border: none;
-    color: var(--loca-color-accent);
-    font-size: 11px;
-    padding: 2px 0;
-    text-align: left;
     cursor: pointer;
+    font-size: 11px;
+    padding: 0 2px;
   }
+  .eject:hover { color: var(--loca-color-text); }
 
-  .ctx-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    color: var(--loca-color-text-muted);
-  }
+  .ctx-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--loca-color-text-muted); }
   .ctx-row label { font-size: 11px; }
   .ctx-row select {
     background: var(--loca-color-bg);
@@ -230,19 +272,44 @@
 
   .divider { height: 1px; background: var(--loca-color-border); }
 
-  .conv-list { flex: 1; overflow-y: auto; padding: 6px 8px; }
-  .hint {
-    padding: 12px 8px;
-    color: var(--loca-color-text-muted);
-    font-size: 11px;
-    line-height: 1.5;
+  .search-row {
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px var(--loca-space-md);
   }
+  .search-row input {
+    flex: 1;
+    background: var(--loca-color-bg);
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-sm);
+    padding: 5px 8px;
+    font-size: 11px;
+    color: var(--loca-color-text);
+  }
+  .clear-search {
+    background: none; border: none;
+    color: var(--loca-color-text-muted);
+    font-size: 14px;
+    cursor: pointer;
+    padding: 0 4px;
+  }
+
+  .conv-list { flex: 1; overflow-y: auto; padding: 6px 8px; }
+  .hint { padding: 12px 8px; color: var(--loca-color-text-muted); font-size: 11px; line-height: 1.5; }
+
+  .group-header {
+    padding: 10px 8px 4px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--loca-color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
   .conv-row {
-    display: block;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     width: 100%;
-    background: transparent;
-    border: none;
-    text-align: left;
     padding: 6px 8px;
     border-radius: var(--loca-radius-sm);
     color: var(--loca-color-text);
@@ -251,21 +318,20 @@
   }
   .conv-row:hover { background: rgba(127, 127, 127, 0.1); }
   .conv-row.active { background: color-mix(in srgb, var(--loca-color-accent) 15%, transparent); }
-  .conv-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-  .footer {
-    display: flex;
-    gap: 6px;
-    padding: 8px 12px;
-    flex-wrap: wrap;
-  }
-  .footer button {
-    background: none;
-    border: none;
+  .conv-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conv-del {
+    background: none; border: none;
     color: var(--loca-color-text-muted);
-    font-size: 11px;
-    padding: 2px 4px;
+    font-size: 14px; line-height: 1;
     cursor: pointer;
+    padding: 0 4px;
+    opacity: 0;
+    transition: opacity 120ms;
   }
+  .conv-row:hover .conv-del { opacity: 1; }
+  .conv-del:hover { color: var(--loca-color-danger); }
+
+  .footer { display: flex; gap: 6px; padding: 8px 12px; flex-wrap: wrap; }
+  .footer button { background: none; border: none; color: var(--loca-color-text-muted); font-size: 11px; padding: 2px 4px; cursor: pointer; }
   .footer button:hover { color: var(--loca-color-text); }
 </style>
