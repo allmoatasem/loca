@@ -10,6 +10,7 @@
   import SidebarView from './lib/SidebarView.svelte';
   import GlossaryView from './lib/GlossaryView.svelte';
   import PreferencesView from './lib/PreferencesView.svelte';
+  import ChatView from './lib/ChatView.svelte';
 
   let path = $state(location.pathname);
   window.addEventListener('popstate', () => { path = location.pathname; });
@@ -34,14 +35,7 @@
   <SidebarView onOpenRoute={navigate} />
 
   <main>
-    <div class="placeholder">
-      <h1>Chat view</h1>
-      <p class="tag">Ported in Phase 4 of the Svelte migration.</p>
-      <p class="hint">
-        Meanwhile, use the macOS app or the legacy browser UI at
-        <a href="/">/</a>.
-      </p>
-    </div>
+    <ChatView />
   </main>
 
   {#if openOverlay}
@@ -69,32 +63,8 @@
   }
 
   main {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 40px;
+    overflow: hidden;
   }
-  .placeholder {
-    max-width: 420px;
-    text-align: center;
-    color: var(--loca-color-text);
-  }
-  h1 {
-    font-size: 20px;
-    font-weight: 600;
-    margin: 0 0 6px;
-  }
-  .tag {
-    color: var(--loca-color-text-muted);
-    font-size: 13px;
-    margin: 0 0 14px;
-  }
-  .hint {
-    color: var(--loca-color-text-muted);
-    font-size: 12px;
-    line-height: 1.5;
-  }
-  a { color: var(--loca-color-accent); }
 
   .overlay {
     position: fixed;
