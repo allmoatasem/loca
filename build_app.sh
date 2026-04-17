@@ -30,6 +30,16 @@ echo "Building Loca (release)…"
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 "$SWIFT" build -c release --package-path "$PKG"
 
+# ── 1b. Build the Svelte UI so src/static/ui/ is populated before bundling ──
+if [ -d "$DIR/ui" ] && [ -f "$DIR/ui/package.json" ]; then
+    if command -v npm &>/dev/null; then
+        echo "Building Svelte UI…"
+        (cd "$DIR/ui" && npm install --silent --no-audit --no-fund && npm run build >/dev/null)
+    else
+        echo "⚠ npm not found — skipping Svelte UI build; /ui will return 404 in the bundle."
+    fi
+fi
+
 BINARY="$PKG/.build/release/Loca"
 if [ ! -f "$BINARY" ]; then
     echo "Error: build succeeded but binary not found at $BINARY"

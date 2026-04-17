@@ -481,6 +481,48 @@ class TestConfigModelsDir:
         assert r.status_code == 400
 
 
+class TestSvelteUIRoute:
+    """Phase 0 scaffolding: FastAPI serves the Svelte build under /ui."""
+
+    def test_ui_returns_404_with_helpful_message_when_not_built(self, client, monkeypatch, tmp_path):
+        """A fresh checkout with no `npm run build` yet should 404 cleanly, not crash."""
+        empty_ui = tmp_path / "no-ui"
+        monkeypatch.setattr("src.proxy._UI_ROOT", str(empty_ui))
+        r = client.get("/ui")
+        assert r.status_code == 404
+        assert "not built" in r.text.lower()
+
+    def test_ui_index_served_when_built(self, client, monkeypatch, tmp_path):
+        ui_root = tmp_path / "ui"
+        ui_root.mkdir()
+        (ui_root / "index.html").write_text("<html><body>UI root</body></html>")
+        monkeypatch.setattr("src.proxy._UI_ROOT", str(ui_root))
+
+        r = client.get("/ui")
+        assert r.status_code == 200
+        assert "UI root" in r.text
+
+    def test_ui_asset_served_when_built(self, client, monkeypatch, tmp_path):
+        ui_root = tmp_path / "ui"
+        (ui_root / "assets").mkdir(parents=True)
+        (ui_root / "assets" / "app.js").write_text("console.log('ok');")
+        monkeypatch.setattr("src.proxy._UI_ROOT", str(ui_root))
+
+        r = client.get("/ui/assets/app.js")
+        assert r.status_code == 200
+        assert "console.log" in r.text
+
+    def test_ui_asset_rejects_path_traversal(self, client, monkeypatch, tmp_path):
+        ui_root = tmp_path / "ui"
+        ui_root.mkdir()
+        (tmp_path / "secret").write_text("top secret")
+        monkeypatch.setattr("src.proxy._UI_ROOT", str(ui_root))
+
+        r = client.get("/ui/../secret")
+        # Traversal attempts should not leak files outside the UI root.
+        assert r.status_code == 404 or "top secret" not in r.text
+
+
 class TestSecurityHardening:
     """CORS + rate-limit defenses (roadmap Tier 1 #5)."""
 
