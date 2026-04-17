@@ -49,6 +49,12 @@ logger = logging.getLogger(__name__)
 # Abstract interface
 # ---------------------------------------------------------------------------
 
+# Prompt-size guards so high recall limits + large knowledge-import chunks
+# cannot overflow the backend model's context window.
+PROMPT_CHAR_BUDGET = 8000   # ≈ 2,000 tokens of memory context
+PER_MEMORY_CHAR_MAX = 1500  # ≈ 375 tokens per individual memory
+
+
 class MemoryPlugin(ABC):
     """Common interface all memory backends must implement."""
 
@@ -91,11 +97,31 @@ class MemoryPlugin(ABC):
         """Update memory content (clears its embedding so it's re-embedded)."""
 
     def format_for_prompt(self, memories: list[dict]) -> str:
-        """Format a retrieved memory list for system-prompt injection."""
+        """Format a retrieved memory list for system-prompt injection.
+
+        Bounds the output so high-recall limits plus very large knowledge-import
+        chunks cannot overflow the model's context window. Individual memories
+        are truncated to PER_MEMORY_CHAR_MAX, and the total body is capped at
+        PROMPT_CHAR_BUDGET by walking the list in rank order and stopping once
+        the budget is exhausted.
+        """
         if not memories:
             return ""
-        lines = "\n".join(f"- {m['content']}" for m in memories)
-        return f"<memory>\nRelevant context from past conversations:\n{lines}\n</memory>"
+        lines: list[str] = []
+        used = 0
+        for m in memories:
+            content = m["content"]
+            if len(content) > PER_MEMORY_CHAR_MAX:
+                content = content[: PER_MEMORY_CHAR_MAX - 1] + "…"
+            line = f"- {content}"
+            if used + len(line) + 1 > PROMPT_CHAR_BUDGET:
+                break
+            lines.append(line)
+            used += len(line) + 1
+        if not lines:
+            return ""
+        body = "\n".join(lines)
+        return f"<memory>\nRelevant context from past conversations:\n{body}\n</memory>"
 
 
 # ---------------------------------------------------------------------------
