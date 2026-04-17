@@ -439,6 +439,65 @@ class TestUploadAPI:
 # Hardware API
 # ---------------------------------------------------------------------------
 
+class TestSecurityHardening:
+    """CORS + rate-limit defenses (roadmap Tier 1 #5)."""
+
+    def test_cors_rejects_arbitrary_origin(self, client):
+        """A cross-origin request from a non-localhost origin should NOT receive an allow-origin header."""
+        r = client.get("/health", headers={"Origin": "http://evil.example.com"})
+        assert r.status_code == 200
+        # FastAPI's CORSMiddleware only echoes allow-origin for permitted origins.
+        assert r.headers.get("access-control-allow-origin") != "http://evil.example.com"
+        assert r.headers.get("access-control-allow-origin") != "*"
+
+    def test_cors_allows_localhost_origin(self, client):
+        for origin in ("http://localhost:8000", "http://127.0.0.1:8000", "http://localhost"):
+            r = client.get("/health", headers={"Origin": origin})
+            assert r.status_code == 200
+            assert r.headers.get("access-control-allow-origin") == origin, origin
+
+    def test_rate_limit_hf_search_allows_burst(self, client, monkeypatch):
+        """Under the per-minute limit, all requests pass."""
+        import src.proxy as proxy_mod
+        proxy_mod._RATE_LIMIT_BUCKETS.clear()
+        # Also patch out the real HF call so the test doesn't hit the network
+        async def _fake_search(q, format, limit):
+            return []
+        monkeypatch.setattr(proxy_mod, "_hf_search", _fake_search, raising=False)
+        for _ in range(5):
+            r = client.get("/api/hf-search?q=test&format=mlx&limit=1")
+            # Even if the underlying call returns a different shape, the rate-limit
+            # middleware runs first — we only care that it doesn't 429.
+            assert r.status_code != 429
+
+    def test_rate_limit_upload_blocks_after_quota(self, client):
+        """When the limit is exceeded, requests get 429 with Retry-After."""
+        import src.proxy as proxy_mod
+        proxy_mod._RATE_LIMIT_BUCKETS.clear()
+        limit, _window = proxy_mod._RATE_LIMITS[("POST", "/api/upload")]
+        # Burn the whole allowance
+        for _ in range(limit):
+            r = client.post(
+                "/api/upload",
+                files={"file": ("note.txt", b"hello", "text/plain")},
+            )
+            assert r.status_code == 200
+        # One more should be rejected
+        r = client.post(
+            "/api/upload",
+            files={"file": ("note.txt", b"hello", "text/plain")},
+        )
+        assert r.status_code == 429
+        assert "retry-after" in r.headers
+
+    def test_rate_limit_does_not_affect_unrelated_endpoints(self, client):
+        import src.proxy as proxy_mod
+        proxy_mod._RATE_LIMIT_BUCKETS.clear()
+        for _ in range(200):
+            r = client.get("/health")
+            assert r.status_code == 200
+
+
 class TestHardwareAPI:
     def test_hardware_profile_returned(self, client):
         from src.hardware_profiler import HardwareProfile
