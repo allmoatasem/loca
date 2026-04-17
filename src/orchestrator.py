@@ -22,6 +22,7 @@ import httpx
 from .hardware_profiler import get_hardware_profile
 from .model_manager import ModelManager
 from .plugins.memory_plugin import MemoryPlugin
+from .provenance import RetrievedMemory
 from .router import Model, RouteResult, route
 from .store import get_memories_context
 from .tools.file_ops import file_read, file_write
@@ -96,16 +97,34 @@ class Orchestrator:
         #   3. Union-dedupe into a pool of up to 50 candidates
         #   4. Lightweight heuristic rerank to keep the 10 most relevant
         #   5. Format with char budget so we never overflow the model context
+        recall_query = ""
+        expanded_queries: list[str] = []
+        retrieved_for_provenance: list[RetrievedMemory] = []
         if self._memory:
             recall_query = _build_recall_query(messages)
-            queries = _expand_query(recall_query)
-            per_query_limit = 25 if len(queries) == 1 else 15
+            expanded_queries = _expand_query(recall_query)
+            per_query_limit = 25 if len(expanded_queries) == 1 else 15
             buckets = [
-                await self._memory.recall(q, limit=per_query_limit) for q in queries
+                await self._memory.recall(q, limit=per_query_limit) for q in expanded_queries
             ]
             pool = _merge_recall_results(buckets, limit=50)
             relevant = _rerank_memories(recall_query, pool, keep=10)
             mem_ctx = self._memory.format_for_prompt(relevant)
+            # Snapshot the retrieved set for the provenance sidecar.
+            # Index matches the 1-based [memory: N] tag the model sees.
+            for i, m in enumerate(relevant, start=1):
+                score = m.get("score")
+                if score is None:
+                    # sqlite-vec path returns `distance` (lower = better);
+                    # negate so higher still means more relevant for analytics.
+                    dist = m.get("distance")
+                    score = -float(dist) if dist is not None else 0.0
+                retrieved_for_provenance.append(RetrievedMemory(
+                    index=i,
+                    id=str(m.get("id", "")),
+                    score=float(score),
+                    content=str(m.get("content", "")),
+                ))
         else:
             mem_ctx = get_memories_context()
         if mem_ctx:
@@ -119,11 +138,19 @@ class Orchestrator:
 
         full_messages = _prepend_system(augmented_messages, system_prompt)
 
+        provenance_seed = {
+            "user_query": user_message,
+            "recall_query": recall_query,
+            "expanded_queries": expanded_queries,
+            "retrieved": [m.to_dict() for m in retrieved_for_provenance],
+        }
+
         if stream:
             return self._stream_with_tools(
                 model_name, api_base, full_messages, result,
                 num_ctx=num_ctx, research_mode=research_mode,
                 memory_injected=bool(mem_ctx),
+                provenance_seed=provenance_seed,
                 temperature=temperature, top_p=top_p, top_k=top_k,
                 repeat_penalty=repeat_penalty, max_tokens=max_tokens,
             )
@@ -370,6 +397,7 @@ class Orchestrator:
         num_ctx: int | None = None,
         research_mode: bool = False,
         memory_injected: bool = False,
+        provenance_seed: dict | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
@@ -388,6 +416,7 @@ class Orchestrator:
             "__model__": actual_model,
             "__search__": route_result.search_triggered,
             "__memory__": memory_injected,
+            "__provenance__": provenance_seed or {},
         }
         content = _extract_content(response)
         chunk_size = 50
