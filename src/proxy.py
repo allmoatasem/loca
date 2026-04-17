@@ -861,12 +861,21 @@ async def ui_index() -> Response:
 
 @app.get("/ui/{file_path:path}", include_in_schema=False)
 async def ui_asset(file_path: str) -> Response:
-    """Serve Svelte-built assets (JS, CSS, fonts) under /ui/."""
+    """Serve Svelte-built assets under /ui/. Unknown paths fall back to
+    index.html so the Svelte SPA can handle client-side routes like
+    /ui/preferences or /ui/glossary."""
     full = os.path.realpath(os.path.join(_UI_ROOT, file_path))
     if not full.startswith(_UI_ROOT + os.sep) and full != _UI_ROOT:
         return Response(status_code=404)
     if os.path.isfile(full):
         return FileResponse(full)
+    # SPA catch-all: serve index.html for any non-asset path under /ui.
+    index_path = os.path.join(_UI_ROOT, "index.html")
+    if os.path.isfile(index_path):
+        return FileResponse(
+            index_path,
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
     return Response(status_code=404)
 
 
