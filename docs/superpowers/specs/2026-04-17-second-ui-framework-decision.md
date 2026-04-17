@@ -31,16 +31,40 @@ Decide on a framework for the **second UI** (the non-Mac, browser-served one) th
 
 ---
 
+## Hard constraint: full parity with SwiftUI
+
+**This is not optional.** The second UI is not a divergent web variant — it's SwiftUI's twin for other platforms. Specifically:
+
+- **Visual parity.** Same layout, same element placement, same copy, same visual hierarchy as SwiftUI. When SwiftUI shows a labelled row in a Form section, the web shows the same row in the same section. When SwiftUI uses a DisclosureGroup, the web uses a matching disclosure. The browser app should be recognisable to any Loca user who's only ever seen the Mac app.
+- **Feature parity.** Every user-facing feature exists in both. No "web-only" or "Mac-only" options. New features land in **both** UIs in the same PR wherever possible; if split, the follow-up PR for the lagging side is tracked and fast.
+- **Source of truth.** When behaviour differs between platforms, **SwiftUI wins**. The Svelte code follows.
+
+This changes what the spike is actually solving. It is **not** "reduce the total number of places to update for a feature" — the two-UI reality continues. It is **"move the second UI off an unmaintainable single-file imperative script onto a model that gives us component boundaries, scoped styles, reactive state, and a dev loop."** Same touch count, much better per-touch cost.
+
+### Parity maintenance mechanisms
+
+Mechanisms that make sustaining visual + feature parity cheap:
+
+1. **Mirror the Swift file layout.** A Svelte component per SwiftUI view, same name: `ChatView.svelte` ↔ `ChatView.swift`, `PreferencesView.svelte` ↔ `PreferencesView.swift`, `TypingIndicator.svelte` ↔ `TypingIndicator` struct. Reviewing "did both sides change?" becomes a file-listing check.
+2. **Design tokens.** A single CSS/Svelte tokens file that mirrors SwiftUI's semantic colours, spacings, and fonts. When SwiftUI `.padding(.horizontal, 12)` changes, update the token once and both sides reflect.
+3. **Shared types from OpenAPI.** FastAPI already exposes an OpenAPI schema. Generate TypeScript types from it (Vite plugin or one-shot script) so the Svelte side can't diverge from the API the Swift side already speaks. Elevate this from the "nice-to-have" in Phase 6 to a **Phase 0 deliverable**.
+4. **PR template checklist.** Every UI PR ticks both boxes: "Updated in Swift: [ ]" and "Updated in Svelte: [ ]". If one is unchecked, the description has to say why and link the follow-up issue.
+5. **Parity smoke tests.** A thin Playwright test per panel that asserts the same user-visible elements exist (by semantic role or text), mirroring the XCUITests Swift would run. Not pixel-compare — just "does the Knowledge panel have a path input and an Import button, on both platforms".
+6. **When in doubt, run them side by side.** Open Loca.app and `http://localhost:8000` in a browser; eyeball them for every panel before merging.
+
+---
+
 ## Decision criteria
 
 Ranked by weight:
 
-1. **Maintenance cost over the next 3 years** — single maintainer, part-time. Framework stability, ecosystem churn, and boilerplate dominate here.
-2. **Smallest runtime and bundle size** — Loca's self-contained app ships the built assets; smaller is better for startup and for the DMG.
-3. **Shortest learning curve coming from plain HTML/CSS/JS** — current code base is vanilla JS; every hour on framework arcana is an hour not spent on product.
-4. **Good fit for streaming chat SPA** — SSE to `/v1/chat/completions`, live Markdown render, attachment state, preferences panels, memory browser. Server-rendering isn't useful here.
-5. **Preserve the self-contained bundle** — build output must be plain files `src/static/` can serve; no runtime server beyond FastAPI.
-6. **Tooling footprint** — Node/npm is acceptable only as a dev-time dependency. No runtime Node in `Loca.app`.
+1. **Parity ergonomics** — how easily the framework models SwiftUI-style composed views (VStack / HStack / Form sections, DisclosureGroup, TextField-with-prompt). Every mismatch here becomes ongoing translation friction.
+2. **Maintenance cost over the next 3 years** — single maintainer, part-time. Framework stability, ecosystem churn, and boilerplate dominate here.
+3. **Smallest runtime and bundle size** — Loca's self-contained app ships the built assets; smaller is better for startup and for the DMG.
+4. **Shortest learning curve coming from plain HTML/CSS/JS** — current code base is vanilla JS; every hour on framework arcana is an hour not spent on product.
+5. **Good fit for streaming chat SPA** — SSE to `/v1/chat/completions`, live Markdown render, attachment state, preferences panels, memory browser. Server-rendering isn't useful here.
+6. **Preserve the self-contained bundle** — build output must be plain files `src/static/` can serve; no runtime server beyond FastAPI.
+7. **Tooling footprint** — Node/npm is acceptable only as a dev-time dependency. No runtime Node in `Loca.app`.
 
 ---
 
@@ -128,6 +152,10 @@ Each phase is its own PR. Old `index.html` keeps working until the final phase �
 - Vite build output goes to `src/static/ui/` (mounted by FastAPI at `/ui`).
 - Add `.gitignore` entries for `ui/node_modules` and `ui/.svelte-kit`.
 - Add an `npm run build --prefix ui` step to `build_app.sh` and the CI lint job.
+- **Parity scaffolding in the same PR:**
+    - `ui/src/lib/tokens.css` — design tokens mirroring SwiftUI's semantic colours, spacing, fonts.
+    - `ui/src/lib/api.ts` — TypeScript types generated from FastAPI's OpenAPI schema (one-shot script committed to the repo; regenerate target in the Makefile).
+    - PR template updated with the "Updated in Swift / Updated in Svelte" checklist.
 - Outcome: visiting `/ui` loads the new app; `/` still serves the old `index.html`.
 
 **Phase 1 — port one isolated panel (one PR)**
@@ -153,7 +181,7 @@ Each phase is its own PR. Old `index.html` keeps working until the final phase �
 
 **Phase 6 — follow-up cleanup**
 - Remove onclick/onchange handlers that only existed to reach into the old file.
-- Consolidate shared shapes with Swift via generated TypeScript types from FastAPI's OpenAPI schema (nice-to-have, not blocking).
+- Run one final Swift-vs-Svelte parity pass: open every panel in both apps, list differences, file as follow-up PRs.
 
 ---
 
@@ -166,6 +194,8 @@ Each phase is its own PR. Old `index.html` keeps working until the final phase �
 | Ecosystem gap for a needed primitive | low | Every UI element we have today already exists as hand-written code; porting beats finding a library |
 | Contributor ramp cost | low | `.svelte` files are readable with no framework knowledge |
 | Dual-UI bug drift during staged migration | medium | Keep Playwright tests for both UIs until Phase 5; prefer porting whole panels, not half-panels |
+| Svelte UI drifts from SwiftUI after launch | high if ignored | Parity mechanisms in "Hard constraint" section: mirrored file names, shared tokens, OpenAPI-generated types, PR checklist, parity smoke tests |
+| Feature lands in Swift without web counterpart (or vice versa) | medium | PR template checklist; when split is necessary, open follow-up issue at time of merge, not later |
 
 ---
 
