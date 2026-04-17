@@ -179,7 +179,12 @@ def page(_server, _browser):
     pg = context.new_page()
     base = _server["base_url"]
     _setup_default_routes(pg, base)
-    pg.goto(base)
+    # Existing e2e tests target the pre-Svelte HTML (selectors like
+    # #model-desc, #prefs-panel, .asst-content). After the Phase 5 cutover
+    # `/` serves the Svelte bundle, so the legacy tests point at `/legacy`
+    # where the old HTML still lives. Svelte e2e tests target `/ui` or `/`
+    # directly and don't use this fixture.
+    pg.goto(f"{base}/legacy")
     # Wait for JS to execute — the inline script sets model-desc text
     pg.wait_for_function("document.getElementById('model-desc')?.textContent?.length > 0")
     yield pg
