@@ -1,8 +1,84 @@
+# ── Inference backend ────────────────────────────────────────────────────────
+# Loca manages its own inference server (mlx_lm or llama-server).
+# No LM Studio required.
 inference:
-  active_model: null
-  models_dir: /Users/moatasem/some-test-loca-dir
+  backend: auto            # auto | mlx | llama.cpp
+  port: 8080               # port the inference server listens on
+  models_dir: ~/loca_models  # root directory for all downloaded models
+                           #   ~/loca_models/gguf/  ← .gguf files
+                           #   ~/loca_models/mlx/   ← MLX model directories
+  ctx_size: 32768          # default context window size (tokens)
+  llama_server: llama-server  # binary name or full path to llama-server
+  active_model: null       # relative path from models_dir to load on startup
+                           # e.g. "gguf/qwen2.5-7b-q4_k_m.gguf"
+  external_server: false   # set true to route inference to an external OpenAI-compatible server
+  external_server_url: http://localhost:1234  # e.g. LM Studio :1234 or Ollama :11434/v1
+
+# ── Model routing ────────────────────────────────────────────────────────────
+# These names map routing modes → display names.
+# The active inference backend serves whichever model is loaded — only one at
+# a time. Use /api/models/load to switch models.
+models:
+  general:
+    display_name: General
+    capabilities:
+    - vision
+    - code
+    - chat
+    - analysis
+  reason:
+    display_name: Thinking
+    capabilities:
+    - reasoning
+    - planning
+  code:
+    display_name: Code
+    capabilities:
+    - code
 routing:
+  default_model: general
+  code_complexity_threshold: multi-file or >100 lines or architecture
   max_tool_calls_per_turn: 5
+
 search:
-  searxng_url: ''
-tools: {}
+  searxng_url: http://127.0.0.1:8888
+  max_results: 5
+  max_tokens_per_result: 500
+  content_extractor: trafilatura
+
+tools:
+  shell_exec:
+    enabled: true
+    timeout_seconds: 30
+    allowed_commands:
+    - ls
+    - cat
+    - grep
+    - find
+    - wc
+    - head
+    - tail
+    - git
+    - python3
+    - pwd
+
+vault:
+  path: null                 # Obsidian vault path (auto-detected if null)
+
+voice:
+  stt_model: mlx-community/whisper-large-v3-turbo   # HF repo for STT model
+  tts_model: prince-canuma/Kokoro-82M                 # HF repo for TTS model
+  tts_voice: af_heart                                 # default voice preset
+  tts_speed: 1.0                                      # playback speed 0.5–2.0
+  auto_tts: false                                     # auto-speak LLM responses
+
+proxy:
+  host: 0.0.0.0
+  port: 8000
+
+# ── Plugins ──────────────────────────────────────────────────────────────────
+# memory.type: builtin   — verbatim storage + semantic search via local embeddings
+# memory.type: mempalace — MemPalace verbatim storage + ChromaDB semantic search
+plugins:
+  memory:
+    type: mempalace

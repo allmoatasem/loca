@@ -76,8 +76,9 @@ private struct GeneralPrefsTab: View {
 
             Section("Models directory") {
                 HStack(spacing: 8) {
-                    TextField("~/loca_models", text: $modelsDir)
+                    TextField("", text: $modelsDir, prompt: Text("~/loca_models"))
                         .textFieldStyle(.roundedBorder)
+                        .labelsHidden()
                     Button("Choose…") { pickFolder() }
                     Button("Save") { Task { await saveModelsDir() } }
                         .disabled(modelsDir.trimmingCharacters(in: .whitespaces).isEmpty)

@@ -22,13 +22,19 @@ from fastapi.testclient import TestClient
 # ---------------------------------------------------------------------------
 
 @pytest.fixture()
-def client():
+def client(tmp_path, monkeypatch):
     """
     Return a TestClient for the proxy app with all external side-effects patched:
       - Config loading returns a minimal in-memory dict
+      - ORCHESTRATOR_CONFIG points at a tmp file so endpoints that persist to
+        config.yaml (e.g. PUT /api/config/models-dir, PATCH /api/backend/mode)
+        can't clobber the real repo config during tests
       - InferenceBackend and ModelManager are mocked
       - Background recs-cache build is a no-op
     """
+    # Isolate writes that target ORCHESTRATOR_CONFIG
+    monkeypatch.setenv("ORCHESTRATOR_CONFIG", str(tmp_path / "config.yaml"))
+
     minimal_config = {
         "inference": {"models_dir": "/tmp/loca-test-models", "active_model": None},
         "routing": {"max_tool_calls_per_turn": 5},
