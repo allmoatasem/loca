@@ -829,6 +829,37 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .copy-btn:hover { background: var(--border-light); color: var(--text); }
 .copy-btn.copied { color: #2da44e; border-color: #2da44e; }
 
+/* Think block (reasoning-model <think> traces) */
+.think-block {
+  margin: 0 0 10px 0;
+  padding: 8px 12px;
+  background: var(--bg-alt, rgba(127,127,127,0.06));
+  border-left: 2px solid var(--text-muted);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.think-block > summary {
+  cursor: pointer;
+  font-weight: 500;
+  user-select: none;
+  list-style: none;
+}
+.think-block > summary::before {
+  content: '▶ ';
+  display: inline-block;
+  font-size: 9px;
+  margin-right: 4px;
+  transition: transform 120ms;
+}
+.think-block[open] > summary::before { transform: rotate(90deg); }
+.think-block .think-body {
+  margin-top: 8px;
+  white-space: pre-wrap;
+  opacity: 0.85;
+  line-height: 1.5;
+}
+
 /* Typing dots */
 .dots {
   display: inline-flex;
@@ -1662,7 +1693,7 @@ code[class*="language-"] {
         </div>
       </div>
       <div id="ack-link-row">
-        <span id="sidebar-version">v0.16.5</span>
+        <span id="sidebar-version">v0.16.6</span>
       </div>
     </div>
   </div>
@@ -1798,7 +1829,7 @@ code[class*="language-"] {
     </div>
     <div id="ack-panel-body">
 
-      <div id="ack-version">Loca v0.16.5</div>
+      <div id="ack-version">Loca v0.16.6</div>
 
       <div class="ack-section">
         <div class="ack-section-title">Inference</div>
@@ -2586,7 +2617,7 @@ async function sendMessage() {
             if (t_first === null) t_first = performance.now();
             if (!full) bodyEl.innerHTML = '';
             full += delta;
-            bodyEl.innerHTML = renderMd(full);
+            bodyEl.innerHTML = renderAssistantContent(full);
             scrollBottom();
           }
         } catch (_) {}
@@ -2594,7 +2625,7 @@ async function sendMessage() {
     }
 
     if (!full) bodyEl.innerHTML = '<span style="color:var(--text-muted)">No response.</span>';
-    else bodyEl.innerHTML = renderMd(full);
+    else bodyEl.innerHTML = renderAssistantContent(full);
 
     history.push({ role: 'assistant', content: full });
 
@@ -2751,6 +2782,35 @@ function appendAssistant(model) {
     statsEl: wrap.querySelector('.msg-stats'),
     copyBtn: wrap.querySelector('.copy-btn'),
   };
+}
+
+// ── Think-block extraction ────────────────────────────────────────────────────
+// Reasoning models (QwQ, R1, Qwen thinking variants) stream <think>…</think>
+// blocks before the final answer. Split them out so the UI can render the
+// reasoning separately (collapsed, dimmed) and keep the answer clean.
+function splitThinkBlocks(text) {
+  const thinkParts = [];
+  let answer = '';
+  const re = /<think>([\s\S]*?)(<\/think>|$)/g;
+  let last = 0;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    answer += text.slice(last, m.index);
+    thinkParts.push(m[1]);
+    last = m.index + m[0].length;
+    if (m[2] !== '</think>') break;  // unclosed tag — still streaming the reasoning
+  }
+  answer += text.slice(last);
+  return { thinking: thinkParts.join('\n\n'), answer };
+}
+
+function renderAssistantContent(text) {
+  const { thinking, answer } = splitThinkBlocks(text);
+  if (!thinking.trim()) return renderMd(text);
+  const open = answer.trim() ? '' : ' open';  // auto-expand while still reasoning
+  let html = `<details class="think-block"${open}><summary>Thinking…</summary><div class="think-body">${escHtml(thinking)}</div></details>`;
+  if (answer.trim()) html += renderMd(answer);
+  return html;
 }
 
 // ── Markdown renderer ─────────────────────────────────────────────────────────
@@ -3167,7 +3227,7 @@ async function loadConv(id) {
         appendUser(typeof m.content === 'string' ? m.content : '');
       } else if (m.role === 'assistant') {
         const { bodyEl, copyBtn } = appendAssistant(conv.model || '');
-        bodyEl.innerHTML = renderMd(typeof m.content === 'string' ? m.content : '');
+        bodyEl.innerHTML = renderAssistantContent(typeof m.content === 'string' ? m.content : '');
         copyBtn.style.display = 'inline-flex';
         copyBtn.onclick = () => copyText(m.content, copyBtn);
       }
