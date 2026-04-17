@@ -114,6 +114,36 @@ class TestMarkdownRendering:
         assert "<ol>" in html
 
 
+class TestThinkBlockRendering:
+    def test_think_block_rendered_as_collapsed_details(self, page, base_url):
+        """Reasoning-model <think>…</think> traces render in a collapsed details element."""
+        response = "<think>Let me think about this step by step. 2+2=4.</think>The answer is **4**."
+        _setup_chat(page, base_url, response=response)
+        _type_into_input(page, "what is 2+2?")
+        page.locator("#send-btn").click()
+        page.wait_for_function(
+            "document.querySelector('.copy-btn')?.style.display === 'inline-flex'"
+        )
+        html = page.locator(".asst-content").first.inner_html()
+        # Think content lives inside <details class="think-block"> and the answer
+        # stays outside it as normal markdown.
+        assert 'class="think-block"' in html
+        assert "Let me think about this" in html
+        assert "<strong>4</strong>" in html
+
+    def test_answer_without_think_renders_normally(self, page, base_url):
+        """Plain answers (no <think>) skip the think-block entirely."""
+        _setup_chat(page, base_url, response="Just a plain answer.")
+        _type_into_input(page, "hi")
+        page.locator("#send-btn").click()
+        page.wait_for_function(
+            "document.querySelector('.copy-btn')?.style.display === 'inline-flex'"
+        )
+        html = page.locator(".asst-content").first.inner_html()
+        assert "think-block" not in html
+        assert "Just a plain answer." in html
+
+
 class TestVisionGuard:
     def test_non_vision_model_rejects_images(self, page, base_url):
         page.unroute(f"{base_url}/v1/models")

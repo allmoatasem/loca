@@ -613,9 +613,17 @@ struct MessageBubble: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
         } else {
-            MarkdownView(text: plain, highlight: highlight)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+            let split = splitThinkBlocks(plain)
+            VStack(alignment: .leading, spacing: 8) {
+                if !split.thinking.isEmpty {
+                    ThinkBlockView(text: split.thinking)
+                }
+                if !split.answer.isEmpty {
+                    MarkdownView(text: split.answer, highlight: highlight)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
         }
     }
 
@@ -632,6 +640,28 @@ struct MessageBubble: View {
             searchStart = range.upperBound
         }
         return attr
+    }
+
+    /// Extracts `<think>…</think>` reasoning blocks (reasoning models) from the
+    /// streamed text so the UI can render them collapsed and dimmed.
+    func splitThinkBlocks(_ text: String) -> (thinking: String, answer: String) {
+        guard text.contains("<think>") else { return ("", text) }
+        let re = try! NSRegularExpression(pattern: "<think>([\\s\\S]*?)(</think>|$)", options: [])
+        let ns = NSRange(text.startIndex..., in: text)
+        let matches = re.matches(in: text, range: ns)
+        if matches.isEmpty { return ("", text) }
+        var thinkingParts: [String] = []
+        var answer = ""
+        var last = text.startIndex
+        for m in matches {
+            guard let full = Range(m.range, in: text),
+                  let inner = Range(m.range(at: 1), in: text) else { continue }
+            answer.append(contentsOf: text[last..<full.lowerBound])
+            thinkingParts.append(String(text[inner]))
+            last = full.upperBound
+        }
+        answer.append(contentsOf: text[last...])
+        return (thinkingParts.joined(separator: "\n\n"), answer)
     }
 
     /// Strips the `<attachment>` XML prefix from user messages before display.
@@ -669,6 +699,44 @@ struct InlineImageView: View {
         }
         guard let url = URL(string: dataURL), let data = try? Data(contentsOf: url) else { return nil }
         return NSImage(data: data)
+    }
+}
+
+/// MARK: - Think block (reasoning traces)
+
+struct ThinkBlockView: View {
+    let text: String
+    @State private var isExpanded: Bool = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button(action: { isExpanded.toggle() }) {
+                HStack(spacing: 4) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9))
+                    Text("Thinking…")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                Text(text)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .opacity(0.85)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(8)
+        .background(Color.secondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .overlay(
+            RoundedRectangle(cornerRadius: 4)
+                .strokeBorder(Color.secondary.opacity(0.25), lineWidth: 1)
+        )
     }
 }
 
