@@ -439,6 +439,42 @@ class TestUploadAPI:
 # Hardware API
 # ---------------------------------------------------------------------------
 
+class TestConfigModelsDir:
+    def test_get_returns_current_path(self, client):
+        r = client.get("/api/config/models-dir")
+        assert r.status_code == 200
+        body = r.json()
+        assert "models_dir" in body
+        assert isinstance(body["models_dir"], str)
+        assert body["models_dir"]  # non-empty
+
+    def test_put_updates_path(self, client, tmp_path):
+        new_dir = str(tmp_path / "new_models")
+        r = client.put("/api/config/models-dir", json={"models_dir": new_dir})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ok"] is True
+        assert body["models_dir"] == new_dir
+
+        r2 = client.get("/api/config/models-dir")
+        assert r2.json()["models_dir"] == new_dir
+
+    def test_put_expands_tilde(self, client):
+        import os as _os
+        r = client.put("/api/config/models-dir", json={"models_dir": "~/some-test-loca-dir"})
+        assert r.status_code == 200
+        expected = _os.path.expanduser("~/some-test-loca-dir")
+        assert r.json()["models_dir"] == expected
+
+    def test_put_rejects_empty(self, client):
+        r = client.put("/api/config/models-dir", json={"models_dir": ""})
+        assert r.status_code == 400
+
+    def test_put_rejects_missing_field(self, client):
+        r = client.put("/api/config/models-dir", json={})
+        assert r.status_code == 400
+
+
 class TestSecurityHardening:
     """CORS + rate-limit defenses (roadmap Tier 1 #5)."""
 

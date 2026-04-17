@@ -448,6 +448,52 @@ async def set_backend_mode(request: Request) -> JSONResponse:
     })
 
 
+@app.get("/api/config/models-dir")
+async def api_get_models_dir() -> JSONResponse:
+    """Return the directory where models are scanned from / downloaded to."""
+    assert _config is not None
+    raw = _config.get("inference", {}).get("models_dir", "~/loca_models")
+    return JSONResponse({"models_dir": os.path.expanduser(str(raw))})
+
+
+@app.put("/api/config/models-dir")
+async def api_put_models_dir(request: Request) -> JSONResponse:
+    """Change the models directory. Persists to config.yaml and updates
+    the in-memory managers so a scan can find models in the new location
+    without a restart. If the active-model path becomes invalid in the new
+    directory, the UI should prompt to re-select one."""
+    body = await request.json()
+    raw = body.get("models_dir")
+    if not isinstance(raw, str) or not raw.strip():
+        return JSONResponse(
+            status_code=400,
+            content={"error": {"message": "models_dir must be a non-empty string"}},
+        )
+    from pathlib import Path as _Path  # noqa: PLC0415
+    new_dir = os.path.expanduser(raw.strip())
+
+    assert _config is not None
+    _config.setdefault("inference", {})["models_dir"] = new_dir
+    config_path = os.environ.get(
+        "ORCHESTRATOR_CONFIG",
+        os.path.join(os.path.dirname(__file__), "..", "config.yaml"),
+    )
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.dump(_config, f, default_flow_style=False, allow_unicode=True)
+
+    # Update in-memory state — no restart needed for scanning / downloads.
+    if _model_manager is not None:
+        _model_manager.models_dir = _Path(new_dir)
+        _model_manager.gguf_dir = _Path(new_dir) / "gguf"
+        _model_manager.mlx_dir = _Path(new_dir) / "mlx"
+    if _inference_backend is not None:
+        _inference_backend.models_dir = _Path(new_dir)
+    if _voice_backend is not None:
+        _voice_backend.cfg.models_dir = _Path(new_dir)
+
+    return JSONResponse({"ok": True, "models_dir": new_dir})
+
+
 @app.get("/api/server-status")
 async def server_status() -> JSONResponse:
     """Return model/server availability for the current inference mode."""
