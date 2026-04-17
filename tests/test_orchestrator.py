@@ -24,10 +24,13 @@ import pytest
 
 from src.orchestrator import (
     Orchestrator,
+    _expand_query,
     _extract_content,
     _extract_tool_call,
     _inject_search_context,
+    _is_broad_query,
     _last_user_content,
+    _merge_recall_results,
     _prepend_system,
 )
 from src.router import Model
@@ -152,6 +155,73 @@ class TestHelpers:
         result = _prepend_system(messages, "New prompt")
         assert result[0]["content"] == "New prompt"
         assert len(result) == 2
+
+
+# ---------------------------------------------------------------------------
+# Multi-query expansion helpers (retrieval-quality step 1b)
+# ---------------------------------------------------------------------------
+
+class TestBroadQueryDetection:
+    def test_explicit_about_me_is_broad(self):
+        assert _is_broad_query("what do you know about me") is True
+
+    def test_who_am_i_is_broad(self):
+        assert _is_broad_query("who am I?") is True
+
+    def test_tell_me_everything_is_broad(self):
+        assert _is_broad_query("tell me everything") is True
+
+    def test_single_word_me_is_broad(self):
+        assert _is_broad_query("me") is True
+
+    def test_technical_question_is_not_broad(self):
+        assert _is_broad_query("how do I use the async API in python?") is False
+
+    def test_specific_topic_is_not_broad(self):
+        assert _is_broad_query("what's the best way to embed PDFs?") is False
+
+
+class TestExpandQuery:
+    def test_broad_returns_multiple_queries(self):
+        out = _expand_query("what do you know about me")
+        assert out[0] == "what do you know about me"
+        assert len(out) >= 4
+
+    def test_narrow_returns_only_original(self):
+        out = _expand_query("how do embeddings work")
+        assert out == ["how do embeddings work"]
+
+
+class TestMergeRecallResults:
+    def test_dedup_by_id(self):
+        buckets = [
+            [{"id": "a", "content": "X"}, {"id": "b", "content": "Y"}],
+            [{"id": "b", "content": "Y"}, {"id": "c", "content": "Z"}],
+        ]
+        merged = _merge_recall_results(buckets, limit=10)
+        assert [m["id"] for m in merged] == ["a", "b", "c"]
+
+    def test_preserves_order_of_first_occurrence(self):
+        buckets = [
+            [{"id": "a", "content": "A"}],
+            [{"id": "b", "content": "B"}],
+            [{"id": "c", "content": "C"}],
+        ]
+        merged = _merge_recall_results(buckets, limit=10)
+        assert [m["id"] for m in merged] == ["a", "b", "c"]
+
+    def test_respects_limit(self):
+        buckets = [[{"id": str(i), "content": "x"} for i in range(10)]]
+        merged = _merge_recall_results(buckets, limit=3)
+        assert len(merged) == 3
+
+    def test_dedup_by_content_when_no_id(self):
+        buckets = [
+            [{"content": "same text"}, {"content": "other"}],
+            [{"content": "same text"}, {"content": "third"}],
+        ]
+        merged = _merge_recall_results(buckets, limit=10)
+        assert len(merged) == 3
 
 
 # ---------------------------------------------------------------------------

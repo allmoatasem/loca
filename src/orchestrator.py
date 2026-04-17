@@ -90,10 +90,17 @@ class Orchestrator:
         else:
             system_prompt = _build_system_prompt(result.model, model_name, self._hw)
 
-        # Memory injection: recall using last 3 messages for conversational context
+        # Memory injection: recall using last 3 messages for conversational context.
+        # For broad queries ("what do you know about me"), expand into sub-queries
+        # and union the results so we don't miss major facets of the user's profile.
         if self._memory:
             recall_query = _build_recall_query(messages)
-            relevant = await self._memory.recall(recall_query, limit=20)
+            queries = _expand_query(recall_query)
+            per_query_limit = 20 if len(queries) == 1 else 10
+            buckets = [
+                await self._memory.recall(q, limit=per_query_limit) for q in queries
+            ]
+            relevant = _merge_recall_results(buckets, limit=20)
             mem_ctx = self._memory.format_for_prompt(relevant)
         else:
             mem_ctx = get_memories_context()
@@ -597,6 +604,55 @@ def _extract_tool_call(text: str) -> tuple[str, dict] | None:
     except json.JSONDecodeError:
         args = {}
     return tool_name, args
+
+
+# Broad queries like "what do you know about me" surface too few relevant
+# memories when a single embedding lookup has to cover every aspect of the
+# user. Detect them and expand into sub-queries covering common facets.
+_BROAD_MARKERS = (
+    "about me", "about myself", "who am i", "what do you know",
+    "know about me", "tell me everything", "tell me about me",
+    "anything about me", "everything about me",
+)
+_BROAD_SHORT_TOKENS = {"me", "i", "myself"}
+_EXPANDED_SUB_QUERIES = (
+    "user's profession, role, and current work",
+    "user's interests, hobbies, and preferences",
+    "user's current projects and goals",
+    "user's background, skills, and experience",
+)
+
+
+def _is_broad_query(query: str) -> bool:
+    low = query.lower()
+    if any(marker in low for marker in _BROAD_MARKERS):
+        return True
+    words = [w.strip("?.,!;:'\"") for w in low.split()]
+    if len(words) <= 3 and any(w in _BROAD_SHORT_TOKENS for w in words):
+        return True
+    return False
+
+
+def _expand_query(query: str) -> list[str]:
+    if _is_broad_query(query):
+        return [query, *_EXPANDED_SUB_QUERIES]
+    return [query]
+
+
+def _merge_recall_results(buckets: list[list[dict]], limit: int) -> list[dict]:
+    """Round-robin-ish merge that dedupes by id (or content) and preserves rank."""
+    seen: set[str] = set()
+    merged: list[dict] = []
+    for bucket in buckets:
+        for item in bucket:
+            key = str(item.get("id") or item.get("content", "")[:80])
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(item)
+            if len(merged) >= limit:
+                return merged
+    return merged
 
 
 def _build_recall_query(messages: list[dict]) -> str:
