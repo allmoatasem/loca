@@ -365,6 +365,75 @@ class TestUploadAPI:
         assert r.status_code == 200
         assert r.json()["type"] == "video"
 
+    def test_upload_csv_extracts_rows(self, client):
+        csv = b"name,role\nAlice,engineer\nBob,designer"
+        r = client.post(
+            "/api/upload",
+            files={"file": ("team.csv", csv, "text/csv")},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["type"] == "text"
+        assert "Alice" in body["content"]
+        assert "role: engineer" in body["content"]
+
+    def test_upload_xlsx_extracts_rows(self, client, tmp_path):
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["name", "role"])
+        ws.append(["Alice", "engineer"])
+        ws.append(["Bob", "designer"])
+        xlsx_path = tmp_path / "team.xlsx"
+        wb.save(xlsx_path)
+        with open(xlsx_path, "rb") as f:
+            data = f.read()
+        r = client.post(
+            "/api/upload",
+            files={"file": (
+                "team.xlsx",
+                data,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["type"] == "text"
+        assert "Alice" in body["content"]
+        assert "engineer" in body["content"]
+
+    def test_upload_docx_extracts_paragraphs(self, client, tmp_path):
+        from docx import Document
+        doc = Document()
+        doc.add_paragraph("First paragraph of the report.")
+        doc.add_paragraph("Second paragraph with details.")
+        docx_path = tmp_path / "report.docx"
+        doc.save(str(docx_path))
+        with open(docx_path, "rb") as f:
+            data = f.read()
+        r = client.post(
+            "/api/upload",
+            files={"file": (
+                "report.docx",
+                data,
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["type"] == "text"
+        assert "First paragraph" in body["content"]
+        assert "Second paragraph" in body["content"]
+
+    def test_upload_unknown_binary_still_flagged(self, client):
+        """Binaries the adapters don't handle still return type=binary."""
+        r = client.post(
+            "/api/upload",
+            files={"file": ("raw.dat", b"\x00\x01\x02\xff\xfe", "application/octet-stream")},
+        )
+        assert r.status_code == 200
+        assert r.json()["type"] == "binary"
+
 
 # ---------------------------------------------------------------------------
 # Hardware API
