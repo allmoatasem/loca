@@ -36,6 +36,13 @@ from .inference_backend import InferenceBackend
 from .model_manager import ModelManager
 from .orchestrator import Orchestrator
 from .plugin_manager import PluginManager
+from .provenance import (
+    Provenance,
+    RetrievedMemory,
+    append_verifier_footer,
+    verify_citations,
+    write_provenance,
+)
 from .store import (
     delete_conversation,
     get_conversation,
@@ -294,6 +301,7 @@ async def _openai_stream_response(
     actual_model = model_override or model_hint or "local"
     search_triggered = False
     memory_injected = False
+    provenance_seed: dict = {}
     reply_chunks: list[str] = []
     try:
         gen = cast(AsyncIterator[str | dict], await orchestrator.handle(
@@ -311,6 +319,7 @@ async def _openai_stream_response(
                     actual_model = _basename(chunk["__model__"])
                     search_triggered = bool(chunk.get("__search__", False))
                     memory_injected = bool(chunk.get("__memory__", False))
+                    provenance_seed = dict(chunk.get("__provenance__", {}))
                 continue
             output_chars += len(chunk)
             reply_chunks.append(chunk)
@@ -347,13 +356,63 @@ async def _openai_stream_response(
             "memory_injected": memory_injected,
         },
     })
+    # Verifier pass: parse [memory: N] from the completed answer, flag any
+    # N outside the retrieved set, append a footnote paragraph as another
+    # SSE delta so it renders inline in the existing chat bubble. Runs only
+    # if memory was injected (otherwise there's nothing to verify against).
+    full_reply = "".join(reply_chunks)
+    retrieved_raw = provenance_seed.get("retrieved", []) if memory_injected else []
+    phantoms: list[int] = []
+    if retrieved_raw and full_reply:
+        phantoms = verify_citations(full_reply, retrieved_count=len(retrieved_raw))
+        if phantoms:
+            footer = append_verifier_footer("", phantoms=phantoms)
+            footer_payload = json.dumps({
+                "id": "chatcmpl-local",
+                "object": "chat.completion.chunk",
+                "model": actual_model,
+                "choices": [{"index": 0, "delta": {"role": "assistant", "content": footer}, "finish_reason": None}],
+            })
+            yield f"data: {footer_payload}\n\n".encode()
+
     yield f"data: {usage_payload}\n\n".encode()
     yield b"data: [DONE]\n\n"
     # Store the exchange verbatim in memory (fire-and-forget, after stream is done)
-    full_reply = "".join(reply_chunks)
     if full_reply:
         full_messages = messages + [{"role": "assistant", "content": full_reply}]
         asyncio.create_task(orchestrator.extract_and_save_memories(full_messages))
+
+    # Provenance sidecar — fire-and-forget. Never blocks the response.
+    if retrieved_raw and full_reply:
+        try:
+            retrieved = [RetrievedMemory(**m) for m in retrieved_raw]
+            prov = Provenance(
+                user_query=provenance_seed.get("user_query", ""),
+                recall_query=provenance_seed.get("recall_query", ""),
+                expanded_queries=list(provenance_seed.get("expanded_queries", [])),
+                retrieved=retrieved,
+                cited=[n for n in _citations_in(full_reply) if 1 <= n <= len(retrieved)],
+                phantoms=phantoms,
+                conv_id=None,
+            )
+            asyncio.create_task(_write_provenance_async(prov))
+        except Exception as exc:
+            logger.warning("Provenance sidecar skipped: %s", exc)
+
+
+def _citations_in(text: str) -> list[int]:
+    # Tiny helper so _openai_stream_response doesn't import extract_citations
+    # at the top (keeps the symbol list there short). Provenance parsing is
+    # cheap; no need to cache.
+    from .provenance import extract_citations  # noqa: PLC0415
+    return extract_citations(text)
+
+
+async def _write_provenance_async(prov: Provenance) -> None:
+    try:
+        await asyncio.to_thread(write_provenance, prov)
+    except Exception as exc:
+        logger.warning("Provenance write failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------
