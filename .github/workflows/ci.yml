@@ -83,6 +83,29 @@ jobs:
       - name: Run pip-audit
         run: pip-audit -r requirements.txt --strict
 
+  ui-build:
+    name: Svelte UI build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install UI dependencies
+        run: npm ci --no-audit --no-fund
+        working-directory: ui
+
+      # Produces src/static/ui/ — verified that Vite succeeds on every PR.
+      # No type-check here; svelte-check can be added later once real components
+      # exist (Phase 0's hello-app has nothing to type-check).
+      - name: Build UI
+        run: npm run build
+        working-directory: ui
+
   swift-build:
     name: Swift build (macOS)
     runs-on: macos-14

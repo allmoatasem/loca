@@ -9,7 +9,7 @@
 #   make all       — check + test + swift (CI-equivalent, no bundle)
 #   make ci        — alias for all (matches what GitHub Actions runs)
 
-.PHONY: check test e2e swift build all ci import train-build train
+.PHONY: check test e2e swift build all ci import train-build train ui-dev ui-build openapi
 
 PYTHON := $(CURDIR)/.venv/bin/python3
 RUFF    := $(shell command -v ruff)
@@ -72,3 +72,20 @@ train-build:
 train:
 	@[ "$(model)" ] && [ "$(data)" ] || (echo "Usage: make train model=<path> data=<dataset-dir> [iters=1000] [adapter=./loca-adapter]"; exit 1)
 	$(PYTHON) -m src.training.cli train --model "$(model)" --data "$(data)" --iters $${iters:-1000} --adapter-out $${adapter:-./loca-adapter}
+
+# ── Svelte UI (second UI — full parity with SwiftUI) ──────────────────────────
+
+ui-dev:
+	cd ui && npm install --silent --no-audit --no-fund && npm run dev
+
+ui-build:
+	cd ui && npm install --silent --no-audit --no-fund && npm run build
+
+# Regenerate ui/openapi.json + ui/src/lib/api.ts from FastAPI's live schema.
+# Run whenever routes or schemas change; both files are committed.
+openapi:
+	@echo "▶ export openapi.json"
+	$(PYTHON) -c "from src.proxy import app; import json, sys; json.dump(app.openapi(), sys.stdout, indent=2)" > ui/openapi.json
+	@echo "▶ generate ui/src/lib/api.ts"
+	cd ui && npm install --silent --no-audit --no-fund && npm run openapi
+	@echo "✓ api.ts regenerated"

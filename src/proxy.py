@@ -837,6 +837,39 @@ async def serve_asset(file_path: str) -> Response:
     return Response(status_code=404)
 
 
+# /ui — Svelte UI served from src/static/ui/ (produced by `npm run build`
+# in the `ui/` workspace). Directory may not exist on first-time checkouts
+# that haven't run the build yet; in that case /ui returns 404 cleanly
+# rather than crashing the server on startup.
+_UI_ROOT = os.path.realpath(os.path.join(_STATIC, "ui"))
+
+
+@app.get("/ui", include_in_schema=False)
+@app.get("/ui/", include_in_schema=False)
+async def ui_index() -> Response:
+    index_path = os.path.join(_UI_ROOT, "index.html")
+    if not os.path.isfile(index_path):
+        return Response(
+            status_code=404,
+            content="Svelte UI not built. Run `npm run build --prefix ui` first.",
+        )
+    return FileResponse(
+        index_path,
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
+@app.get("/ui/{file_path:path}", include_in_schema=False)
+async def ui_asset(file_path: str) -> Response:
+    """Serve Svelte-built assets (JS, CSS, fonts) under /ui/."""
+    full = os.path.realpath(os.path.join(_UI_ROOT, file_path))
+    if not full.startswith(_UI_ROOT + os.sep) and full != _UI_ROOT:
+        return Response(status_code=404)
+    if os.path.isfile(full):
+        return FileResponse(full)
+    return Response(status_code=404)
+
+
 @app.get("/system-stats")
 async def system_stats() -> JSONResponse:
     import asyncio
