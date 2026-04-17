@@ -91,6 +91,23 @@ def _start_server(port: int) -> threading.Thread:
 
     os.environ["ORCHESTRATOR_CONFIG"] = "/tmp/loca-ui-shot-config.yaml"
 
+    # Realistic-looking but fully fake data for the sidebar / conv list.
+    # Using the real store would leak user conversation titles into the repo.
+    fake_conversations = [
+        {"id": "demo-1", "title": "Loca Svelte migration plan",
+         "updated": 1713360000, "created": 1713340000, "model": "qwen3.5-14b"},
+        {"id": "demo-2", "title": "Vault Analyser v2 spike",
+         "updated": 1713280000, "created": 1713200000, "model": "qwen3.5-14b"},
+        {"id": "demo-3", "title": "Python async patterns",
+         "updated": 1713200000, "created": 1713180000, "model": "qwen3.5-14b"},
+        {"id": "demo-4", "title": "Tuesday brainstorm",
+         "updated": 1713100000, "created": 1713080000, "model": "qwen3.5-14b"},
+    ]
+    fake_models = [
+        {"name": "qwen3.5-14b-instruct-4bit", "format": "mlx", "size_bytes": 8_000_000_000},
+        {"name": "llama-3.1-8b-q4_k_m.gguf", "format": "gguf", "size_bytes": 4_800_000_000},
+    ]
+
     patchers = [
         patch("src.proxy._load_config", return_value=config),
         patch("src.proxy.InferenceBackend", return_value=backend),
@@ -99,6 +116,14 @@ def _start_server(port: int) -> threading.Thread:
         patch("src.proxy.VoiceBackend", return_value=voice),
         patch("src.proxy.PluginManager", return_value=plugin_mgr),
         patch("src.proxy._build_recs_cache", new_callable=AsyncMock),
+        # Fake data for UI surfaces so screenshots don't leak the user's real
+        # conversation titles / memories into the repo.
+        patch("src.proxy.list_conversations", return_value=fake_conversations),
+        patch("src.store.list_conversations", return_value=fake_conversations),
+    ]
+    mm.list_local.return_value = [
+        type("LM", (), {"to_dict": (lambda self, d=d: d)})()
+        for d in fake_models
     ]
     for p in patchers:
         p.start()
