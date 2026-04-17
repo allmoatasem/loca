@@ -448,6 +448,23 @@ actor BackendClient {
         }
     }
 
+    // MARK: - Models directory
+
+    struct ModelsDirResponse: Decodable { let models_dir: String }
+
+    func fetchModelsDir() async throws -> String {
+        let (data, _) = try await get("/api/config/models-dir")
+        return try JSONDecoder().decode(ModelsDirResponse.self, from: data).models_dir
+    }
+
+    func updateModelsDir(_ path: String) async throws -> String {
+        let (data, resp) = try await putRaw("/api/config/models-dir", body: ["models_dir": path])
+        if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
+            throw BackendError.http(http.statusCode)
+        }
+        return try JSONDecoder().decode(ModelsDirResponse.self, from: data).models_dir
+    }
+
     // MARK: - Server status
 
     func fetchServerStatus() async throws -> ServerStatus {
@@ -504,6 +521,14 @@ actor BackendClient {
     private func patchRaw(_ path: String, body: [String: Any]) async throws -> (Data, URLResponse) {
         var req = URLRequest(url: base.appendingPathComponent(String(path.dropFirst())))
         req.httpMethod = "PATCH"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return try await session.data(for: req)
+    }
+
+    private func putRaw(_ path: String, body: [String: Any]) async throws -> (Data, URLResponse) {
+        var req = URLRequest(url: base.appendingPathComponent(String(path.dropFirst())))
+        req.httpMethod = "PUT"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         return try await session.data(for: req)

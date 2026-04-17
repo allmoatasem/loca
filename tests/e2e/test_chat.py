@@ -114,6 +114,24 @@ class TestMarkdownRendering:
         assert "<ol>" in html
 
 
+class TestModelsDirPref:
+    def test_general_prefs_shows_models_dir_row(self, page, base_url):
+        """Preferences > General shows the Models directory section with an input and Save button."""
+        page.route(f"{base_url}/api/config/models-dir", lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body='{"models_dir": "/Users/tester/loca_models"}',
+        ))
+        page.locator("#prefs-overlay").evaluate("el => el.style.display = 'flex'")
+        page.evaluate("switchPrefsTab(document.querySelector('.prefs-tab'), 'general')")
+        page.wait_for_selector("#pref-models-dir")
+        # Input is populated from /api/config/models-dir
+        page.wait_for_function(
+            "document.getElementById('pref-models-dir')?.value === '/Users/tester/loca_models'"
+        )
+        # Save button is present
+        assert page.locator("#prefs-body button:has-text('Save')").count() >= 1
+
+
 class TestThinkBlockRendering:
     def test_think_block_rendered_as_collapsed_details(self, page, base_url):
         """Reasoning-model <think>…</think> traces render in a collapsed details element."""

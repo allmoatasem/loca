@@ -42,6 +42,9 @@ private struct GeneralPrefsTab: View {
 
     private let contextOptions = [4096, 8192, 16384, 32768, 65536, 131072, 262144]
 
+    @State private var modelsDir: String = ""
+    @State private var modelsDirStatus: String?
+
     var body: some View {
         Form {
             Section("Appearance") {
@@ -70,10 +73,58 @@ private struct GeneralPrefsTab: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
+
+            Section("Models directory") {
+                HStack(spacing: 8) {
+                    TextField("~/loca_models", text: $modelsDir)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Choose…") { pickFolder() }
+                    Button("Save") { Task { await saveModelsDir() } }
+                        .disabled(modelsDir.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                if let status = modelsDirStatus {
+                    Text(status)
+                        .font(.caption)
+                        .foregroundColor(status.hasPrefix("Saved") ? .green : .red)
+                }
+                Text("Where Loca downloads and scans for GGUF / MLX models. Change this to store models on an external SSD. Restart recommended after changing.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
         }
         .formStyle(.grouped)
         .padding(20)
         .frame(width: 540)
+        .task { await loadModelsDir() }
+    }
+
+    private func loadModelsDir() async {
+        if let v = try? await BackendClient.shared.fetchModelsDir() {
+            modelsDir = v
+        }
+    }
+
+    private func saveModelsDir() async {
+        let path = modelsDir.trimmingCharacters(in: .whitespaces)
+        guard !path.isEmpty else { return }
+        do {
+            let resolved = try await BackendClient.shared.updateModelsDir(path)
+            modelsDir = resolved
+            modelsDirStatus = "Saved — restart Loca for all services to use the new path."
+        } catch {
+            modelsDirStatus = "Failed to save: \(error.localizedDescription)"
+        }
+    }
+
+    private func pickFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        if panel.runModal() == .OK, let url = panel.url {
+            modelsDir = url.path
+        }
     }
 
     private func ctxLabel(_ n: Int) -> String { n >= 1024 ? "\(n / 1024)K tokens" : "\(n)" }
