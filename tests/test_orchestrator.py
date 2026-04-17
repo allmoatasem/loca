@@ -494,6 +494,104 @@ class TestStreaming:
 # Backend retry logic
 # ---------------------------------------------------------------------------
 
+class TestToolsPassthrough:
+    """OpenAI tools/tool_choice passthrough used by agentic coding clients (claw-code, Aider, Continue)."""
+
+    @pytest.mark.asyncio
+    async def test_passthrough_call_forwards_tools_to_backend(self):
+        orch, mm = _make_orchestrator()
+        expected = _make_response("ok")
+        captured_payloads: list = []
+
+        async def _fake_chat(model, api_base, messages, stream=False, **kwargs):
+            captured_payloads.append(kwargs)
+            return expected
+
+        tools = [{"type": "function", "function": {"name": "read_file", "parameters": {}}}]
+        with patch.object(orch, "_chat", side_effect=_fake_chat), \
+             patch("src.orchestrator.get_memories_context", return_value=""):
+            result = await orch.handle_passthrough(
+                [{"role": "user", "content": "read foo.py"}],
+                tools=tools,
+                tool_choice="auto",
+                stream=False,
+            )
+        assert result == expected
+        assert captured_payloads and captured_payloads[0].get("tools") == tools
+        assert captured_payloads[0].get("tool_choice") == "auto"
+
+    @pytest.mark.asyncio
+    async def test_passthrough_call_preserves_tool_calls_in_response(self):
+        orch, mm = _make_orchestrator()
+        backend_response = {
+            "id": "x", "model": "m",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": '{"path": "foo.py"}'},
+                    }],
+                },
+                "finish_reason": "tool_calls",
+            }],
+        }
+        with patch.object(orch, "_chat", new_callable=AsyncMock, return_value=backend_response), \
+             patch("src.orchestrator.get_memories_context", return_value=""):
+            result = await orch.handle_passthrough(
+                [{"role": "user", "content": "read foo.py"}],
+                tools=[{"type": "function", "function": {"name": "read_file", "parameters": {}}}],
+                stream=False,
+            )
+        assert result["choices"][0]["finish_reason"] == "tool_calls"
+        assert result["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == "read_file"
+
+    @pytest.mark.asyncio
+    async def test_passthrough_still_injects_memory(self):
+        orch, mm = _make_orchestrator()
+        expected = _make_response("ok")
+        captured_messages: list = []
+
+        async def _fake_chat(model, api_base, messages, stream=False, **kwargs):
+            captured_messages.extend(messages)
+            return expected
+
+        with patch.object(orch, "_chat", side_effect=_fake_chat), \
+             patch("src.orchestrator.get_memories_context", return_value="User uses tabs not spaces"):
+            await orch.handle_passthrough(
+                [{"role": "user", "content": "format this"}],
+                tools=[{"type": "function", "function": {"name": "edit", "parameters": {}}}],
+                stream=False,
+            )
+        system_msg = next(m for m in captured_messages if m["role"] == "system")
+        assert "User uses tabs not spaces" in system_msg["content"]
+
+    @pytest.mark.asyncio
+    async def test_passthrough_skips_custom_tool_loop(self):
+        """Even if the model emits a <tool_call> XML in its text, don't re-invoke — pass through verbatim."""
+        orch, mm = _make_orchestrator()
+        # The model's "response" contains Loca's own XML tool-call format — passthrough should NOT parse it.
+        response = _make_response('<tool_call name="shell_exec">{"cmd": "rm -rf /"}</tool_call>')
+        call_count = [0]
+
+        async def _fake_chat(*args, **kwargs):
+            call_count[0] += 1
+            return response
+
+        with patch.object(orch, "_chat", side_effect=_fake_chat), \
+             patch("src.orchestrator.get_memories_context", return_value=""):
+            result = await orch.handle_passthrough(
+                [{"role": "user", "content": "run ls"}],
+                tools=[{"type": "function", "function": {"name": "shell_exec", "parameters": {}}}],
+                stream=False,
+            )
+        assert call_count[0] == 1  # exactly one call — no tool loop
+        assert result == response
+
+
 class TestBackendRetry:
     @pytest.mark.asyncio
     async def test_retries_on_503(self):

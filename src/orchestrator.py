@@ -135,6 +135,110 @@ class Orchestrator:
         )
 
     # ------------------------------------------------------------------
+    # OpenAI tools passthrough — used by agentic coding clients
+    # (claw-code, Aider, Continue). The client owns the tool-use loop;
+    # Loca stays out of the way but still injects grounded memory
+    # context so agentic clients benefit from the knowledge hub.
+    # ------------------------------------------------------------------
+
+    async def handle_passthrough(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        tool_choice: str | dict | None = None,
+        has_image: bool = False,
+        stream: bool = False,
+        model_hint: str | None = None,
+        model_override: str | None = None,
+        num_ctx: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        repeat_penalty: float | None = None,
+        max_tokens: int | None = None,
+        system_prompt_override: str | None = None,
+    ) -> dict | AsyncIterator[bytes]:
+        user_message = _last_user_content(messages)
+        result: RouteResult = route(user_message, has_image=has_image, model_hint=model_hint)
+        model_name, api_base = await self.mm.ensure_loaded(
+            result.model, model_name_override=model_override
+        )
+        if system_prompt_override:
+            system_prompt = system_prompt_override
+        else:
+            system_prompt = _build_system_prompt(result.model, model_name, self._hw)
+
+        # Memory injection — still on, this is the differentiator vs Ollama/LM-Studio.
+        if self._memory:
+            recall_query = _build_recall_query(messages)
+            queries = _expand_query(recall_query)
+            per_query_limit = 25 if len(queries) == 1 else 15
+            buckets = [
+                await self._memory.recall(q, limit=per_query_limit) for q in queries
+            ]
+            pool = _merge_recall_results(buckets, limit=50)
+            relevant = _rerank_memories(recall_query, pool, keep=10)
+            mem_ctx = self._memory.format_for_prompt(relevant)
+        else:
+            mem_ctx = get_memories_context()
+        if mem_ctx:
+            system_prompt = f"{system_prompt}\n\n{mem_ctx}"
+
+        full_messages = _prepend_system(messages, system_prompt)
+
+        if stream:
+            return self._passthrough_stream_bytes(
+                model_name, api_base, full_messages, tools, tool_choice,
+                num_ctx=num_ctx, temperature=temperature, top_p=top_p, top_k=top_k,
+                repeat_penalty=repeat_penalty, max_tokens=max_tokens,
+            )
+
+        return await self._chat(
+            model_name, api_base, full_messages, stream=False,
+            tools=tools, tool_choice=tool_choice,
+            num_ctx=num_ctx, temperature=temperature, top_p=top_p, top_k=top_k,
+            repeat_penalty=repeat_penalty, max_tokens=max_tokens,
+        )
+
+    async def _passthrough_stream_bytes(
+        self,
+        model: str,
+        api_base: str,
+        messages: list[dict],
+        tools: list[dict],
+        tool_choice: str | dict | None,
+        num_ctx: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        repeat_penalty: float | None = None,
+        max_tokens: int | None = None,
+    ) -> AsyncIterator[bytes]:
+        """Forward backend SSE stream verbatim so tool_calls deltas reach the client."""
+        base = api_base.rstrip("/")
+        payload: dict = {"model": model, "messages": messages, "stream": True, "tools": tools}
+        if tool_choice is not None:
+            payload["tool_choice"] = tool_choice
+        if num_ctx:
+            payload["num_ctx"] = num_ctx
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if top_p is not None:
+            payload["top_p"] = top_p
+        if top_k is not None:
+            payload["top_k"] = top_k
+        if repeat_penalty is not None:
+            payload["repeat_penalty"] = repeat_penalty
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            async with client.stream("POST", f"{base}/v1/chat/completions", json=payload) as resp:
+                resp.raise_for_status()
+                async for chunk in resp.aiter_bytes():
+                    yield chunk
+
+    # ------------------------------------------------------------------
     # Voice mode: transcribe → LLM → TTS
     # ------------------------------------------------------------------
 
@@ -302,6 +406,8 @@ class Orchestrator:
         top_k: int | None = None,
         repeat_penalty: float | None = None,
         max_tokens: int | None = None,
+        tools: list[dict] | None = None,
+        tool_choice: str | dict | None = None,
     ) -> dict:
         """Call an OpenAI-compatible /v1/chat/completions endpoint with retry on 400/503."""
         base = api_base.rstrip("/")
@@ -318,6 +424,10 @@ class Orchestrator:
             payload["repeat_penalty"] = repeat_penalty
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
+        if tools is not None:
+            payload["tools"] = tools
+        if tool_choice is not None:
+            payload["tool_choice"] = tool_choice
         last_exc: Exception | None = None
 
         for attempt in range(3):

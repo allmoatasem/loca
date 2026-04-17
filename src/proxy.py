@@ -156,8 +156,35 @@ async def openai_chat(request: Request) -> Response:
     repeat_penalty: float | None = body.get("repeat_penalty")
     max_tokens: int | None = body.get("max_tokens")
     system_prompt_override: str | None = body.get("system_prompt_override") or None
+    # OpenAI function-calling — agentic coding clients (claw-code, Aider, Continue)
+    # send these; when present we skip Loca's custom tool loop and forward verbatim.
+    tools: list[dict] | None = body.get("tools")
+    tool_choice = body.get("tool_choice")
 
     assert _orchestrator is not None
+
+    if tools:
+        if stream:
+            return StreamingResponse(
+                cast(AsyncIterator[bytes], await _orchestrator.handle_passthrough(
+                    messages, tools=tools, tool_choice=tool_choice,
+                    has_image=has_image, stream=True,
+                    model_hint=mode_hint, model_override=model_override,
+                    num_ctx=num_ctx, temperature=temperature, top_p=top_p, top_k=top_k,
+                    repeat_penalty=repeat_penalty, max_tokens=max_tokens,
+                    system_prompt_override=system_prompt_override,
+                )),
+                media_type="text/event-stream",
+            )
+        passthrough_response = cast(dict, await _orchestrator.handle_passthrough(
+            messages, tools=tools, tool_choice=tool_choice,
+            has_image=has_image, stream=False,
+            model_hint=mode_hint, model_override=model_override,
+            num_ctx=num_ctx, temperature=temperature, top_p=top_p, top_k=top_k,
+            repeat_penalty=repeat_penalty, max_tokens=max_tokens,
+            system_prompt_override=system_prompt_override,
+        ))
+        return JSONResponse(content=passthrough_response)
 
     if stream:
         return StreamingResponse(
