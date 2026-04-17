@@ -9,7 +9,7 @@
 #   make all       — check + test + swift (CI-equivalent, no bundle)
 #   make ci        — alias for all (matches what GitHub Actions runs)
 
-.PHONY: check test e2e swift build all ci import
+.PHONY: check test e2e swift build all ci import train-build train
 
 PYTHON := $(CURDIR)/.venv/bin/python3
 RUFF    := $(shell command -v ruff)
@@ -62,3 +62,13 @@ ci: all
 import:
 	@[ "$(path)" ] || (echo "Usage: make import path=<path-or-url>"; exit 1)
 	$(PYTHON) -m src.importers.cli "$(path)"
+
+# ── MLX LoRA training (foundation — see docs) ────────────────────────────────
+
+train-build:
+	@[ "$(out)" ] || (echo "Usage: make train-build out=<dataset-dir>"; exit 1)
+	$(PYTHON) -m src.training.cli build --out "$(out)"
+
+train:
+	@[ "$(model)" ] && [ "$(data)" ] || (echo "Usage: make train model=<path> data=<dataset-dir> [iters=1000] [adapter=./loca-adapter]"; exit 1)
+	$(PYTHON) -m src.training.cli train --model "$(model)" --data "$(data)" --iters $${iters:-1000} --adapter-out $${adapter:-./loca-adapter}
