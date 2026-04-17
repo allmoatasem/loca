@@ -90,17 +90,21 @@ class Orchestrator:
         else:
             system_prompt = _build_system_prompt(result.model, model_name, self._hw)
 
-        # Memory injection: recall using last 3 messages for conversational context.
-        # For broad queries ("what do you know about me"), expand into sub-queries
-        # and union the results so we don't miss major facets of the user's profile.
+        # Memory injection pipeline:
+        #   1. Build a recall query from the last 3 turns
+        #   2. Expand broad queries into sub-queries for wider coverage
+        #   3. Union-dedupe into a pool of up to 50 candidates
+        #   4. Lightweight heuristic rerank to keep the 10 most relevant
+        #   5. Format with char budget so we never overflow the model context
         if self._memory:
             recall_query = _build_recall_query(messages)
             queries = _expand_query(recall_query)
-            per_query_limit = 20 if len(queries) == 1 else 10
+            per_query_limit = 25 if len(queries) == 1 else 15
             buckets = [
                 await self._memory.recall(q, limit=per_query_limit) for q in queries
             ]
-            relevant = _merge_recall_results(buckets, limit=20)
+            pool = _merge_recall_results(buckets, limit=50)
+            relevant = _rerank_memories(recall_query, pool, keep=10)
             mem_ctx = self._memory.format_for_prompt(relevant)
         else:
             mem_ctx = get_memories_context()
@@ -637,6 +641,60 @@ def _expand_query(query: str) -> list[str]:
     if _is_broad_query(query):
         return [query, *_EXPANDED_SUB_QUERIES]
     return [query]
+
+
+# Minimal English stopword list so "what do you know about me" doesn't inflate
+# overlap against every memory that happens to contain "you".
+_RERANK_STOPWORDS = frozenset({
+    "a", "an", "and", "are", "as", "at", "be", "by", "do", "does", "for", "from",
+    "has", "have", "i", "in", "is", "it", "its", "me", "my", "myself", "of", "on",
+    "or", "she", "so", "that", "the", "this", "to", "us", "was", "we", "were",
+    "what", "when", "where", "which", "who", "whom", "with", "you", "your", "am",
+    "about", "tell", "know", "everything", "anything",
+})
+_RERANK_TOKEN_RE = re.compile(r"\w+")
+
+
+def _rerank_memories(query: str, memories: list[dict], keep: int) -> list[dict]:
+    """Lightweight keyword-overlap rerank over top-N recall hits.
+
+    Not a true cross-encoder — it's a cheap, dep-free heuristic that improves
+    precision on vague queries by boosting memories whose content actually
+    matches query terms and penalising category-label-sized memories. A proper
+    cross-encoder pass is a future upgrade (would require sentence-transformers
+    + torch which conflicts with Loca's MLX-first footprint).
+    """
+    if keep <= 0 or not memories:
+        return []
+    q_tokens = {
+        t for t in _RERANK_TOKEN_RE.findall(query.lower())
+        if t not in _RERANK_STOPWORDS
+    }
+    if not q_tokens:
+        return memories[:keep]
+    scored: list[tuple[float, int, dict]] = []
+    for rank, m in enumerate(memories):
+        content = m.get("content", "")
+        low = content.lower()
+        m_tokens = _RERANK_TOKEN_RE.findall(low)
+        if not m_tokens:
+            continue
+        m_set = set(m_tokens)
+        overlap = len(q_tokens & m_set)
+        overlap_score = overlap / len(q_tokens)
+        density = overlap / len(m_tokens)
+        rank_bonus = 1.0 / (1 + rank)
+        length = len(content)
+        if length < 20:
+            length_factor = 0.3
+        elif length > 3000:
+            length_factor = 0.7
+        else:
+            length_factor = 1.0
+        score = (overlap_score * 2 + density * 3 + rank_bonus) * length_factor
+        scored.append((score, rank, m))
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    return [m for _, _, m in scored[:keep]]
 
 
 def _merge_recall_results(buckets: list[list[dict]], limit: int) -> list[dict]:
