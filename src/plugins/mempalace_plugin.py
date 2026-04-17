@@ -120,7 +120,7 @@ class MemPalaceMemoryPlugin(MemoryPlugin):
             logger.warning("MemPalace store failed: %s", exc)
             return ""
 
-    async def recall(self, query: str, limit: int = 5) -> list[dict]:
+    async def recall(self, query: str, limit: int = 20) -> list[dict]:
         if not self._available or not query.strip():
             return []
         try:

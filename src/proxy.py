@@ -818,7 +818,7 @@ async def api_delete_memory(mem_id: str) -> JSONResponse:
 
 
 @app.get("/api/memories/recall")
-async def api_recall_memories(q: str, limit: int = 5) -> JSONResponse:
+async def api_recall_memories(q: str, limit: int = 20) -> JSONResponse:
     """Semantic (or keyword) search over stored memories."""
     assert _plugin_manager is not None
     if not q.strip():

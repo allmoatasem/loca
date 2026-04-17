@@ -93,7 +93,7 @@ class Orchestrator:
         # Memory injection: recall using last 3 messages for conversational context
         if self._memory:
             recall_query = _build_recall_query(messages)
-            relevant = await self._memory.recall(recall_query, limit=6)
+            relevant = await self._memory.recall(recall_query, limit=20)
             mem_ctx = self._memory.format_for_prompt(relevant)
         else:
             mem_ctx = get_memories_context()
