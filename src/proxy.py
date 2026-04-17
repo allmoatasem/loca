@@ -800,7 +800,29 @@ async def api_upload(file: UploadFile = File(...)) -> JSONResponse:
 _STATIC = os.path.join(os.path.dirname(__file__), "static")
 
 @app.get("/")
-async def index() -> FileResponse:
+async def index() -> Response:
+    """Primary UI. After the Phase 5 cutover this serves the Svelte build
+    under src/static/ui/. Falls back to the legacy HTML if the Svelte
+    bundle hasn't been built yet (e.g. fresh checkout without
+    `npm run build --prefix ui`), so nobody hits a broken page."""
+    ui_index = os.path.join(_STATIC, "ui", "index.html")
+    if os.path.isfile(ui_index):
+        return FileResponse(
+            ui_index,
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
+    return FileResponse(
+        os.path.join(_STATIC, "index.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
+@app.get("/legacy", include_in_schema=False)
+async def legacy_index() -> FileResponse:
+    """Pre-Svelte HTML UI. Kept alive for features that haven't been
+    ported yet (Manage Models, Vault, Memory viewer, voice, tool-call
+    + research-mode UI, Philosophy, Acknowledgements). Will be removed
+    once Svelte reaches full feature parity."""
     return FileResponse(
         os.path.join(_STATIC, "index.html"),
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
