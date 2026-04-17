@@ -11,18 +11,52 @@
     role: Role;
     content: string;
     isStreaming?: boolean;
+    imageUrls?: string[];       // rendered above the bubble for user messages
   }
-  let { role, content, isStreaming = false }: Props = $props();
+  let { role, content, isStreaming = false, imageUrls = [] }: Props = $props();
 
   const split = $derived(role === 'assistant' ? splitThinkBlocks(content) : null);
   const answerHtml = $derived.by(() => {
     if (!split) return '';
     return renderMarkdown(split.answer);
   });
+
+  let bodyEl: HTMLDivElement | undefined = $state();
+
+  // Run Prism over any code blocks after each render.
+  $effect(() => {
+    // touch answerHtml so we rerun when content changes
+    void answerHtml;
+    if (!bodyEl) return;
+    const prism = (window as unknown as { Prism?: { highlightElement: (el: Element) => void } }).Prism;
+    if (!prism) return;
+    for (const code of bodyEl.querySelectorAll('pre > code')) {
+      prism.highlightElement(code);
+    }
+  });
+
+  let copied = $state(false);
+  async function copyToClipboard(): Promise<void> {
+    const text = split ? split.answer : content;
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+      setTimeout(() => (copied = false), 1200);
+    } catch {
+      // Older browsers / insecure contexts — silent fail is fine.
+    }
+  }
 </script>
 
 <article class="bubble" class:user={role === 'user'} class:assistant={role === 'assistant'}>
   {#if role === 'user'}
+    {#if imageUrls.length > 0}
+      <div class="attach-images">
+        {#each imageUrls as url}
+          <img src={url} alt="attachment" />
+        {/each}
+      </div>
+    {/if}
     <p class="text">{content}</p>
   {:else if isStreaming && content === ''}
     <span class="dots"><span></span><span></span><span></span></span>
@@ -31,7 +65,12 @@
       <ThinkBlock text={split.thinking} defaultOpen={split.answer === ''} />
     {/if}
     <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-    <div class="md">{@html answerHtml}</div>
+    <div class="md" bind:this={bodyEl}>{@html answerHtml}</div>
+    {#if !isStreaming && split.answer.trim()}
+      <button class="copy" onclick={copyToClipboard} aria-label="Copy reply">
+        {copied ? '✓ Copied' : 'Copy'}
+      </button>
+    {/if}
   {/if}
 </article>
 
@@ -55,6 +94,32 @@
     border: 1px solid var(--loca-color-border);
   }
   .text { margin: 0; }
+
+  .attach-images {
+    display: flex;
+    gap: 6px;
+    margin: 0 0 8px;
+    flex-wrap: wrap;
+  }
+  .attach-images img {
+    max-width: 200px;
+    max-height: 200px;
+    border-radius: var(--loca-radius-sm);
+    object-fit: cover;
+  }
+
+  .copy {
+    align-self: flex-start;
+    margin-top: 6px;
+    background: none;
+    border: 1px solid var(--loca-color-border);
+    color: var(--loca-color-text-muted);
+    border-radius: var(--loca-radius-sm);
+    padding: 2px 8px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .copy:hover { color: var(--loca-color-text); background: rgba(127, 127, 127, 0.08); }
 
   .dots {
     display: inline-flex;
