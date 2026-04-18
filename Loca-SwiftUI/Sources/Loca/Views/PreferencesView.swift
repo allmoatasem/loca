@@ -99,7 +99,7 @@ private struct GeneralPrefsTab: View {
         }
         .formStyle(.grouped)
         .padding(20)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task { await loadModelsDir() }
     }
 
@@ -143,38 +143,32 @@ private struct InferencePrefsTab: View {
     private var isCustom: Bool { state.selectedRecipe == "Custom" }
 
     var body: some View {
-        // Wrap in a vertical ScrollView so the new Advanced section (and
-        // any future sections) don't overflow the fixed-height window.
-        ScrollView(.vertical) {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Recipe")
-                .font(.headline)
-                .padding(.horizontal, 20)
-                .padding(.top, 16)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(InferenceRecipe.all) { recipe in
-                        RecipeCard(recipe: recipe, isSelected: state.selectedRecipe == recipe.name) {
-                            state.selectedRecipe = recipe.name
-                            if recipe.name != "Custom" {
-                                state.temperature   = recipe.temperature
-                                state.topP          = recipe.topP
-                                state.topK          = recipe.topK
-                                state.repeatPenalty = recipe.repeatPenalty
-                                state.maxTokens     = recipe.maxTokens
+        // One Form containing everything — Form scrolls internally on
+        // macOS, so Recipe + Parameters + Advanced all scroll together.
+        // Nesting Form inside an outer ScrollView breaks scrolling because
+        // the Form's internal scroll swallows the outer wheel events.
+        Form {
+            Section("Recipe") {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(InferenceRecipe.all) { recipe in
+                            RecipeCard(recipe: recipe, isSelected: state.selectedRecipe == recipe.name) {
+                                state.selectedRecipe = recipe.name
+                                if recipe.name != "Custom" {
+                                    state.temperature   = recipe.temperature
+                                    state.topP          = recipe.topP
+                                    state.topK          = recipe.topK
+                                    state.repeatPenalty = recipe.repeatPenalty
+                                    state.maxTokens     = recipe.maxTokens
+                                }
                             }
                         }
                     }
+                    .padding(.vertical, 4)
                 }
-                .padding(.horizontal, 20)
             }
 
-            Divider()
-                .padding(.horizontal, 20)
-
-            Form {
-                Section("Parameters" + (isCustom ? "" : " (select Custom to edit)")) {
+            Section("Parameters" + (isCustom ? "" : " (select Custom to edit)")) {
                     SliderRow(
                         label: "Temperature",
                         value: $state.temperature,
@@ -211,21 +205,18 @@ private struct InferencePrefsTab: View {
                     ) { state.selectedRecipe = "Custom" }
 
                     IntSliderRow(
-                        label: "Max Tokens",
-                        value: $state.maxTokens,
-                        range: 128...8192,
-                        hint: "Maximum tokens generated per response",
-                        enabled: isCustom
-                    ) { state.selectedRecipe = "Custom" }
-                }
-
-                AdvancedBackendArgsSection()
+                    label: "Max Tokens",
+                    value: $state.maxTokens,
+                    range: 128...8192,
+                    hint: "Maximum tokens generated per response",
+                    enabled: isCustom
+                ) { state.selectedRecipe = "Custom" }
             }
-            .formStyle(.grouped)
-            .padding(.horizontal, 20)
-            .padding(.bottom, 20)
+
+            AdvancedBackendArgsSection()
         }
-        }  // end ScrollView
+        .formStyle(.grouped)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 
@@ -583,7 +574,7 @@ private struct PerformancePrefsTab: View {
         }
         .formStyle(.grouped)
         .padding(20)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear { state.loadRecommendationsIfNeeded() }
     }
 }
@@ -792,7 +783,7 @@ private struct SystemPromptPrefsTab: View {
         }
         .formStyle(.grouped)
         .padding(20)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 
