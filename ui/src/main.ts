@@ -1,5 +1,6 @@
 import { mount } from 'svelte';
 import './lib/tokens.css';
+import 'katex/dist/katex.min.css';
 import App from './App.svelte';
 
 const app = mount(App, {

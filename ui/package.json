@@ -11,9 +11,15 @@
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "openapi": "openapi-typescript openapi.json -o src/lib/api.ts"
   },
+  "dependencies": {
+    "dompurify": "^3.2.0",
+    "katex": "^0.16.11",
+    "marked": "^14.1.0"
+  },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "@tsconfig/svelte": "^5.0.4",
+    "@types/katex": "^0.16.7",
     "openapi-typescript": "^7.4.0",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
