@@ -1108,6 +1108,21 @@ struct InputBar: View {
                 }
                 .help("Lockdown — disable all network tools")
 
+                if let activeProject = state.activeProject {
+                    Divider().frame(height: 14)
+                    Text("📚 \(activeProject.title)")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                    ForEach(PartnerMode.allCases) { mode in
+                        InputToolButton(
+                            icon: mode.icon, label: mode.label,
+                            isActive: state.partnerMode == mode, isDisabled: false
+                        ) { state.partnerMode = mode }
+                        .help(partnerHelp(mode))
+                    }
+                }
+
                 Button(action: pickFile) {
                     HStack(spacing: 4) {
                         Image(systemName: "paperclip").font(.system(size: 10))
@@ -1207,6 +1222,14 @@ struct InputBar: View {
         !state.isStreaming &&
         !state.isLoadingModel &&
         (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
+    }
+
+    private func partnerHelp(_ mode: PartnerMode) -> String {
+        switch mode {
+        case .default_: return "Default partner — biased to project sources, normal chat"
+        case .critique: return "Critique — plays devil's advocate; surfaces weak claims + counter-arguments"
+        case .teach:    return "Teach — step-by-step pedagogy; intuition first, formalism second"
+        }
     }
 
     private func pickFile() {

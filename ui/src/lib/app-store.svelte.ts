@@ -7,12 +7,16 @@ import {
   fetchActiveModel,
   fetchConversations,
   fetchLocalModels,
+  fetchProjects as apiFetchProjects,
   patchConversation as apiPatch,
   searchConversations as apiSearch,
   unloadModel as apiUnload,
   type ConversationMeta,
   type LocalModel,
+  type Project,
 } from './api.client';
+
+export type PartnerMode = 'default' | 'critique' | 'teach';
 
 export type Capability = 'general' | 'reason' | 'code';
 
@@ -43,24 +47,49 @@ function appStore() {
   let convSelectNonce    = $state<number>(0);
   let loading            = $state<boolean>(false);
   let errorMsg           = $state<string | null>(null);
+  // Research Partner — project list + which project is "active" for the
+  // current chat session. Active project biases retrieval + scopes the
+  // Workspace panel. Partner mode swaps the system-prompt overlay.
+  let projects           = $state<Project[]>([]);
+  let activeProjectId    = $state<string | null>(null);
+  let partnerMode        = $state<PartnerMode>('default');
 
   async function refresh(): Promise<void> {
     loading = true;
     errorMsg = null;
     try {
-      const [models, active, convs] = await Promise.all([
+      const [models, active, convs, projs] = await Promise.all([
         fetchLocalModels(),
         fetchActiveModel(),
         fetchConversations(),
+        apiFetchProjects().catch(() => [] as Project[]),
       ]);
       localModels = models;
       activeModelName = active;
       conversations = convs;
+      projects = projs;
     } catch (e) {
       errorMsg = e instanceof Error ? e.message : String(e);
     } finally {
       loading = false;
     }
+  }
+
+  async function refreshProjects(): Promise<void> {
+    try {
+      projects = await apiFetchProjects();
+    } catch (e) {
+      errorMsg = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  function setActiveProject(id: string | null): void {
+    activeProjectId = id;
+    if (id === null) partnerMode = 'default';
+  }
+
+  function setPartnerMode(mode: PartnerMode): void {
+    partnerMode = mode;
   }
 
   async function search(q: string): Promise<void> {
@@ -152,6 +181,13 @@ function appStore() {
     get convSelectNonce() { return convSelectNonce; },
     get loading() { return loading; },
     get errorMsg() { return errorMsg; },
+    get projects() { return projects; },
+    get activeProjectId() { return activeProjectId; },
+    get activeProject(): Project | null {
+      if (!activeProjectId) return null;
+      return projects.find((p) => p.id === activeProjectId) ?? null;
+    },
+    get partnerMode() { return partnerMode; },
     refresh,
     search,
     deleteConv,
@@ -161,6 +197,9 @@ function appStore() {
     adoptActiveConv,
     toggleStar,
     setFolder,
+    refreshProjects,
+    setActiveProject,
+    setPartnerMode,
   };
 }
 

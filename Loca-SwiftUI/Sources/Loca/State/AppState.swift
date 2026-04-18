@@ -76,6 +76,18 @@ final class AppState: ObservableObject {
     @Published var researchMode = false
     @Published var lockdownMode = false
 
+    // MARK: - Research Partner (projects)
+
+    @Published var projects: [Project] = []
+    @Published var activeProjectId: String?
+    @Published var partnerMode: PartnerMode = .default_
+    @Published var isResearchOpen = false
+
+    var activeProject: Project? {
+        guard let id = activeProjectId else { return nil }
+        return projects.first(where: { $0.id == id })
+    }
+
     // MARK: - System stats
 
     @Published var ramUsed:  Double?

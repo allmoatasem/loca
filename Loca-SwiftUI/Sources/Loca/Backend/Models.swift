@@ -10,6 +10,9 @@ struct ChatRequest: Encodable {
     let stream: Bool
     let num_ctx: Int
     let research_mode: Bool
+    // Research Partner — optional; omit to get default behaviour.
+    let partner_mode: String?
+    let project_id: String?
     // Inference preferences
     let temperature: Double?
     let top_p: Double?
@@ -687,6 +690,85 @@ struct StartupStatus: Decodable {
 struct BackendModeResponse: Decodable {
     let lm_studio: Bool
     let lm_studio_url: String
+}
+
+// MARK: - Research Partner — projects
+
+enum PartnerMode: String, CaseIterable, Identifiable {
+    case default_ = "default"
+    case critique
+    case teach
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .default_: return "Default"
+        case .critique: return "Critique"
+        case .teach:    return "Teach"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .default_: return "bubble.left.and.bubble.right"
+        case .critique: return "hand.raised.slash"
+        case .teach:    return "graduationcap"
+        }
+    }
+}
+
+struct Project: Identifiable, Decodable, Equatable {
+    let id: String
+    let title: String
+    let scope: String
+    let notes: String
+    let created: Double
+    let updated: Double
+    let item_count: Int?
+    let conv_count: Int?
+}
+
+struct ProjectItem: Identifiable, Decodable, Equatable {
+    let id: String
+    let project_id: String
+    let kind: String
+    let ref_id: String?
+    let title: String
+    let body: String
+    let url: String?
+    let content_hash: String
+    let created: Double
+}
+
+struct ProjectWatch: Identifiable, Decodable, Equatable {
+    let id: String
+    let project_id: String
+    let sub_scope: String
+    let schedule_minutes: Int
+    let last_run: Double?
+    let last_snapshot_hash: String?
+    let created: Double
+}
+
+struct ProjectDetail: Decodable {
+    let id: String
+    let title: String
+    let scope: String
+    let notes: String
+    let created: Double
+    let updated: Double
+    let items_count: Int
+    let conversations: [ConversationMeta]
+    let watches: [ProjectWatch]
+}
+
+struct CreateProjectResponse: Decodable {
+    let id: String
+    let project: Project
+}
+
+struct ProjectItemsResponse: Decodable {
+    let items: [ProjectItem]
+    let total: Int
 }
 
 // MARK: - Server status

@@ -283,3 +283,84 @@ def test_add_and_list_import_record():
     store_module.add_import_record(source="anthropic", path="/tmp/export", stored=10, skipped=2)
     history = store_module.list_import_history()
     assert any(r["source"] == "anthropic" and r["stored"] == 10 for r in history)
+
+
+# ── Research Projects ─────────────────────────────────────────────────────────
+
+class TestProjects:
+    def test_create_and_get(self):
+        pid = store_module.create_project("Transformers", "transformers in audio")
+        proj = store_module.get_project(pid)
+        assert proj is not None
+        assert proj["title"] == "Transformers"
+        assert proj["scope"] == "transformers in audio"
+
+    def test_list_projects_orders_by_updated(self):
+        import time as _time
+        p1 = store_module.create_project("Old")
+        _time.sleep(0.01)
+        p2 = store_module.create_project("New")
+        ids = [p["id"] for p in store_module.list_projects()]
+        assert ids.index(p2) < ids.index(p1)
+
+    def test_patch_project_updates_timestamp(self):
+        pid = store_module.create_project("A", "scope")
+        original = store_module.get_project(pid)["updated"]
+        import time as _time
+        _time.sleep(0.01)
+        store_module.patch_project(pid, scope="new scope", notes="a note")
+        fresh = store_module.get_project(pid)
+        assert fresh["scope"] == "new scope"
+        assert fresh["notes"] == "a note"
+        assert fresh["updated"] > original
+
+    def test_delete_clears_project_id_on_conversations(self):
+        pid = store_module.create_project("P")
+        cid = store_module.save_conversation(None, "conv", [{"role": "user", "content": "x"}])
+        store_module.set_conversation_project(cid, pid)
+        assert store_module.get_conversation(cid)["project_id"] == pid
+        store_module.delete_project(pid)
+        assert store_module.get_conversation(cid)["project_id"] is None
+
+    def test_add_item_and_dedup(self):
+        pid = store_module.create_project("P")
+        iid1 = store_module.add_project_item(pid, kind="quote", body="hello", content_hash="h1")
+        iid2 = store_module.add_project_item(pid, kind="quote", body="hello", content_hash="h1")
+        assert iid1 is not None
+        assert iid2 is None  # dedupe
+        assert store_module.count_project_items(pid) == 1
+
+    def test_list_items_by_kind(self):
+        pid = store_module.create_project("P")
+        store_module.add_project_item(pid, kind="quote", body="q", content_hash="h1")
+        store_module.add_project_item(pid, kind="web_url", url="https://x", content_hash="h2")
+        quotes = store_module.list_project_items(pid, kind="quote")
+        urls = store_module.list_project_items(pid, kind="web_url")
+        assert len(quotes) == 1 and quotes[0]["kind"] == "quote"
+        assert len(urls) == 1 and urls[0]["url"] == "https://x"
+
+    def test_watch_crud_and_due(self):
+        import time as _time
+        pid = store_module.create_project("P")
+        wid = store_module.create_project_watch(pid, "audio transformers", schedule_minutes=60)
+        due_now = [w["id"] for w in store_module.list_due_watches()]
+        assert wid in due_now  # never-run = due
+        store_module.mark_watch_ran(wid, "snapshot-hash-1")
+        due_after = [w["id"] for w in store_module.list_due_watches()]
+        assert wid not in due_after
+        due_future = [w["id"] for w in store_module.list_due_watches(now=_time.time() + 7200)]
+        assert wid in due_future
+
+    def test_project_id_on_conversations(self):
+        pid = store_module.create_project("P")
+        cid = store_module.save_conversation(None, "conv", [{"role": "user", "content": "hi"}])
+        store_module.set_conversation_project(cid, pid)
+        convs = store_module.list_project_conversations(pid)
+        assert any(c["id"] == cid for c in convs)
+        store_module.set_conversation_project(cid, None)
+        assert store_module.list_project_conversations(pid) == []
+
+    def test_add_item_rejects_unknown_kind(self):
+        pid = store_module.create_project("P")
+        with pytest.raises(ValueError):
+            store_module.add_project_item(pid, kind="not-a-real-kind", body="x")

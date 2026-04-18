@@ -323,6 +323,117 @@ actor BackendClient {
         return try JSONDecoder().decode(ImportHistoryResponse.self, from: data).imports
     }
 
+    // MARK: - Research Projects
+
+    struct ProjectListResponse: Decodable { let projects: [Project] }
+
+    func listProjects() async throws -> [Project] {
+        let (data, _) = try await get("/api/projects")
+        return try JSONDecoder().decode(ProjectListResponse.self, from: data).projects
+    }
+
+    func getProject(_ id: String) async throws -> ProjectDetail {
+        let (data, _) = try await get("/api/projects/\(id)")
+        return try JSONDecoder().decode(ProjectDetail.self, from: data)
+    }
+
+    func createProject(title: String, scope: String) async throws -> Project {
+        let (data, _) = try await postRaw("/api/projects", body: ["title": title, "scope": scope])
+        return try JSONDecoder().decode(CreateProjectResponse.self, from: data).project
+    }
+
+    func patchProject(_ id: String, title: String? = nil, scope: String? = nil, notes: String? = nil) async throws {
+        var body: [String: Any] = [:]
+        if let title { body["title"] = title }
+        if let scope { body["scope"] = scope }
+        if let notes { body["notes"] = notes }
+        guard !body.isEmpty else { return }
+        _ = try await patchRaw("/api/projects/\(id)", body: body)
+    }
+
+    func deleteProject(_ id: String) async throws {
+        _ = try await delete("/api/projects/\(id)")
+    }
+
+    func listProjectItems(_ id: String, kind: String? = nil) async throws -> [ProjectItem] {
+        var path = "/api/projects/\(id)/items"
+        if let kind { path += "?kind=\(kind)" }
+        let (data, _) = try await get(path)
+        return try JSONDecoder().decode(ProjectItemsResponse.self, from: data).items
+    }
+
+    func addProjectItem(_ id: String, kind: String, title: String = "",
+                        body: String = "", url: String? = nil, refId: String? = nil) async throws {
+        var payload: [String: Any] = ["kind": kind, "title": title, "body": body]
+        if let url { payload["url"] = url }
+        if let refId { payload["ref_id"] = refId }
+        _ = try await postRaw("/api/projects/\(id)/items", body: payload)
+    }
+
+    func deleteProjectItem(projectId: String, itemId: String) async throws {
+        _ = try await delete("/api/projects/\(projectId)/items/\(itemId)")
+    }
+
+    func attachConversationToProject(projectId: String, convId: String) async throws {
+        _ = try await postRaw(
+            "/api/projects/\(projectId)/attach-conversation",
+            body: ["conv_id": convId]
+        )
+    }
+
+    func detachConversationFromProject(projectId: String, convId: String) async throws {
+        _ = try await postRaw(
+            "/api/projects/\(projectId)/detach-conversation",
+            body: ["conv_id": convId]
+        )
+    }
+
+    struct DigDeeperResponse: Decodable {
+        let sub_scope: String
+        let total: Int
+        struct Bookmark: Decodable {
+            let id: String?
+            let url: String
+            let title: String
+            let duplicate: Bool
+        }
+        let bookmarks: [Bookmark]
+    }
+
+    func digDeeper(projectId: String, subScope: String, maxResults: Int = 5) async throws -> DigDeeperResponse {
+        let (data, _) = try await postRaw(
+            "/api/projects/\(projectId)/dig-deeper",
+            body: ["sub_scope": subScope, "max_results": maxResults]
+        )
+        return try JSONDecoder().decode(DigDeeperResponse.self, from: data)
+    }
+
+    struct SyncVaultResponse: Decodable {
+        let stored: Int
+        let skipped: Int
+        let total: Int
+        let synced_at: String
+    }
+
+    func syncVault(projectId: String, path: String) async throws -> SyncVaultResponse {
+        let (data, _) = try await postRaw(
+            "/api/projects/\(projectId)/sync-vault",
+            body: ["path": path]
+        )
+        return try JSONDecoder().decode(SyncVaultResponse.self, from: data)
+    }
+
+    func createWatch(projectId: String, subScope: String, scheduleMinutes: Int) async throws {
+        _ = try await postRaw(
+            "/api/projects/\(projectId)/watches",
+            body: ["sub_scope": subScope, "schedule_minutes": scheduleMinutes]
+        )
+    }
+
+    func deleteWatch(projectId: String, watchId: String) async throws {
+        _ = try await delete("/api/projects/\(projectId)/watches/\(watchId)")
+    }
+
     // MARK: - Voice
 
     func transcribeAudio(_ audioData: Data, mimeType: String = "audio/wav") async throws -> String {

@@ -216,6 +216,12 @@
         num_ctx: app.contextWindow,
         research_mode: researchMode && !lockdownMode,
       };
+      // Research Partner — project scope + partner-mode overlay. Both
+      // optional; backend ignores default/empty values.
+      if (app.activeProjectId) body.project_id = app.activeProjectId;
+      if (app.partnerMode && app.partnerMode !== 'default') {
+        body.partner_mode = app.partnerMode;
+      }
       if (chatTemplateKwargs) body.chat_template_kwargs = chatTemplateKwargs;
       if (extraBody)          body.extra_body            = extraBody;
       const resp = await fetch('/v1/chat/completions', {
@@ -456,6 +462,29 @@
       onclick={toggleLockdown}
       title="Lockdown — disable all network tools"
     >🔒 Lockdown</button>
+    {#if app.activeProject}
+      <div class="partner-segment" role="group" aria-label="Partner mode">
+        <span class="partner-label" title={`Project: ${app.activeProject.title}`}>📚 {app.activeProject.title}</span>
+        <button
+          class="tool segment"
+          class:active={app.partnerMode === 'default'}
+          onclick={() => app.setPartnerMode('default')}
+          title="Default partner — normal chat, biased to project sources"
+        >Default</button>
+        <button
+          class="tool segment"
+          class:active={app.partnerMode === 'critique'}
+          onclick={() => app.setPartnerMode('critique')}
+          title="Critique — devil's advocate, surfaces weak claims"
+        >🥊 Critique</button>
+        <button
+          class="tool segment"
+          class:active={app.partnerMode === 'teach'}
+          onclick={() => app.setPartnerMode('teach')}
+          title="Teach — step-by-step pedagogy"
+        >🎓 Teach</button>
+      </div>
+    {/if}
   </div>
 
   {#if history.length > 0}
@@ -648,5 +677,22 @@
   .input-tools .tool:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+  }
+  .partner-segment {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 10px;
+    padding-left: 10px;
+    border-left: 1px solid var(--loca-color-border);
+  }
+  .partner-label {
+    font-size: 10px;
+    color: var(--loca-color-text-muted);
+    margin-right: 4px;
+    white-space: nowrap;
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 </style>

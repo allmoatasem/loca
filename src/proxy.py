@@ -44,14 +44,29 @@ from .provenance import (
     write_provenance,
 )
 from .store import (
+    add_project_item,
+    count_project_items,
+    create_project,
+    create_project_watch,
     delete_conversation,
+    delete_project,
+    delete_project_item,
+    delete_project_watch,
     get_conversation,
+    get_project,
     list_conversations,
     list_import_history,
+    list_project_conversations,
+    list_project_items,
+    list_project_watches,
+    list_projects,
     list_vault_notes,
+    list_vault_paths,
     patch_conversation,
+    patch_project,
     save_conversation,
     search_conversations,
+    set_conversation_project,
 )
 from .voice_backend import VoiceBackend
 
@@ -113,12 +128,84 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     logger.info("Loca proxy started")
     asyncio.create_task(_build_recs_cache())
+    watches_task = asyncio.create_task(_watches_loop())
     yield
     # Shutdown
+    watches_task.cancel()
     if _plugin_manager:
         await _plugin_manager.stop()
     if _inference_backend:
         await _inference_backend.stop()
+
+
+async def _watches_loop() -> None:
+    """Background poller for Research Partner watches.
+
+    Every 5 minutes, queries `project_watches` for rows whose last_run
+    is older than their schedule, runs a web_search on the sub-scope,
+    diffs the top URL set against `last_snapshot_hash`, and appends
+    any new URLs as `web_url` project_items. Runs forever until the
+    FastAPI lifespan cancels it.
+    """
+    import hashlib as _hashlib  # noqa: PLC0415
+
+    from .store import (  # noqa: PLC0415
+        list_due_watches,
+        mark_watch_ran,
+    )
+    from .tools.web_search import web_search  # noqa: PLC0415
+    while True:
+        try:
+            await asyncio.sleep(300)  # 5 min tick; scheduling is coarse by design
+            due = list_due_watches()
+            for w in due:
+                sub_scope = w["sub_scope"]
+                try:
+                    result = await web_search(
+                        query=sub_scope,
+                        searxng_url=os.environ.get("SEARXNG_URL", "http://localhost:8888"),
+                        max_results=5,
+                        research_mode=False,
+                    )
+                except Exception as exc:
+                    logger.warning("watch %s search failed: %s", w["id"], exc)
+                    continue
+                urls = [h.get("url") for h in (result.get("results") or []) if h.get("url")]
+                snapshot_hash = _hashlib.sha256("\n".join(urls).encode()).hexdigest()
+                if snapshot_hash == (w.get("last_snapshot_hash") or ""):
+                    mark_watch_ran(w["id"], snapshot_hash)
+                    continue
+                prev_urls: set[str] = set()
+                for existing in list_project_items(w["project_id"], kind="web_url", limit=500):
+                    if existing.get("url"):
+                        prev_urls.add(existing["url"])
+                new_count = 0
+                for hit in (result.get("results") or []):
+                    u = hit.get("url")
+                    if not u or u in prev_urls:
+                        continue
+                    title = (hit.get("title") or u).strip()
+                    content_hash = _hashlib.sha256(f"url:{u}".encode()).hexdigest()
+                    iid = add_project_item(
+                        w["project_id"],
+                        kind="web_url",
+                        title=title,
+                        body=(hit.get("snippet") or "")[:500],
+                        url=u,
+                        content_hash=content_hash,
+                    )
+                    if iid is not None:
+                        new_count += 1
+                mark_watch_ran(w["id"], snapshot_hash)
+                if new_count:
+                    logger.info(
+                        "watch %s appended %d new URLs to project %s",
+                        w["id"], new_count, w["project_id"],
+                    )
+        except asyncio.CancelledError:  # pragma: no cover
+            return
+        except Exception as exc:  # pragma: no cover
+            logger.warning("watches loop iteration failed: %s", exc)
 
 
 app = FastAPI(title="Local AI Orchestrator Proxy", lifespan=lifespan)
@@ -200,6 +287,11 @@ async def openai_chat(request: Request) -> Response:
     model_override: str | None = body.get("model_override")
     num_ctx: int | None = body.get("num_ctx")
     research_mode: bool = body.get("research_mode", False)
+    # Research Partner inputs — partner_mode swaps the layered system
+    # prompt (critique / teach), project_id scopes retrieval. Both are
+    # opt-in; absent means default behaviour.
+    partner_mode: str | None = body.get("partner_mode")
+    project_id: str | None = body.get("project_id")
     temperature: float | None = body.get("temperature")
     top_p: float | None = body.get("top_p")
     top_k: int | None = body.get("top_k")
@@ -254,6 +346,7 @@ async def openai_chat(request: Request) -> Response:
                 system_prompt_override=system_prompt_override,
                 chat_template_kwargs=chat_template_kwargs,
                 extra_body=extra_body,
+                partner_mode=partner_mode, project_id=project_id,
             ),
             media_type="text/event-stream",
         )
@@ -262,6 +355,7 @@ async def openai_chat(request: Request) -> Response:
         messages, has_image=has_image, stream=False,
         model_hint=mode_hint, model_override=model_override,
         num_ctx=num_ctx, research_mode=research_mode,
+        partner_mode=partner_mode, project_id=project_id,
         temperature=temperature, top_p=top_p, top_k=top_k,
         repeat_penalty=repeat_penalty, max_tokens=max_tokens,
         system_prompt_override=system_prompt_override,
@@ -311,6 +405,8 @@ async def _openai_stream_response(
     system_prompt_override: str | None = None,
     chat_template_kwargs: dict | None = None,
     extra_body: dict | None = None,
+    partner_mode: str | None = None,
+    project_id: str | None = None,
 ) -> AsyncIterator[bytes]:
     output_chars = 0
     actual_model = model_override or model_hint or "local"
@@ -323,6 +419,7 @@ async def _openai_stream_response(
             messages, has_image=has_image, stream=True,
             model_hint=model_hint, model_override=model_override,
             num_ctx=num_ctx, research_mode=research_mode,
+            partner_mode=partner_mode, project_id=project_id,
             temperature=temperature, top_p=top_p, top_k=top_k,
             repeat_penalty=repeat_penalty, max_tokens=max_tokens,
             system_prompt_override=system_prompt_override,
@@ -1056,6 +1153,329 @@ async def api_patch_conversation(conv_id: str, request: Request) -> JSONResponse
 async def api_delete_conversation(conv_id: str) -> JSONResponse:
     delete_conversation(conv_id)
     return JSONResponse({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Research Projects API — the Research Partner feature
+# ---------------------------------------------------------------------------
+
+@app.get("/api/projects")
+async def api_list_projects() -> JSONResponse:
+    return JSONResponse({"projects": list_projects()})
+
+
+@app.post("/api/projects")
+async def api_create_project(request: Request) -> JSONResponse:
+    body = await request.json()
+    title = (body.get("title") or "").strip()
+    if not title:
+        return JSONResponse({"error": "title is required"}, status_code=400)
+    scope = (body.get("scope") or "").strip()
+    pid = create_project(title=title, scope=scope)
+    return JSONResponse({"id": pid, "project": get_project(pid)})
+
+
+@app.get("/api/projects/{project_id}")
+async def api_get_project(project_id: str) -> JSONResponse:
+    proj = get_project(project_id)
+    if not proj:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    proj["items_count"] = count_project_items(project_id)
+    proj["conversations"] = list_project_conversations(project_id)
+    proj["watches"] = list_project_watches(project_id)
+    return JSONResponse(proj)
+
+
+@app.patch("/api/projects/{project_id}")
+async def api_patch_project(project_id: str, request: Request) -> JSONResponse:
+    body = await request.json()
+    kwargs: dict = {}
+    if "title" in body:
+        kwargs["title"] = body["title"]
+    if "scope" in body:
+        kwargs["scope"] = body["scope"]
+    if "notes" in body:
+        kwargs["notes"] = body["notes"]
+    patch_project(project_id, **kwargs)
+    return JSONResponse({"ok": True, "project": get_project(project_id)})
+
+
+@app.delete("/api/projects/{project_id}")
+async def api_delete_project(project_id: str) -> JSONResponse:
+    delete_project(project_id)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/projects/{project_id}/items")
+async def api_list_project_items(
+    project_id: str, kind: str | None = None, limit: int = 200, offset: int = 0,
+) -> JSONResponse:
+    items = list_project_items(project_id, kind=kind, limit=limit, offset=offset)
+    return JSONResponse({"items": items, "total": count_project_items(project_id)})
+
+
+@app.post("/api/projects/{project_id}/items")
+async def api_add_project_item(project_id: str, request: Request) -> JSONResponse:
+    body = await request.json()
+    kind = body.get("kind")
+    if not kind:
+        return JSONResponse({"error": "kind is required"}, status_code=400)
+    import hashlib
+    title = (body.get("title") or "").strip()
+    article_body = (body.get("body") or "").strip()
+    ref_id = body.get("ref_id")
+    url = body.get("url")
+    raw = (url or "") + "\n" + title + "\n" + article_body
+    content_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest() if raw.strip() else ""
+    try:
+        iid = add_project_item(
+            project_id,
+            kind=kind, title=title, body=article_body,
+            ref_id=ref_id, url=url, content_hash=content_hash,
+        )
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    if iid is None:
+        return JSONResponse({"ok": True, "duplicate": True})
+    return JSONResponse({"id": iid})
+
+
+@app.delete("/api/projects/{project_id}/items/{item_id}")
+async def api_delete_project_item(project_id: str, item_id: str) -> JSONResponse:
+    delete_project_item(item_id)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/projects/{project_id}/attach-conversation")
+async def api_attach_conversation(project_id: str, request: Request) -> JSONResponse:
+    body = await request.json()
+    conv_id = body.get("conv_id")
+    if not conv_id:
+        return JSONResponse({"error": "conv_id is required"}, status_code=400)
+    set_conversation_project(conv_id, project_id)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/projects/{project_id}/detach-conversation")
+async def api_detach_conversation(project_id: str, request: Request) -> JSONResponse:
+    body = await request.json()
+    conv_id = body.get("conv_id")
+    if not conv_id:
+        return JSONResponse({"error": "conv_id is required"}, status_code=400)
+    set_conversation_project(conv_id, None)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/projects/{project_id}/watches")
+async def api_list_watches(project_id: str) -> JSONResponse:
+    return JSONResponse({"watches": list_project_watches(project_id)})
+
+
+@app.post("/api/projects/{project_id}/watches")
+async def api_create_watch(project_id: str, request: Request) -> JSONResponse:
+    body = await request.json()
+    sub_scope = (body.get("sub_scope") or "").strip()
+    if not sub_scope:
+        return JSONResponse({"error": "sub_scope is required"}, status_code=400)
+    minutes = int(body.get("schedule_minutes") or 1440)
+    wid = create_project_watch(project_id, sub_scope, minutes)
+    return JSONResponse({"id": wid})
+
+
+@app.delete("/api/projects/{project_id}/watches/{watch_id}")
+async def api_delete_watch(project_id: str, watch_id: str) -> JSONResponse:
+    delete_project_watch(watch_id)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/projects/{project_id}/related")
+async def api_project_related(project_id: str, limit: int = 10) -> JSONResponse:
+    """Link discovery — semantic neighbours to the project's scope text.
+    Unions TF-IDF matches from every indexed vault with recall hits from
+    the memory store. Surfaces "you've written about this before" notes
+    that aren't explicitly bookmarked yet."""
+    proj = get_project(project_id)
+    if not proj:
+        return JSONResponse({"error": "project not found"}, status_code=404)
+    scope = (proj.get("scope") or "").strip()
+    if not scope:
+        return JSONResponse({"items": [], "message": "Project has no scope text yet."})
+
+    from .vault_search import semantic_search  # noqa: PLC0415
+    results: list[dict] = []
+    per_source = max(3, limit)
+    for vpath in list_vault_paths():
+        for hit in semantic_search(vpath, scope, limit=per_source):
+            results.append({
+                "kind": "vault_chunk",
+                "title": hit.get("title") or hit.get("rel_path"),
+                "snippet": hit.get("snippet", ""),
+                "score": hit.get("score", 0.0),
+                "vault_path": vpath,
+                "rel_path": hit.get("rel_path"),
+            })
+    if _plugin_manager is not None and _plugin_manager.memory_plugin is not None:
+        try:
+            hits = await _plugin_manager.memory_plugin.recall(scope, limit=per_source)
+        except Exception:
+            hits = []
+        for h in hits:
+            snippet = (h.get("content") or "")[:240]
+            raw_score = h.get("score")
+            if raw_score is None:
+                dist = h.get("distance")
+                raw_score = -float(dist) if dist is not None else 0.0
+            results.append({
+                "kind": "memory",
+                "title": snippet[:80],
+                "snippet": snippet,
+                "score": float(raw_score),
+                "memory_id": h.get("id"),
+            })
+    results.sort(key=lambda r: r.get("score", 0.0), reverse=True)
+    # Strip duplicates by title before capping.
+    seen: set[str] = set()
+    deduped: list[dict] = []
+    for r in results:
+        key = (r.get("title") or "") + "|" + (r.get("snippet", "")[:80])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(r)
+        if len(deduped) >= limit:
+            break
+    return JSONResponse({"items": deduped})
+
+
+@app.post("/api/projects/{project_id}/dig-deeper")
+async def api_dig_deeper(project_id: str, request: Request) -> JSONResponse:
+    """Dig deeper — bounded web-research run on a sub-scope. Fetches the
+    top `max_results` search hits, imports them through the knowledge
+    pipeline (so they land in memory globally), and records URL
+    bookmarks on the project so the user can revisit the trail."""
+    if _plugin_manager is None or _plugin_manager.memory_plugin is None:
+        return JSONResponse({"error": "Memory plugin unavailable"}, status_code=503)
+    proj = get_project(project_id)
+    if not proj:
+        return JSONResponse({"error": "project not found"}, status_code=404)
+    body = await request.json()
+    sub_scope = (body.get("sub_scope") or "").strip()
+    max_results = int(body.get("max_results") or 5)
+    if not sub_scope:
+        return JSONResponse({"error": "sub_scope is required"}, status_code=400)
+
+    from .importers.service import build_default_service  # noqa: PLC0415
+    from .tools.web_search import web_search  # noqa: PLC0415
+
+    search_result = await web_search(
+        query=sub_scope,
+        searxng_url=os.environ.get("SEARXNG_URL", "http://localhost:8888"),
+        max_results=max_results,
+        research_mode=False,
+    )
+    hits = search_result.get("results") or []
+
+    svc = build_default_service(_plugin_manager.memory_plugin)  # type: ignore[arg-type]
+    bookmarks: list[dict] = []
+    import hashlib as _hashlib  # noqa: PLC0415
+    for hit in hits:
+        url = hit.get("url")
+        title = (hit.get("title") or url or "").strip()
+        if not url:
+            continue
+        # Import into memory for global recall, best-effort.
+        try:
+            async for _evt in svc.run(url):
+                pass
+        except Exception:
+            pass
+        # Bookmark the URL on the project regardless of import outcome.
+        content_hash = _hashlib.sha256(f"url:{url}".encode()).hexdigest()
+        iid = add_project_item(
+            project_id,
+            kind="web_url",
+            title=title,
+            body=(hit.get("snippet") or "")[:500],
+            url=url,
+            content_hash=content_hash,
+        )
+        bookmarks.append({
+            "id": iid, "url": url, "title": title,
+            "duplicate": iid is None,
+        })
+    return JSONResponse({
+        "sub_scope": sub_scope,
+        "bookmarks": bookmarks,
+        "total": len(bookmarks),
+    })
+
+
+@app.post("/api/projects/{project_id}/sync-vault")
+async def api_sync_vault(project_id: str, request: Request) -> JSONResponse:
+    """Absorbs the old Knowledge-Memory Link workflow as a project-scoped
+    action: ingest a vault (or any importable path) into the shared
+    memory store via the existing knowledge-import pipeline, then record
+    a `vault_sync` project_item that tracks path, last-sync time, and
+    counts. Re-running on an unchanged vault stores 0 new chunks thanks
+    to content-hash dedup inside ImportService."""
+    if _plugin_manager is None or _plugin_manager.memory_plugin is None:
+        return JSONResponse({"error": "Memory plugin unavailable"}, status_code=503)
+    body = await request.json()
+    path_str = (body.get("path") or "").strip()
+    if not path_str:
+        return JSONResponse({"error": "path is required"}, status_code=400)
+    proj = get_project(project_id)
+    if not proj:
+        return JSONResponse({"error": "project not found"}, status_code=404)
+
+    from .importers.service import build_default_service  # noqa: PLC0415
+    svc = build_default_service(_plugin_manager.memory_plugin)  # type: ignore[arg-type]
+
+    stored = 0
+    skipped = 0
+    total = 0
+    errors: list[str] = []
+    async for event in svc.run(path_str):
+        if event.get("status") == "error":
+            errors.append(str(event.get("message", "")))
+        if event.get("status") == "done":
+            stored = int(event.get("stored", 0))
+            skipped = int(event.get("skipped", 0))
+            total = int(event.get("total", 0))
+
+    import hashlib as _hashlib  # noqa: PLC0415
+    import json as _json  # noqa: PLC0415
+    stats = {
+        "path": path_str,
+        "stored": stored,
+        "skipped": skipped,
+        "total": total,
+        "errors": errors,
+        "synced_at": _utcnow_ts(),
+    }
+    # Hash the path alone so re-syncing the same vault upserts rather
+    # than piling up `vault_sync` items.
+    content_hash = _hashlib.sha256(f"vault:{path_str}".encode()).hexdigest()
+    # Remove any prior vault_sync for this path, then insert fresh row
+    # with updated stats. The dedup path in add_project_item would block
+    # the insert otherwise.
+    for existing in list_project_items(project_id, kind="vault_sync", limit=200):
+        if existing.get("content_hash") == content_hash:
+            delete_project_item(existing["id"])
+    add_project_item(
+        project_id,
+        kind="vault_sync",
+        title=f"Vault: {path_str}",
+        body=_json.dumps(stats),
+        url=path_str,
+        content_hash=content_hash,
+    )
+    return JSONResponse({"ok": True, **stats})
+
+
+def _utcnow_ts() -> str:
+    import datetime as _dt  # noqa: PLC0415
+    return _dt.datetime.now(_dt.timezone.utc).isoformat()
 
 
 # ---------------------------------------------------------------------------

@@ -78,7 +78,11 @@ def _migrate(c: sqlite3.Connection) -> None:
     """)
     # Idempotent column additions for existing databases
     conv_cols = {r[1] for r in c.execute("PRAGMA table_info(conversations)")}
-    for col, defn in [("starred", "INTEGER NOT NULL DEFAULT 0"), ("folder", "TEXT")]:
+    for col, defn in [
+        ("starred",    "INTEGER NOT NULL DEFAULT 0"),
+        ("folder",     "TEXT"),
+        ("project_id", "TEXT"),
+    ]:
         if col not in conv_cols:
             c.execute(f"ALTER TABLE conversations ADD COLUMN {col} {defn}")
 
@@ -139,6 +143,48 @@ def _migrate(c: sqlite3.Connection) -> None:
     );
     """)
 
+    # Research Projects — the Research Partner feature. A project is a
+    # scoped research effort; it has bookmarked items, freeform notes,
+    # and optional scheduled watches that re-query the scope for new
+    # findings.
+    c.executescript("""
+    CREATE TABLE IF NOT EXISTS projects (
+        id       TEXT PRIMARY KEY,
+        title    TEXT NOT NULL,
+        scope    TEXT NOT NULL DEFAULT '',
+        notes    TEXT NOT NULL DEFAULT '',
+        created  REAL NOT NULL,
+        updated  REAL NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS project_items (
+        id           TEXT PRIMARY KEY,
+        project_id   TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        kind         TEXT NOT NULL,
+        ref_id       TEXT,
+        title        TEXT NOT NULL DEFAULT '',
+        body         TEXT NOT NULL DEFAULT '',
+        url          TEXT,
+        content_hash TEXT NOT NULL DEFAULT '',
+        created      REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_project_items_project
+        ON project_items(project_id, created DESC);
+    CREATE INDEX IF NOT EXISTS idx_project_items_hash
+        ON project_items(project_id, content_hash);
+
+    CREATE TABLE IF NOT EXISTS project_watches (
+        id                 TEXT PRIMARY KEY,
+        project_id         TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        sub_scope          TEXT NOT NULL,
+        schedule_minutes   INTEGER NOT NULL,
+        last_run           REAL,
+        last_snapshot_hash TEXT,
+        created            REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_project_watches_project
+        ON project_watches(project_id);
+    """)
+
     c.commit()
 
 
@@ -150,7 +196,7 @@ _MISSING = object()
 def list_conversations(limit: int = 200) -> list[dict]:
     with _conn() as c:
         return [dict(r) for r in c.execute(
-            "SELECT id, title, created, updated, model, starred, folder "
+            "SELECT id, title, created, updated, model, starred, folder, project_id "
             "FROM conversations ORDER BY starred DESC, updated DESC LIMIT ?", (limit,)
         )]
 
@@ -179,7 +225,7 @@ def search_conversations(query: str, limit: int = 50) -> list[dict]:
     like = f"%{query}%"
     with _conn() as c:
         return [dict(r) for r in c.execute(
-            "SELECT id, title, created, updated, model, starred, folder "
+            "SELECT id, title, created, updated, model, starred, folder, project_id "
             "FROM conversations WHERE title LIKE ? OR messages LIKE ? "
             "ORDER BY starred DESC, updated DESC LIMIT ?",
             (like, like, limit),
@@ -392,6 +438,16 @@ def clear_vault_index(vault_path: str) -> None:
         c.commit()
 
 
+def list_vault_paths() -> list[str]:
+    """Distinct vault paths known to the index — used by link-discovery
+    so it can search every vault without the caller having to pick one."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT DISTINCT vault_path FROM vault_notes ORDER BY vault_path"
+        ).fetchall()
+    return [r["vault_path"] for r in rows]
+
+
 def list_vault_notes(vault_path: str) -> list[dict]:
     with _conn() as c:
         rows = c.execute(
@@ -475,3 +531,218 @@ def list_import_history(limit: int = 50) -> list[dict]:
             (limit,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ── Research Projects ────────────────────────────────────────────────────────
+
+PROJECT_ITEM_KINDS = ("conv", "memory", "vault_chunk", "web_url", "quote", "vault_sync")
+
+
+def create_project(title: str, scope: str = "") -> str:
+    now = time.time()
+    pid = str(uuid.uuid4())
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO projects (id, title, scope, notes, created, updated) "
+            "VALUES (?, ?, ?, '', ?, ?)",
+            (pid, title, scope, now, now),
+        )
+        c.commit()
+    return pid
+
+
+def list_projects(limit: int = 100) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT p.id, p.title, p.scope, p.notes, p.created, p.updated, "
+            "       (SELECT COUNT(*) FROM project_items i WHERE i.project_id = p.id) AS item_count, "
+            "       (SELECT COUNT(*) FROM conversations c WHERE c.project_id = p.id) AS conv_count "
+            "FROM projects p ORDER BY p.updated DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_project(project_id: str) -> dict | None:
+    with _conn() as c:
+        row = c.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def patch_project(
+    project_id: str, *, title=_MISSING, scope=_MISSING, notes=_MISSING,
+) -> None:
+    parts: list[str] = []
+    vals: list[object] = []
+    if title is not _MISSING:
+        parts.append("title = ?")
+        vals.append(title)
+    if scope is not _MISSING:
+        parts.append("scope = ?")
+        vals.append(scope)
+    if notes is not _MISSING:
+        parts.append("notes = ?")
+        vals.append(notes)
+    if not parts:
+        return
+    parts.append("updated = ?")
+    vals.append(time.time())
+    vals.append(project_id)
+    with _conn() as c:
+        c.execute(
+            f"UPDATE projects SET {', '.join(parts)} WHERE id = ?", vals,
+        )
+        c.commit()
+
+
+def delete_project(project_id: str) -> None:
+    with _conn() as c:
+        # Foreign-key cascades handle project_items / project_watches.
+        # conversations.project_id is a plain TEXT column, so clear it
+        # manually to avoid dangling references.
+        c.execute(
+            "UPDATE conversations SET project_id = NULL WHERE project_id = ?",
+            (project_id,),
+        )
+        c.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        c.commit()
+
+
+def add_project_item(
+    project_id: str,
+    *,
+    kind: str,
+    title: str = "",
+    body: str = "",
+    ref_id: str | None = None,
+    url: str | None = None,
+    content_hash: str = "",
+) -> str | None:
+    """Insert a project item. Dedupes by (project_id, content_hash) when a
+    hash is supplied — returns None when the row already exists so callers
+    can distinguish "stored fresh" from "already present"."""
+    if kind not in PROJECT_ITEM_KINDS:
+        raise ValueError(f"unknown project item kind: {kind}")
+    with _conn() as c:
+        if content_hash:
+            row = c.execute(
+                "SELECT id FROM project_items WHERE project_id=? AND content_hash=?",
+                (project_id, content_hash),
+            ).fetchone()
+            if row:
+                return None
+        iid = str(uuid.uuid4())
+        c.execute(
+            "INSERT INTO project_items "
+            "(id, project_id, kind, ref_id, title, body, url, content_hash, created) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (iid, project_id, kind, ref_id, title, body, url, content_hash, time.time()),
+        )
+        c.execute("UPDATE projects SET updated = ? WHERE id = ?", (time.time(), project_id))
+        c.commit()
+        return iid
+
+
+def list_project_items(
+    project_id: str, *, kind: str | None = None, limit: int = 200, offset: int = 0,
+) -> list[dict]:
+    with _conn() as c:
+        if kind:
+            rows = c.execute(
+                "SELECT * FROM project_items WHERE project_id=? AND kind=? "
+                "ORDER BY created DESC LIMIT ? OFFSET ?",
+                (project_id, kind, limit, offset),
+            ).fetchall()
+        else:
+            rows = c.execute(
+                "SELECT * FROM project_items WHERE project_id=? "
+                "ORDER BY created DESC LIMIT ? OFFSET ?",
+                (project_id, limit, offset),
+            ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def count_project_items(project_id: str) -> int:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT COUNT(*) AS n FROM project_items WHERE project_id=?", (project_id,),
+        ).fetchone()
+    return int(row["n"]) if row else 0
+
+
+def delete_project_item(item_id: str) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM project_items WHERE id=?", (item_id,))
+        c.commit()
+
+
+def set_conversation_project(conv_id: str, project_id: str | None) -> None:
+    with _conn() as c:
+        c.execute(
+            "UPDATE conversations SET project_id=? WHERE id=?",
+            (project_id, conv_id),
+        )
+        c.commit()
+
+
+def list_project_conversations(project_id: str, limit: int = 100) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id, title, created, updated, model, starred, folder, project_id "
+            "FROM conversations WHERE project_id=? "
+            "ORDER BY starred DESC, updated DESC LIMIT ?",
+            (project_id, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def create_project_watch(
+    project_id: str, sub_scope: str, schedule_minutes: int,
+) -> str:
+    wid = str(uuid.uuid4())
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO project_watches "
+            "(id, project_id, sub_scope, schedule_minutes, last_run, last_snapshot_hash, created) "
+            "VALUES (?, ?, ?, ?, NULL, NULL, ?)",
+            (wid, project_id, sub_scope, schedule_minutes, time.time()),
+        )
+        c.commit()
+    return wid
+
+
+def list_project_watches(project_id: str) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM project_watches WHERE project_id=? ORDER BY created DESC",
+            (project_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_due_watches(now: float | None = None) -> list[dict]:
+    """Watches whose last_run was more than schedule_minutes ago (or never)."""
+    now = now or time.time()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM project_watches "
+            "WHERE last_run IS NULL "
+            "   OR (? - last_run) >= (schedule_minutes * 60)",
+            (now,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def mark_watch_ran(watch_id: str, snapshot_hash: str) -> None:
+    with _conn() as c:
+        c.execute(
+            "UPDATE project_watches SET last_run=?, last_snapshot_hash=? WHERE id=?",
+            (time.time(), snapshot_hash, watch_id),
+        )
+        c.commit()
+
+
+def delete_project_watch(watch_id: str) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM project_watches WHERE id=?", (watch_id,))
+        c.commit()

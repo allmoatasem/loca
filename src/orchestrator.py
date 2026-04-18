@@ -72,6 +72,8 @@ class Orchestrator:
         model_override: str | None = None,
         num_ctx: int | None = None,
         research_mode: bool = False,
+        partner_mode: str | None = None,
+        project_id: str | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
@@ -86,13 +88,18 @@ class Orchestrator:
         logger.info(
             f"Route: {result.model.value} | {result.reason} | search={result.search_triggered}"
             + (f" | override={model_override}" if model_override else "")
+            + (f" | partner={partner_mode}" if partner_mode else "")
+            + (f" | project={project_id}" if project_id else "")
         )
 
         model_name, api_base = await self.mm.ensure_loaded(result.model, model_name_override=model_override)
         if system_prompt_override:
             system_prompt = system_prompt_override
         else:
-            system_prompt = _build_system_prompt(result.model, model_name, self._hw)
+            system_prompt = _build_system_prompt(
+                result.model, model_name, self._hw,
+                partner_mode=partner_mode, project_id=project_id,
+            )
 
         # Memory injection pipeline:
         #   1. Build a recall query from the last 3 turns
@@ -112,6 +119,12 @@ class Orchestrator:
                 await self._memory.recall(q, limit=per_query_limit) for q in expanded_queries
             ]
             pool = _merge_recall_results(buckets, limit=50)
+            # Research Partner: prepend the project's bookmarked items to
+            # the pool so rerank's `rank_bonus` favours user-curated
+            # sources over generic vault matches.
+            if project_id:
+                project_boost = _project_items_as_memories(project_id)
+                pool = project_boost + pool
             relevant = _rerank_memories(recall_query, pool, keep=10)
             mem_ctx = self._memory.format_for_prompt(relevant)
             # Snapshot the retrieved set for the provenance sidecar.
@@ -720,7 +733,14 @@ def _last_user_content(messages: list[dict]) -> str:
     return ""
 
 
-def _build_system_prompt(model: Model, model_name: str, hw) -> str:
+def _build_system_prompt(
+    model: Model,
+    model_name: str,
+    hw,
+    *,
+    partner_mode: str | None = None,
+    project_id: str | None = None,
+) -> str:
     base = _load_system_prompt(model)
     # Build a concise hardware description from real profiler data
     if hw.has_apple_silicon:
@@ -747,7 +767,58 @@ def _build_system_prompt(model: Model, model_name: str, hw) -> str:
         f"If genuinely ambiguous — multiple plausible interpretations exist — state what you understood "
         f"and ask the user to confirm before proceeding."
     )
-    return f"{identity}\n\n{base}"
+    parts = [identity, base]
+
+    # Research Partner — optional project scope + partner-mode overlay.
+    # Both are additive: scope prepends the user's research context, and
+    # partner_mode ("critique" | "teach") layers a behavioural instruction
+    # set on top of the base prompt without replacing it.
+    if project_id:
+        scope_block = _load_project_scope_block(project_id)
+        if scope_block:
+            parts.append(scope_block)
+    if partner_mode in ("critique", "teach"):
+        mode_block = _load_partner_mode_prompt(partner_mode)
+        if mode_block:
+            parts.append(mode_block)
+
+    return "\n\n".join(parts)
+
+
+def _load_project_scope_block(project_id: str) -> str:
+    try:
+        from .store import get_project  # noqa: PLC0415
+        proj = get_project(project_id)
+    except Exception:  # pragma: no cover — store failures shouldn't break chat
+        return ""
+    if not proj:
+        return ""
+    title = (proj.get("title") or "").strip()
+    scope = (proj.get("scope") or "").strip()
+    if not scope:
+        return ""
+    return (
+        f"## Active research project — {title}\n\n"
+        f"The user is working inside a scoped research project. The project's "
+        f"stated scope is:\n\n> {scope}\n\n"
+        f"Bias your answers toward this scope. If the user drifts off-topic, "
+        f"answer the question but gently surface the connection back to the "
+        f"project when one exists."
+    )
+
+
+def _load_partner_mode_prompt(mode: str) -> str:
+    filename = {"critique": "system_critique.md", "teach": "system_teach.md"}.get(mode)
+    if not filename:
+        return ""
+    import os  # noqa: PLC0415
+    prompts_dir = os.path.join(os.path.dirname(__file__), "..", "prompts")
+    path = os.path.join(prompts_dir, filename)
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read().strip()
+    except FileNotFoundError:  # pragma: no cover
+        return ""
 
 
 def _load_system_prompt(model: Model) -> str:
@@ -885,6 +956,38 @@ def _is_meta_query(query: str) -> bool:
     the answer.
     """
     return any(marker in query.lower() for marker in _META_QUERY_MARKERS)
+
+
+def _project_items_as_memories(project_id: str) -> list[dict]:
+    """Project-scoped bookmarks, shaped like recall hits so they can flow
+    through `_merge_recall_results` + `_rerank_memories` unchanged."""
+    try:
+        from .store import list_project_items  # noqa: PLC0415
+        items = list_project_items(project_id, limit=50)
+    except Exception:  # pragma: no cover — store failures shouldn't break chat
+        return []
+    out: list[dict] = []
+    for item in items:
+        parts: list[str] = []
+        title = (item.get("title") or "").strip()
+        body = (item.get("body") or "").strip()
+        url = (item.get("url") or "").strip()
+        if title:
+            parts.append(title)
+        if body:
+            parts.append(body)
+        if url:
+            parts.append(f"(source: {url})")
+        content = " — ".join(parts)
+        if not content:
+            continue
+        out.append({
+            "id": f"project_item:{item['id']}",
+            "content": content,
+            "score": 1.0,
+            "type": "project_item",
+        })
+    return out
 
 
 # Minimal English stopword list so "what do you know about me" doesn't inflate
