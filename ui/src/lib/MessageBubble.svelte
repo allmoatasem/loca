@@ -21,20 +21,6 @@
     return renderMarkdown(split.answer);
   });
 
-  let bodyEl: HTMLDivElement | undefined = $state();
-
-  // Run Prism over any code blocks after each render.
-  $effect(() => {
-    // touch answerHtml so we rerun when content changes
-    void answerHtml;
-    if (!bodyEl) return;
-    const prism = (window as unknown as { Prism?: { highlightElement: (el: Element) => void } }).Prism;
-    if (!prism) return;
-    for (const code of bodyEl.querySelectorAll('pre > code')) {
-      prism.highlightElement(code);
-    }
-  });
-
   let copied = $state(false);
   async function copyToClipboard(): Promise<void> {
     const text = split ? split.answer : content;
@@ -65,7 +51,7 @@
       <ThinkBlock text={split.thinking} defaultOpen={split.answer === ''} />
     {/if}
     <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-    <div class="md" bind:this={bodyEl}>{@html answerHtml}</div>
+    <div class="md">{@html answerHtml}</div>
     {#if !isStreaming && split.answer.trim()}
       <button class="copy" onclick={copyToClipboard} aria-label="Copy reply">
         {copied ? '✓ Copied' : 'Copy'}
@@ -173,4 +159,33 @@
     color: var(--loca-color-text-muted);
   }
   .md :global(a) { color: var(--loca-color-accent); }
+
+  .md :global(table) {
+    border-collapse: collapse;
+    margin: 0 0 10px;
+    font-size: 13px;
+  }
+  .md :global(th), .md :global(td) {
+    border: 1px solid var(--loca-color-border);
+    padding: 4px 8px;
+    text-align: left;
+  }
+  .md :global(th) {
+    background: color-mix(in srgb, var(--loca-color-accent) 8%, transparent);
+    font-weight: 600;
+  }
+
+  .md :global(ul ul), .md :global(ul ol),
+  .md :global(ol ul), .md :global(ol ol) {
+    margin: 4px 0;
+  }
+
+  .md :global(.katex-display) {
+    margin: 8px 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .md :global(.katex) {
+    font-size: 1em;
+  }
 </style>
