@@ -1,19 +1,20 @@
 import SwiftUI
 
 /// Research Partner — Swift-side twin of `ResearchWorkspaceView.svelte`.
-/// Scoped to Overview + Sources + Watches for now; Notes editing stays
-/// browser-first until the Mac text-editor work lands. Partner-mode
-/// toggles live in the chat composer, same as Svelte.
+/// Overview + Sources + Notes + Watches tabs match the browser UI. Notes
+/// is a freeform markdown scratchpad with the same 700ms autosave debounce
+/// as Svelte. Partner-mode toggles live in the chat composer.
 struct ResearchWorkspaceView: View {
     @EnvironmentObject var state: AppState
 
     enum Tab: String, CaseIterable, Identifiable {
-        case overview, sources, watches
+        case overview, sources, notes, watches
         var id: String { rawValue }
         var label: String {
             switch self {
             case .overview: return "Overview"
             case .sources:  return "Sources"
+            case .notes:    return "Notes"
             case .watches:  return "Watches"
             }
         }
@@ -26,6 +27,10 @@ struct ResearchWorkspaceView: View {
     // Source-kind filter — mirrors the Svelte dropdown so Mac users can
     // narrow Sources to a single kind. Empty string = all.
     @State private var filterKind: String = ""
+
+    // Notes — freeform markdown scratchpad with 700ms debounced autosave.
+    @State private var notesDraft: String = ""
+    @State private var notesSaveTask: Task<Void, Never>?
 
     // New-project form
     @State private var newTitle = ""
@@ -63,6 +68,9 @@ struct ResearchWorkspaceView: View {
         }
         .onChange(of: state.activeProjectId) { _, id in
             scopeDraft = ""
+            notesDraft = ""
+            notesSaveTask?.cancel()
+            notesSaveTask = nil
             detail = nil
             items = []
             if let id { Task { await refreshDetail(id) } }
@@ -145,6 +153,7 @@ struct ResearchWorkspaceView: View {
                     switch activeTab {
                     case .overview: overviewTab(d)
                     case .sources:  sourcesTab(d)
+                    case .notes:    notesTab(d)
                     case .watches:  watchesTab(d)
                     }
                 }
@@ -282,8 +291,31 @@ struct ResearchWorkspaceView: View {
                 }
             }
         }
-        Text("Notes editing is in the browser UI for this PR. Open `/ui/research` in the browser to edit freeform markdown notes alongside Loca.")
-            .font(.system(size: 10)).foregroundColor(.secondary).padding(.top, 12)
+    }
+
+    @ViewBuilder
+    private func notesTab(_ d: ProjectDetail) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("NOTES")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.secondary)
+            Text("Freeform markdown scratchpad. Autosaves ~700ms after you stop typing.")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+            TextEditor(text: $notesDraft)
+                .font(.system(size: 12))
+                .frame(minHeight: 380)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5)
+                        .stroke(Color.secondary.opacity(0.3))
+                )
+                .onChange(of: notesDraft) { _, _ in scheduleNotesSave() }
+            if notesDraft.isEmpty {
+                Text("Questions, todos, open threads, quotes, hypotheses — anything.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary.opacity(0.7))
+            }
+        }
     }
 
     @ViewBuilder
@@ -412,11 +444,34 @@ struct ResearchWorkspaceView: View {
             let d = try await BackendClient.shared.getProject(id)
             detail = d
             scopeDraft = d.scope
+            // Only hydrate notesDraft when switching projects, not on a
+            // passive refresh mid-edit — otherwise an in-flight keystroke
+            // would get clobbered by the stale server copy.
+            if notesDraft.isEmpty || notesSaveTask == nil {
+                notesDraft = d.notes
+            }
             await reloadItems(id)
         } catch {
             detail = nil
             items = []
         }
+    }
+
+    private func scheduleNotesSave() {
+        notesSaveTask?.cancel()
+        let snapshot = notesDraft
+        notesSaveTask = Task {
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            if Task.isCancelled { return }
+            await saveNotes(snapshot)
+        }
+    }
+
+    private func saveNotes(_ text: String) async {
+        guard let id = state.activeProjectId else { return }
+        do {
+            try await BackendClient.shared.patchProject(id, notes: text)
+        } catch {}
     }
 
     private func reloadItems(_ id: String) async {

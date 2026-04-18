@@ -1310,11 +1310,20 @@ async def api_project_related(project_id: str, limit: int = 10) -> JSONResponse:
     if not scope:
         return JSONResponse({"items": [], "message": "Project has no scope text yet."})
 
+    # Thresholds. TF-IDF cosine over title+tags+snippet is sparse, so 0.15
+    # keeps real topical matches and kills stopword noise. Memory recall
+    # is dense-embedding cosine, where typical unrelated hits land around
+    # 0.25–0.35; 0.35 is the tightest cutoff that still shows tangential
+    # memories without dragging in "Learning about Cars" on a neuroscience
+    # project.
+    VAULT_MIN = 0.15
+    MEMORY_MIN = 0.35
+
     from .vault_search import semantic_search  # noqa: PLC0415
     results: list[dict] = []
     per_source = max(3, limit)
     for vpath in list_vault_paths():
-        for hit in semantic_search(vpath, scope, limit=per_source):
+        for hit in semantic_search(vpath, scope, limit=per_source, min_score=VAULT_MIN):
             results.append({
                 "kind": "vault_chunk",
                 "title": hit.get("title") or hit.get("rel_path"),
@@ -1334,6 +1343,8 @@ async def api_project_related(project_id: str, limit: int = 10) -> JSONResponse:
             if raw_score is None:
                 dist = h.get("distance")
                 raw_score = -float(dist) if dist is not None else 0.0
+            if float(raw_score) < MEMORY_MIN:
+                continue
             results.append({
                 "kind": "memory",
                 "title": snippet[:80],
@@ -1479,18 +1490,28 @@ async def api_sync_vault(project_id: str, request: Request) -> JSONResponse:
     # Also create one `vault_chunk` item per markdown note in the vault
     # so Sources actually shows the user's notes (not just a single
     # summary row). Dedup via content-hash per note — re-running sync
-    # is a no-op when files haven't changed. Capped at 200 notes to
-    # keep the Sources list scannable; users with larger vaults see
-    # the vault_sync row + the top 200 notes.
+    # is a no-op when files haven't changed.
+    #
+    # When the project has a scope, rank files by TF-IDF similarity to
+    # that scope and keep only topically-relevant ones (cap 200). This
+    # prevents, e.g., a "neuroscience" project from being flooded with
+    # unrelated notes like "Learning about Cars" just because they share
+    # the alphabet. Projects without a scope fall back to alphabetical
+    # top-200 — same behaviour as before.
     note_count = 0
+    scope_text = str(proj.get("scope") or "").strip()
+    SCOPE_FILE_MIN = 0.05
     try:
         root = _Path(path_str).expanduser().resolve()
         if root.is_dir():
             md_files: list[_Path] = []
             for ext in ("*.md", "*.markdown"):
                 md_files.extend(root.rglob(ext))
-            # Stable ordering + cap.
-            md_files = sorted(md_files)[:200]
+            # Deduplicate (rglob over multiple extensions can double-hit).
+            md_files = list(dict.fromkeys(md_files))
+            md_files = _rank_vault_files_by_scope(
+                md_files, scope_text, min_score=SCOPE_FILE_MIN, limit=200,
+            )
             for p in md_files:
                 try:
                     text = p.read_text(encoding="utf-8", errors="replace")
@@ -1520,7 +1541,53 @@ async def api_sync_vault(project_id: str, request: Request) -> JSONResponse:
     except Exception as exc:  # pragma: no cover
         logger.warning("vault sync item-pass failed: %s", exc)
     stats["notes_bookmarked"] = note_count
+    stats["scope_filtered"] = bool(scope_text)
     return JSONResponse({"ok": True, **stats})
+
+
+def _rank_vault_files_by_scope(
+    paths: list,  # list[pathlib.Path]
+    scope: str,
+    *,
+    min_score: float,
+    limit: int,
+) -> list:
+    """Rank markdown files by TF-IDF cosine similarity to `scope`.
+    No scope → alphabetical cap. Any failure → alphabetical cap. Keeps
+    the sync loop decoupled from sklearn details."""
+    if not paths:
+        return []
+    if not scope.strip():
+        return sorted(paths)[:limit]
+    try:
+        from sklearn.feature_extraction.text import TfidfVectorizer  # noqa: PLC0415
+        from sklearn.metrics.pairwise import cosine_similarity  # noqa: PLC0415
+        docs: list[str] = []
+        kept: list = []
+        for p in paths:
+            try:
+                raw = p.read_text(encoding="utf-8", errors="replace")[:4000]
+            except Exception:
+                continue
+            docs.append(f"{p.stem}\n{raw}")
+            kept.append(p)
+        if not docs:
+            return []
+        vec = TfidfVectorizer(
+            strip_accents="unicode", analyzer="word",
+            min_df=1, sublinear_tf=True,
+        )
+        mat = vec.fit_transform(docs + [scope])
+        sims = cosine_similarity(mat[-1], mat[:-1]).flatten()
+        ranked = sorted(
+            ((float(sims[i]), kept[i]) for i in range(len(kept))),
+            key=lambda x: x[0], reverse=True,
+        )
+        filtered = [p for s, p in ranked if s > min_score][:limit]
+        return filtered
+    except Exception as exc:
+        logger.warning("scope-aware vault ranking failed (%s); using alphabetical fallback", exc)
+        return sorted(paths)[:limit]
 
 
 def _utcnow_ts() -> str:

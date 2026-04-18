@@ -22,6 +22,7 @@ Loca manages its own inference backend (MLX on Apple Silicon, llama.cpp everywhe
 
 ### Intelligence
 - **Persistent memory** — three types (user facts, verified knowledge, corrections) injected into every conversation
+- **Research Partner** — scoped projects bundling sources, notes, background watches, and scope-aware vault ingestion; Overview / Sources / Notes / Watches tabs mirrored in Svelte and SwiftUI
 - **Obsidian vault** — read-only vault analyser: stats, orphan notes, link graph, tags, folder structure
 - **Web search** — SearXNG + trafilatura; optional Playwright deep research mode for dynamic sites
 - **Tool use** — `web_search`, `web_fetch`, `file_read`, `file_write`, `shell_exec`, `image_describe`
