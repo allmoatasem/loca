@@ -1182,6 +1182,25 @@ struct InputBar: View {
             .padding(.horizontal, 12).padding(.vertical, 8)
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        // Drag-and-drop attachments from Finder. Mirrors the Svelte UI's
+        // drop-to-attach; the existing "+" button still works as before.
+        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            let group = DispatchGroup()
+            var urls: [URL] = []
+            for provider in providers {
+                if provider.canLoadObject(ofClass: URL.self) {
+                    group.enter()
+                    _ = provider.loadObject(ofClass: URL.self) { item, _ in
+                        if let url = item { urls.append(url) }
+                        group.leave()
+                    }
+                }
+            }
+            group.notify(queue: .main) {
+                self.uploadURLs(urls)
+            }
+            return true
+        }
     }
 
     private var canSend: Bool {
@@ -1195,9 +1214,17 @@ struct InputBar: View {
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories    = false
         guard panel.runModal() == .OK else { return }
+        uploadURLs(panel.urls)
+    }
+
+    /// Shared upload path for both NSOpenPanel picks and drag-dropped
+    /// file URLs. Each URL is read off-main, uploaded to /api/upload,
+    /// and the resulting chip appended on the main actor.
+    fileprivate func uploadURLs(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
         isUploading = true
         Task {
-            for url in panel.urls {
+            for url in urls {
                 guard let data = try? Data(contentsOf: url) else { continue }
                 let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
                           ?? "application/octet-stream"

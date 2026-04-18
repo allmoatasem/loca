@@ -47,6 +47,19 @@
   let errorMsg  = $state<string | null>(null);
   let scroller: HTMLDivElement | undefined = $state();
   let fileInput: HTMLInputElement | undefined = $state();
+  // Session-only toggles, same as SwiftUI's AppState.researchMode /
+  // lockdownMode. Research enables SearXNG + web fetching; lockdown
+  // disables all network tools and mutually excludes research.
+  let researchMode = $state<boolean>(false);
+  let lockdownMode = $state<boolean>(false);
+  function toggleResearch(): void {
+    if (lockdownMode) return;
+    researchMode = !researchMode;
+  }
+  function toggleLockdown(): void {
+    lockdownMode = !lockdownMode;
+    if (lockdownMode) researchMode = false;
+  }
 
   // Round-trip the conversation to /api/conversations so a refresh
   // doesn't lose state and the sidebar picks it up.
@@ -136,6 +149,7 @@
         messages: wireMessages,
         stream: true,
         num_ctx: app.contextWindow,
+        research_mode: researchMode && !lockdownMode,
       };
       if (chatTemplateKwargs) body.chat_template_kwargs = chatTemplateKwargs;
       if (extraBody)          body.extra_body            = extraBody;
@@ -185,6 +199,32 @@
     }
   }
 
+  // Drag-and-drop attachments — drop a file anywhere over the chat
+  // area or composer to upload it. Overrides the default browser
+  // behaviour of opening the file in a new tab.
+  let dragDepth = $state<number>(0);
+  const isDragging = $derived(dragDepth > 0);
+  function onDragEnter(e: DragEvent): void {
+    if (e.dataTransfer?.types.includes('Files')) {
+      e.preventDefault();
+      dragDepth += 1;
+    }
+  }
+  function onDragLeave(): void {
+    if (dragDepth > 0) dragDepth -= 1;
+  }
+  function onDragOver(e: DragEvent): void {
+    if (e.dataTransfer?.types.includes('Files')) e.preventDefault();
+  }
+  function onDrop(e: DragEvent): void {
+    if (!e.dataTransfer?.types.includes('Files')) return;
+    e.preventDefault();
+    dragDepth = 0;
+    if (e.dataTransfer.files.length > 0) {
+      void handleFiles(e.dataTransfer.files);
+    }
+  }
+
   async function handleFiles(files: FileList | null): Promise<void> {
     if (!files) return;
     for (const file of Array.from(files)) {
@@ -220,7 +260,21 @@
   }
 </script>
 
-<div class="chat">
+<div
+  class="chat"
+  class:dragging={isDragging}
+  ondragenter={onDragEnter}
+  ondragleave={onDragLeave}
+  ondragover={onDragOver}
+  ondrop={onDrop}
+  role="region"
+  aria-label="Chat"
+>
+  {#if isDragging}
+    <div class="drop-overlay">
+      <div class="drop-card">Drop files to attach</div>
+    </div>
+  {/if}
   <div class="scroller" bind:this={scroller}>
     {#if history.length === 0}
       <div class="empty">
@@ -287,6 +341,23 @@
     </button>
   </div>
 
+  <!-- Session-only toggles, mirrored from SwiftUI's composer row. -->
+  <div class="input-tools">
+    <button
+      class="tool"
+      class:active={researchMode}
+      disabled={lockdownMode}
+      onclick={toggleResearch}
+      title="Deep Research — SearXNG + web fetching"
+    >🔍 Research</button>
+    <button
+      class="tool"
+      class:active={lockdownMode}
+      onclick={toggleLockdown}
+      title="Lockdown — disable all network tools"
+    >🔒 Lockdown</button>
+  </div>
+
   {#if history.length > 0}
     <div class="conv-tools">
       <button onclick={newConversation}>New Conversation</button>
@@ -301,6 +372,26 @@
     flex-direction: column;
     height: 100%;
     background: var(--loca-color-bg);
+    position: relative;
+  }
+  .chat.dragging { outline: 2px dashed var(--loca-color-accent); outline-offset: -8px; }
+  .drop-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 10;
+  }
+  .drop-card {
+    background: var(--loca-color-surface);
+    border: 1px solid var(--loca-color-accent);
+    color: var(--loca-color-accent);
+    padding: 12px 24px;
+    border-radius: var(--loca-radius-md);
+    font-size: 14px;
+    font-weight: 500;
   }
   .scroller {
     flex: 1;
@@ -426,4 +517,36 @@
   }
   .conv-tools button:hover { background: var(--loca-color-surface); }
   .conv-id { font-family: var(--loca-font-mono); }
+
+  .input-tools {
+    display: flex;
+    gap: 6px;
+    padding: 0 40px 10px;
+    font-size: 11px;
+  }
+  .input-tools .tool {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: none;
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-sm);
+    color: var(--loca-color-text-muted);
+    padding: 3px 10px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .input-tools .tool:hover:not(:disabled) {
+    color: var(--loca-color-text);
+    background: rgba(127, 127, 127, 0.08);
+  }
+  .input-tools .tool.active {
+    background: color-mix(in srgb, var(--loca-color-accent) 15%, transparent);
+    color: var(--loca-color-accent);
+    border-color: var(--loca-color-accent);
+  }
+  .input-tools .tool:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
 </style>
