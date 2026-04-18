@@ -68,16 +68,33 @@ bail() {
 }
 
 # ── 1. Check inference backend binaries ──────────────────────────────────────
+BREW=""
+for _b in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+    [ -x "$_b" ] && BREW="$_b" && break
+done
+
 if ! command -v llama-server > /dev/null 2>&1; then
-    BREW=""
-    for _b in /opt/homebrew/bin/brew /usr/local/bin/brew; do
-        [ -x "$_b" ] && BREW="$_b" && break
-    done
     if [ -n "$BREW" ]; then
         status "Installing llama.cpp…" 5
         "$BREW" install llama.cpp || bail "Failed to install llama.cpp via Homebrew."
     else
         bail "llama-server not found and Homebrew is not installed. Install Homebrew first: https://brew.sh"
+    fi
+fi
+
+# espeak-ng — G2P fallback for Kokoro TTS via misaki. Without it, misaki
+# logs "OOD words will be skipped" and silently returns None for out-of-
+# dictionary tokens, which then crashes Kokoro's pipeline with
+# `TypeError: unsupported operand type(s) for +: 'NoneType' and 'str'`
+# on the second synthesis call. Soft-fail: if Homebrew isn't available,
+# voice mode still works for basic dictionary text — it just breaks on
+# uncommon words until the user installs espeak-ng themselves.
+if ! command -v espeak-ng > /dev/null 2>&1 \
+   && [ ! -x /opt/homebrew/bin/espeak-ng ] \
+   && [ ! -x /usr/local/bin/espeak-ng ]; then
+    if [ -n "$BREW" ]; then
+        status "Installing espeak-ng (voice fallback)…" 7
+        "$BREW" install espeak-ng || true
     fi
 fi
 
