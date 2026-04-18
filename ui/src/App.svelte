@@ -17,6 +17,8 @@
   import AcknowledgementsView from './lib/AcknowledgementsView.svelte';
   import ResearchWorkspaceView from './lib/ResearchWorkspaceView.svelte';
   import ChatView from './lib/ChatView.svelte';
+  import VoiceSetupView from './lib/VoiceSetupView.svelte';
+  import { app } from './lib/app-store.svelte';
 
   let path = $state(location.pathname);
   window.addEventListener('popstate', () => { path = location.pathname; });
@@ -76,6 +78,10 @@
         <ResearchWorkspaceView onClose={() => navigate('/ui')} />
       {/if}
     </div>
+  {/if}
+
+  {#if app.showVoiceSetup}
+    <VoiceSetupView onClose={() => app.setShowVoiceSetup(false)} />
   {/if}
 </div>
 

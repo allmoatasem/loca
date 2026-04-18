@@ -8,12 +8,14 @@ import {
   fetchConversations,
   fetchLocalModels,
   fetchProjects as apiFetchProjects,
+  fetchVoiceConfig as apiFetchVoiceConfig,
   patchConversation as apiPatch,
   searchConversations as apiSearch,
   unloadModel as apiUnload,
   type ConversationMeta,
   type LocalModel,
   type Project,
+  type VoiceConfig,
 } from './api.client';
 
 export type PartnerMode = 'default' | 'critique' | 'teach';
@@ -53,6 +55,15 @@ function appStore() {
   let projects           = $state<Project[]>([]);
   let activeProjectId    = $state<string | null>(null);
   let partnerMode        = $state<PartnerMode>('default');
+  // Voice mode — mirrors Swift AppState's voice block. The recorder
+  // lifecycle lives in ChatView (it owns the `VoiceRecorder`); this
+  // store only holds flags the rest of the UI needs to react to.
+  let isVoiceMode        = $state<boolean>(false);
+  let isTranscribing     = $state<boolean>(false);
+  let voiceAudioLevel    = $state<number>(0);   // 0–1 RMS, for waveform
+  let voiceError         = $state<string | null>(null);
+  let voiceConfig        = $state<VoiceConfig | null>(null);
+  let showVoiceSetup     = $state<boolean>(false);
 
   async function refresh(): Promise<void> {
     loading = true;
@@ -91,6 +102,28 @@ function appStore() {
   function setPartnerMode(mode: PartnerMode): void {
     partnerMode = mode;
   }
+
+  async function refreshVoiceConfig(): Promise<void> {
+    try {
+      voiceConfig = await apiFetchVoiceConfig();
+    } catch (e) {
+      voiceError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  /** Returns true if both STT and TTS models are downloaded. */
+  function voiceReady(): boolean {
+    if (!voiceConfig) return false;
+    const stt = voiceConfig.models.find((m) => m.model_type === 'stt' && m.downloaded);
+    const tts = voiceConfig.models.find((m) => m.model_type === 'tts' && m.downloaded);
+    return stt != null && tts != null;
+  }
+
+  function setVoiceMode(on: boolean): void { isVoiceMode = on; }
+  function setTranscribing(on: boolean): void { isTranscribing = on; }
+  function setVoiceAudioLevel(v: number): void { voiceAudioLevel = v; }
+  function setVoiceError(msg: string | null): void { voiceError = msg; }
+  function setShowVoiceSetup(on: boolean): void { showVoiceSetup = on; }
 
   async function search(q: string): Promise<void> {
     searchQuery = q;
@@ -188,6 +221,12 @@ function appStore() {
       return projects.find((p) => p.id === activeProjectId) ?? null;
     },
     get partnerMode() { return partnerMode; },
+    get isVoiceMode() { return isVoiceMode; },
+    get isTranscribing() { return isTranscribing; },
+    get voiceAudioLevel() { return voiceAudioLevel; },
+    get voiceError() { return voiceError; },
+    get voiceConfig() { return voiceConfig; },
+    get showVoiceSetup() { return showVoiceSetup; },
     refresh,
     search,
     deleteConv,
@@ -200,6 +239,13 @@ function appStore() {
     refreshProjects,
     setActiveProject,
     setPartnerMode,
+    refreshVoiceConfig,
+    voiceReady,
+    setVoiceMode,
+    setTranscribing,
+    setVoiceAudioLevel,
+    setVoiceError,
+    setShowVoiceSetup,
   };
 }
 

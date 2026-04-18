@@ -27,7 +27,9 @@
   import { app } from './app-store.svelte';
   import MessageBubble, { type Role } from './MessageBubble.svelte';
   import StatsBar from './StatsBar.svelte';
-  import { tick } from 'svelte';
+  import { transcribeAudio } from './api.client';
+  import { VoiceRecorder, type VoiceState } from './voice-recorder';
+  import { tick, onDestroy } from 'svelte';
 
   interface Attachment {
     type: 'image' | 'text' | 'audio' | 'video' | 'binary';
@@ -80,6 +82,97 @@
   // doesn't lose state and the sidebar picks it up.
   let convId = $state<string | null>(null);
   let convTitle = $state<string>('');
+
+  // Voice mode — parity with Swift's AudioRecorder + ChatView integration.
+  // The recorder owns the mic; the store holds flags (isVoiceMode,
+  // isTranscribing, voiceAudioLevel) the rest of the UI listens to. When
+  // VAD completes an utterance we transcribe → inject into input → send,
+  // then resumeListening() once streaming ends so hands-free loops.
+  let voiceRecorder: VoiceRecorder | null = null;
+  let voiceState = $state<VoiceState>('idle');
+  let pendingVoiceResume = $state<boolean>(false);
+
+  async function toggleVoiceMode(): Promise<void> {
+    if (app.isVoiceMode) {
+      await stopVoice();
+      return;
+    }
+    // First-time: make sure models exist, otherwise open setup modal.
+    if (!app.voiceConfig) await app.refreshVoiceConfig();
+    if (!app.voiceReady()) {
+      app.setShowVoiceSetup(true);
+      return;
+    }
+    await startVoice();
+  }
+
+  async function startVoice(): Promise<void> {
+    app.setVoiceError(null);
+    app.setVoiceMode(true);
+    voiceRecorder = new VoiceRecorder({
+      onState: (s) => { voiceState = s; },
+      onLevel: (v) => app.setVoiceAudioLevel(v),
+      onError: (msg) => {
+        app.setVoiceError(msg);
+        void stopVoice();
+      },
+      onComplete: (wav) => { void handleUtterance(wav); },
+    });
+    await voiceRecorder.start();
+  }
+
+  async function stopVoice(): Promise<void> {
+    voiceRecorder?.stop();
+    voiceRecorder = null;
+    voiceState = 'idle';
+    pendingVoiceResume = false;
+    app.setVoiceMode(false);
+    app.setVoiceAudioLevel(0);
+    app.setTranscribing(false);
+  }
+
+  async function handleUtterance(wav: Blob): Promise<void> {
+    if (streaming) return;                // ignore overlap; VAD may re-fire
+    app.setTranscribing(true);
+    try {
+      const text = (await transcribeAudio(wav)).trim();
+      app.setTranscribing(false);
+      if (!text) {
+        // Empty transcription (silence blip or noise) — just keep listening.
+        voiceRecorder?.resumeListening();
+        return;
+      }
+      input = text;
+      pendingVoiceResume = true;
+      await send();
+    } catch (e) {
+      app.setTranscribing(false);
+      app.setVoiceError(e instanceof Error ? e.message : String(e));
+      voiceRecorder?.resumeListening();
+    }
+  }
+
+  // After a streamed response finishes, re-open the mic for the next
+  // utterance. Guarded by `pendingVoiceResume` so manual text sends in
+  // voice mode still return to listening.
+  $effect(() => {
+    if (!streaming && pendingVoiceResume && app.isVoiceMode) {
+      pendingVoiceResume = false;
+      voiceRecorder?.resumeListening();
+    }
+  });
+
+  onDestroy(() => { voiceRecorder?.stop(); });
+
+  function voicePlaceholder(s: VoiceState, transcribing: boolean): string {
+    if (transcribing) return 'Transcribing…';
+    switch (s) {
+      case 'listening':  return 'Listening… speak when ready';
+      case 'recording':  return 'Listening — pause to send';
+      case 'processing': return 'Processing…';
+      default:           return 'Voice mode active';
+    }
+  }
 
   // Sidebar clicks and the New Conversation button both route through
   // `app.activeConvId`. `convSelectNonce` bumps on every set (including
@@ -432,12 +525,32 @@
       }}
     />
     <textarea
-      placeholder="Message Loca…  (⌘↵ to send)"
+      placeholder={app.isVoiceMode ? voicePlaceholder(voiceState, app.isTranscribing) : 'Message Loca…  (⌘↵ to send)'}
       bind:value={input}
       onkeydown={onKeydown}
       rows="3"
-      disabled={streaming}
+      disabled={streaming || app.isVoiceMode}
     ></textarea>
+    <button
+      class="mic"
+      class:active={app.isVoiceMode}
+      onclick={() => { void toggleVoiceMode(); }}
+      disabled={streaming}
+      title={app.isVoiceMode ? 'Stop voice mode' : 'Start voice mode — speak and auto-send'}
+      aria-label="Toggle voice mode"
+      aria-pressed={app.isVoiceMode}
+    >
+      {#if app.isVoiceMode}
+        <span class="mic-icon" aria-hidden="true">🎙️</span>
+        <span
+          class="mic-level"
+          style="transform: scaleY({0.25 + app.voiceAudioLevel * 0.75})"
+          aria-hidden="true"
+        ></span>
+      {:else}
+        <span class="mic-icon" aria-hidden="true">🎤</span>
+      {/if}
+    </button>
     <button
       class="send"
       onclick={send}
@@ -446,6 +559,10 @@
       {streaming ? 'Streaming…' : 'Send'}
     </button>
   </div>
+
+  {#if app.voiceError}
+    <div class="voice-error" role="alert">{app.voiceError}</div>
+  {/if}
 
   <!-- Session-only toggles, mirrored from SwiftUI's composer row. -->
   <div class="input-tools">
@@ -630,6 +747,50 @@
   }
   .send:hover:not(:disabled) { background: var(--loca-color-accent-hover); }
   .send:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  .mic {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 42px;
+    padding: 0 10px;
+    background: var(--loca-color-surface);
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-md);
+    color: var(--loca-color-text-muted);
+    font-size: 16px;
+    cursor: pointer;
+    overflow: hidden;
+  }
+  .mic:hover:not(:disabled) { color: var(--loca-color-text); }
+  .mic:disabled { opacity: 0.45; cursor: not-allowed; }
+  .mic.active {
+    color: #fff;
+    background: var(--loca-color-accent);
+    border-color: var(--loca-color-accent);
+  }
+  .mic-icon { position: relative; z-index: 1; }
+  /* RMS-driven bar that sits behind the icon and pulses with speech. */
+  .mic-level {
+    position: absolute;
+    left: 4px;
+    right: 4px;
+    bottom: 4px;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.7);
+    border-radius: 2px;
+    transform-origin: center bottom;
+    transition: transform 80ms linear;
+  }
+  .voice-error {
+    margin: 4px 40px 0;
+    padding: 6px 10px;
+    font-size: 11px;
+    color: var(--loca-color-danger);
+    background: color-mix(in srgb, var(--loca-color-danger) 10%, transparent);
+    border-radius: var(--loca-radius-sm);
+  }
 
   .conv-tools {
     display: flex;

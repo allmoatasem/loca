@@ -13,7 +13,7 @@ Loca manages its own inference backend (MLX on Apple Silicon, llama.cpp everywhe
 - **External server toggle** — switch to LM Studio, Ollama, or any OpenAI-compatible server from Preferences → Inference
 - **MLX + GGUF** — MLX directories for native Apple Silicon speed; GGUF for cross-platform compatibility
 - **Vision** — image uploads with multi-modal support; auto-detects vision capability from `config.json` and GGUF mmproj files
-- **Voice mode** — speech-to-text via mlx-whisper with voice activity detection; transcribes and sends automatically
+- **Voice mode** — speech-to-text via mlx-whisper with voice activity detection; transcribes and sends automatically. Available in both the SwiftUI native app and the Svelte browser UI, with matching VAD thresholds and hands-free auto-resume after each response
 
 ### Model management
 - **Hardware-aware discovery** — llmfit analyses your RAM/GPU and ranks models by fit score, with tokens/sec estimates, format filters, and 491+ models paginated
