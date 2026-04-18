@@ -113,6 +113,17 @@ elif [ "$DIR/requirements.txt" -nt "$VENV/bin/pip" ]; then
     "$VENV/bin/pip" install -r "$DIR/requirements.txt" -q || bail "Failed to install dependencies."
 fi
 
+# spaCy English model — required by `misaki` (Kokoro's G2P frontend).
+# Without this, the first TTS synthesis in the app falls into misaki's
+# runtime auto-download path which invokes `spacy cli.download`, which
+# invokes pip — and pip can fail in the bundled venv, crashing the TTS
+# request with a 500. Pre-installing closes that failure mode for good.
+if ! "$VENV/bin/python" -c "import en_core_web_sm" 2>/dev/null; then
+    status "Installing speech model…" 25
+    "$VENV/bin/python" -m spacy download en_core_web_sm -q \
+        || bail "Failed to install spaCy English model (needed for voice TTS)."
+fi
+
 # ── 3. SearXNG setup (first-run) ─────────────────────────────────────────────
 PYTHON312=$(command -v python3.12 2>/dev/null || true)
 if [ -z "$PYTHON312" ]; then
