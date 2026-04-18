@@ -577,7 +577,12 @@
     color: var(--loca-color-text);
   }
   input[type='text'] { flex: 1; font-family: var(--loca-font-mono); }
-  select { cursor: pointer; }
+  select {
+    cursor: pointer;
+    /* Keep Appearance/Context dropdowns the same width so their right
+       edges line up regardless of the longest option label. */
+    min-width: 150px;
+  }
 
   .hint {
     margin: 6px 0 0;

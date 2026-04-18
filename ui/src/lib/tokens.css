@@ -46,8 +46,9 @@
   color-scheme: light dark;
 }
 
+/* OS-driven dark mode — only when the user hasn't forced a mode. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) {
     --loca-color-bg:           #1c1c1e;
     --loca-color-surface:      #2c2c2e;
     --loca-color-border:       rgba(255, 255, 255, 0.14);
@@ -56,6 +57,23 @@
     --loca-color-accent:       #0a84ff;
     --loca-color-accent-hover: #409cff;
   }
+}
+
+/* Manual dark mode (Preferences → Theme = Dark). Wins over OS. */
+:root[data-theme="dark"] {
+  --loca-color-bg:           #1c1c1e;
+  --loca-color-surface:      #2c2c2e;
+  --loca-color-border:       rgba(255, 255, 255, 0.14);
+  --loca-color-text:         #f5f5f7;
+  --loca-color-text-muted:   #8e8e93;
+  --loca-color-accent:       #0a84ff;
+  --loca-color-accent-hover: #409cff;
+  color-scheme: dark;
+}
+
+/* Manual light mode — explicit, so OS-dark doesn't sneak through. */
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
 html, body {

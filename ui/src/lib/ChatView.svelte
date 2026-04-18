@@ -81,6 +81,44 @@
   let convId = $state<string | null>(null);
   let convTitle = $state<string>('');
 
+  // Sidebar clicks and the New Conversation button both route through
+  // `app.activeConvId`. `convSelectNonce` bumps on every set (including
+  // clicking the already-active row), so this effect always fires.
+  $effect(() => {
+    const nonce = app.convSelectNonce;
+    void nonce;
+    const target = app.activeConvId;
+    if (target === convId) return;
+    if (target === null) {
+      history = [];
+      convId = null;
+      convTitle = '';
+      lastStats = null;
+      errorMsg = null;
+      return;
+    }
+    void loadConversation(target);
+  });
+
+  async function loadConversation(id: string): Promise<void> {
+    try {
+      const r = await fetch(`/api/conversations/${encodeURIComponent(id)}`);
+      if (!r.ok) throw new Error(`GET /api/conversations/${id} → ${r.status}`);
+      const data = await r.json();
+      const msgs = (data.messages ?? []) as Array<{ role: string; content: string }>;
+      history = msgs
+        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        .map((m) => ({ role: m.role as Role, content: m.content }));
+      convId = id;
+      convTitle = data.title ?? '';
+      lastStats = null;
+      errorMsg = null;
+      await scrollToBottom();
+    } catch (e) {
+      errorMsg = e instanceof Error ? e.message : String(e);
+    }
+  }
+
   async function scrollToBottom(): Promise<void> {
     await tick();
     if (scroller) scroller.scrollTop = scroller.scrollHeight;
@@ -103,7 +141,19 @@
       });
       if (r.ok) {
         const data = await r.json();
-        if (!convId && data.id) convId = data.id;
+        if (!convId && data.id) {
+          const newId = String(data.id);
+          convId = newId;
+          // Let the store know so the sidebar's `active` highlight
+          // follows the newly-persisted conversation instead of sitting
+          // on null. `refresh()` pulls the new row into the sidebar list.
+          app.adoptActiveConv(newId);
+          void app.refresh();
+        } else if (convId) {
+          // Existing conv — update title/preview so the sidebar's list
+          // reflects the latest exchange without a full reload round-trip.
+          void app.refresh();
+        }
       }
     } catch {
       // Fire-and-forget: persistence failure doesn't block the chat.
