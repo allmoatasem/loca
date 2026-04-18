@@ -174,6 +174,17 @@ final class AppState: ObservableObject {
         didSet { UserDefaults.standard.set(systemPromptOverride, forKey: "systemPromptOverride") }
     }
 
+    // Raw JSON strings forwarded verbatim to the backend. See
+    // BackendClient.streamChat for the wire format. Kept as strings so
+    // the user can paste any JSON; validation is client-side in
+    // PreferencesView's Inference tab.
+    @Published var chatTemplateKwargsJSON: String = UserDefaults.standard.string(forKey: "chatTemplateKwargsJSON") ?? "" {
+        didSet { UserDefaults.standard.set(chatTemplateKwargsJSON, forKey: "chatTemplateKwargsJSON") }
+    }
+    @Published var extraBodyJSON: String = UserDefaults.standard.string(forKey: "extraBodyJSON") ?? "" {
+        didSet { UserDefaults.standard.set(extraBodyJSON, forKey: "extraBodyJSON") }
+    }
+
     // MARK: - Server connection
 
     @Published var serverHost: String = UserDefaults.standard.string(forKey: "serverHost") ?? "localhost" {

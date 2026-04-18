@@ -210,6 +210,11 @@ async def openai_chat(request: Request) -> Response:
     # send these; when present we skip Loca's custom tool loop and forward verbatim.
     tools: list[dict] | None = body.get("tools")
     tool_choice = body.get("tool_choice")
+    # Jinja chat-template kwargs (e.g. Qwen3's enable_thinking / Qwen3.6's
+    # preserve_thinking) and arbitrary extras (min_p, mirostat_*, xtc_*,
+    # dry_*, grammar, …). Both are forwarded as-is to the backend.
+    chat_template_kwargs: dict | None = body.get("chat_template_kwargs")
+    extra_body: dict | None = body.get("extra_body")
 
     assert _orchestrator is not None
 
@@ -223,6 +228,8 @@ async def openai_chat(request: Request) -> Response:
                     num_ctx=num_ctx, temperature=temperature, top_p=top_p, top_k=top_k,
                     repeat_penalty=repeat_penalty, max_tokens=max_tokens,
                     system_prompt_override=system_prompt_override,
+                    chat_template_kwargs=chat_template_kwargs,
+                    extra_body=extra_body,
                 )),
                 media_type="text/event-stream",
             )
@@ -233,6 +240,8 @@ async def openai_chat(request: Request) -> Response:
             num_ctx=num_ctx, temperature=temperature, top_p=top_p, top_k=top_k,
             repeat_penalty=repeat_penalty, max_tokens=max_tokens,
             system_prompt_override=system_prompt_override,
+            chat_template_kwargs=chat_template_kwargs,
+            extra_body=extra_body,
         ))
         return JSONResponse(content=passthrough_response)
 
@@ -243,6 +252,8 @@ async def openai_chat(request: Request) -> Response:
                 temperature=temperature, top_p=top_p, top_k=top_k,
                 repeat_penalty=repeat_penalty, max_tokens=max_tokens,
                 system_prompt_override=system_prompt_override,
+                chat_template_kwargs=chat_template_kwargs,
+                extra_body=extra_body,
             ),
             media_type="text/event-stream",
         )
@@ -254,6 +265,8 @@ async def openai_chat(request: Request) -> Response:
         temperature=temperature, top_p=top_p, top_k=top_k,
         repeat_penalty=repeat_penalty, max_tokens=max_tokens,
         system_prompt_override=system_prompt_override,
+        chat_template_kwargs=chat_template_kwargs,
+        extra_body=extra_body,
     ))
     # response_data is already an OpenAI-shaped dict from LM Studio — pass it through
     content = ""
@@ -296,6 +309,8 @@ async def _openai_stream_response(
     repeat_penalty: float | None = None,
     max_tokens: int | None = None,
     system_prompt_override: str | None = None,
+    chat_template_kwargs: dict | None = None,
+    extra_body: dict | None = None,
 ) -> AsyncIterator[bytes]:
     output_chars = 0
     actual_model = model_override or model_hint or "local"
@@ -311,6 +326,8 @@ async def _openai_stream_response(
             temperature=temperature, top_p=top_p, top_k=top_k,
             repeat_penalty=repeat_penalty, max_tokens=max_tokens,
             system_prompt_override=system_prompt_override,
+            chat_template_kwargs=chat_template_kwargs,
+            extra_body=extra_body,
         ))
         async for chunk in gen:
             # Metadata sentinel from orchestrator

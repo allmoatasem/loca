@@ -120,6 +120,55 @@
   }
   function bumpToCustom(): void { if (!isCustom) params = { ...params, recipe: 'Custom' }; }
 
+  // ── Advanced: chat_template_kwargs + extra_body ─────────────────────
+  // chat_template_kwargs forwards Jinja-template vars (Qwen3's
+  // enable_thinking, Qwen3.6's preserve_thinking, etc.). extra_body
+  // carries arbitrary sampling extras (min_p, mirostat_*, xtc_*, dry_*,
+  // …) the backend understands but Loca doesn't model explicitly. Both
+  // flow through the proxy → orchestrator → backend unchanged.
+  const ctkKey = 'loca-template-kwargs';
+  const ebKey  = 'loca-extra-body';
+  let templateKwargsJson = $state<string>(localStorage.getItem(ctkKey) ?? '');
+  let extraBodyJson      = $state<string>(localStorage.getItem(ebKey)  ?? '');
+  let templateKwargsErr  = $state<string | null>(null);
+  let extraBodyErr       = $state<string | null>(null);
+  // Quick toggles for Qwen3's template vars — set keys inside
+  // chat_template_kwargs without the user having to edit JSON.
+  type ThinkingMode = 'auto' | 'off' | 'preserve';
+  function readThinking(): ThinkingMode {
+    try {
+      const obj = templateKwargsJson.trim() ? JSON.parse(templateKwargsJson) : {};
+      if (obj.preserve_thinking === true) return 'preserve';
+      if (obj.enable_thinking === false) return 'off';
+    } catch { /* parse error → auto */ }
+    return 'auto';
+  }
+  let thinkingMode = $state<ThinkingMode>(readThinking());
+  function setThinkingMode(m: ThinkingMode): void {
+    thinkingMode = m;
+    let obj: Record<string, unknown> = {};
+    try { obj = templateKwargsJson.trim() ? JSON.parse(templateKwargsJson) : {}; }
+    catch { obj = {}; }
+    delete obj.enable_thinking;
+    delete obj.preserve_thinking;
+    if (m === 'off')      obj.enable_thinking = false;
+    if (m === 'preserve') obj.preserve_thinking = true;
+    templateKwargsJson = Object.keys(obj).length > 0 ? JSON.stringify(obj, null, 2) : '';
+    templateKwargsErr = null;
+  }
+  $effect(() => {
+    const s = templateKwargsJson.trim();
+    if (!s) { templateKwargsErr = null; localStorage.setItem(ctkKey, ''); return; }
+    try { JSON.parse(s); templateKwargsErr = null; localStorage.setItem(ctkKey, s); }
+    catch (e) { templateKwargsErr = e instanceof Error ? e.message : 'Invalid JSON'; }
+  });
+  $effect(() => {
+    const s = extraBodyJson.trim();
+    if (!s) { extraBodyErr = null; localStorage.setItem(ebKey, ''); return; }
+    try { JSON.parse(s); extraBodyErr = null; localStorage.setItem(ebKey, s); }
+    catch (e) { extraBodyErr = e instanceof Error ? e.message : 'Invalid JSON'; }
+  });
+
   // ── Performance ─────────────────────────────────────────────────────
   const perfKey = 'loca-performance-params';
   interface PerfParams { gpu_layers: number; batch_size: number; cpu_threads: number; }
@@ -308,6 +357,51 @@
             disabled={!isCustom}
             oninput={(e) => { bumpToCustom(); params.max_tokens = parseInt((e.currentTarget as HTMLInputElement).value, 10); }} />
         </div>
+      </section>
+
+      <section class="group">
+        <h3>Advanced</h3>
+        <p class="hint">
+          Forwarded verbatim to the backend. Use <code>chat_template_kwargs</code>
+          for template vars the model's Jinja template reads
+          (e.g. Qwen3 <code>enable_thinking</code>, Qwen3.6
+          <code>preserve_thinking</code>). Use <code>extra_body</code> for
+          sampling extras Loca doesn't model explicitly
+          (<code>min_p</code>, <code>mirostat_tau</code>, <code>xtc_probability</code>,
+          <code>dry_multiplier</code>, <code>grammar</code>, …).
+        </p>
+
+        <div class="row" style="margin-top:10px;">
+          <span>Thinking mode (Qwen3 / Qwen3.6)</span>
+          <div class="seg">
+            {#each ['auto', 'off', 'preserve'] as m (m)}
+              <button
+                class:active={thinkingMode === m}
+                onclick={() => setThinkingMode(m as ThinkingMode)}
+              >{m}</button>
+            {/each}
+          </div>
+        </div>
+
+        <label for="pref-ctk" style="font-size:11px;color:var(--loca-color-text-muted);margin-top:12px;display:block;">
+          chat_template_kwargs (JSON)
+        </label>
+        <textarea id="pref-ctk" rows="4"
+          placeholder={'{"enable_thinking": false}'}
+          bind:value={templateKwargsJson}></textarea>
+        {#if templateKwargsErr}
+          <p class="status err">{templateKwargsErr}</p>
+        {/if}
+
+        <label for="pref-eb" style="font-size:11px;color:var(--loca-color-text-muted);margin-top:12px;display:block;">
+          extra_body (JSON)
+        </label>
+        <textarea id="pref-eb" rows="4"
+          placeholder={'{"min_p": 0.05, "mirostat_tau": 5.0}'}
+          bind:value={extraBodyJson}></textarea>
+        {#if extraBodyErr}
+          <p class="status err">{extraBodyErr}</p>
+        {/if}
       </section>
 
     {:else if active === 'performance'}
@@ -570,4 +664,26 @@
     cursor: pointer;
   }
   code { font-family: var(--loca-font-mono); font-size: 0.9em; background: rgba(127,127,127,0.12); padding: 1px 4px; border-radius: 3px; }
+
+  .seg {
+    display: inline-flex;
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-sm);
+    overflow: hidden;
+  }
+  .seg button {
+    background: none;
+    border: none;
+    padding: 4px 10px;
+    font-size: 11px;
+    color: var(--loca-color-text-muted);
+    cursor: pointer;
+    text-transform: capitalize;
+  }
+  .seg button.active {
+    background: color-mix(in srgb, var(--loca-color-accent) 15%, transparent);
+    color: var(--loca-color-accent);
+    font-weight: 500;
+  }
+  .seg button + button { border-left: 1px solid var(--loca-color-border); }
 </style>

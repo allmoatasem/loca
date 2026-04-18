@@ -151,7 +151,19 @@ actor BackendClient {
     // MARK: - Chat (streaming)
 
     /// Yields raw SSE `data:` line payloads as `String` chunks.
-    nonisolated func streamChat(_ request: ChatRequest) -> AsyncThrowingStream<String, Error> {
+    ///
+    /// `chatTemplateKwargs` forwards Jinja-template vars (Qwen3
+    /// `enable_thinking`, Qwen3.6 `preserve_thinking`, …). `extraBody`
+    /// carries arbitrary sampling extras (`min_p`, `mirostat_tau`,
+    /// `xtc_probability`, `dry_multiplier`, `grammar`, …). Both are raw
+    /// JSON strings — if the user typed invalid JSON in Preferences,
+    /// the string is silently dropped here rather than blocking the
+    /// request.
+    nonisolated func streamChat(
+        _ request: ChatRequest,
+        chatTemplateKwargsJSON: String? = nil,
+        extraBodyJSON: String? = nil
+    ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             Task {
                 do {
@@ -159,7 +171,26 @@ actor BackendClient {
                     var urlReq = URLRequest(url: chatURL)
                     urlReq.httpMethod = "POST"
                     urlReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    urlReq.httpBody  = try JSONEncoder().encode(request)
+
+                    // Encode the base ChatRequest, then splice in the two
+                    // free-form JSON blobs so arbitrary backend args work
+                    // without having to grow ChatRequest for every new field.
+                    let baseData = try JSONEncoder().encode(request)
+                    if var dict = try JSONSerialization.jsonObject(with: baseData) as? [String: Any] {
+                        if let s = chatTemplateKwargsJSON, !s.isEmpty,
+                           let data = s.data(using: .utf8),
+                           let obj  = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                            dict["chat_template_kwargs"] = obj
+                        }
+                        if let s = extraBodyJSON, !s.isEmpty,
+                           let data = s.data(using: .utf8),
+                           let obj  = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                            dict["extra_body"] = obj
+                        }
+                        urlReq.httpBody = try JSONSerialization.data(withJSONObject: dict)
+                    } else {
+                        urlReq.httpBody = baseData
+                    }
 
                     let (bytes, _) = try await sess.bytes(for: urlReq)
                     var buffer = ""

@@ -494,6 +494,123 @@ class TestStreaming:
 # Backend retry logic
 # ---------------------------------------------------------------------------
 
+class TestTemplateKwargsAndExtraBody:
+    """Pass-through of chat_template_kwargs and extra_body to the backend.
+
+    chat_template_kwargs lets template-level vars (enable_thinking,
+    preserve_thinking, …) reach the Jinja template. extra_body is the
+    OpenAI-SDK convention for arbitrary sampling extras the backend
+    understands but Loca doesn't model explicitly (min_p, mirostat_*,
+    xtc_*, dry_*, …).
+    """
+
+    @pytest.mark.asyncio
+    async def test_chat_template_kwargs_forwarded_to_backend(self):
+        orch, mm = _make_orchestrator()
+        captured: list = []
+
+        async def _fake_chat(model, api_base, messages, stream=False, **kwargs):
+            captured.append(kwargs)
+            return _make_response("ok")
+
+        with patch.object(orch, "_chat", side_effect=_fake_chat), \
+             patch("src.orchestrator.get_memories_context", return_value=""):
+            await orch.handle(
+                [{"role": "user", "content": "hi"}],
+                stream=False,
+                chat_template_kwargs={"enable_thinking": False, "preserve_thinking": True},
+            )
+
+        assert captured and captured[0].get("chat_template_kwargs") == {
+            "enable_thinking": False, "preserve_thinking": True,
+        }
+
+    @pytest.mark.asyncio
+    async def test_extra_body_forwarded_to_backend(self):
+        orch, mm = _make_orchestrator()
+        captured: list = []
+
+        async def _fake_chat(model, api_base, messages, stream=False, **kwargs):
+            captured.append(kwargs)
+            return _make_response("ok")
+
+        with patch.object(orch, "_chat", side_effect=_fake_chat), \
+             patch("src.orchestrator.get_memories_context", return_value=""):
+            await orch.handle(
+                [{"role": "user", "content": "hi"}],
+                stream=False,
+                extra_body={"min_p": 0.05, "mirostat_tau": 5.0, "xtc_probability": 0.1},
+            )
+
+        assert captured and captured[0].get("extra_body") == {
+            "min_p": 0.05, "mirostat_tau": 5.0, "xtc_probability": 0.1,
+        }
+
+    @pytest.mark.asyncio
+    async def test_chat_payload_includes_chat_template_kwargs_verbatim(self):
+        orch, _ = _make_orchestrator()
+        captured: list = []
+
+        class _FakeResp:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(self): return _make_response("ok")
+
+        class _FakeClient:
+            def __init__(self, *a, **k): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def post(self, url, json=None):
+                captured.append(json)
+                return _FakeResp()
+
+        with patch("src.orchestrator.httpx.AsyncClient", _FakeClient):
+            await orch._chat(
+                "m", "http://x", [{"role": "user", "content": "hi"}],
+                chat_template_kwargs={"enable_thinking": False},
+                extra_body={"min_p": 0.07},
+            )
+
+        payload = captured[0]
+        assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+        # extra_body is shallow-merged at the top level
+        assert payload["min_p"] == 0.07
+        # Known Loca fields still present and unchanged
+        assert payload["model"] == "m"
+        assert payload["messages"][0]["content"] == "hi"
+
+    @pytest.mark.asyncio
+    async def test_extra_body_does_not_overwrite_explicit_loca_fields(self):
+        """If a user accidentally puts `temperature` in extra_body, the value
+        explicitly set by Loca's UI wins. Prevents silent weirdness."""
+        orch, _ = _make_orchestrator()
+        captured: list = []
+
+        class _FakeResp:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(self): return _make_response("ok")
+
+        class _FakeClient:
+            def __init__(self, *a, **k): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def post(self, url, json=None):
+                captured.append(json)
+                return _FakeResp()
+
+        with patch("src.orchestrator.httpx.AsyncClient", _FakeClient):
+            await orch._chat(
+                "m", "http://x", [{"role": "user", "content": "hi"}],
+                temperature=0.7,
+                extra_body={"temperature": 2.0, "min_p": 0.05},
+            )
+
+        payload = captured[0]
+        assert payload["temperature"] == 0.7
+        assert payload["min_p"] == 0.05
+
+
 class TestToolsPassthrough:
     """OpenAI tools/tool_choice passthrough used by agentic coding clients (claw-code, Aider, Continue)."""
 
