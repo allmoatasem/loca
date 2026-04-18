@@ -30,8 +30,12 @@ struct PreferencesView: View {
             default: GeneralPrefsTab()
             }
         }
-        .frame(width: 540)
-        .fixedSize()
+        // Wider than the original 540 so the 6 segmented-control labels
+        // (General / Inference / Performance / System Prompt / Knowledge /
+        // Server) size uniformly instead of the shorter tabs being
+        // noticeably narrower. Fixed height so the window doesn't jump
+        // between tabs; tabs with overflowing content scroll internally.
+        .frame(width: 640, height: 640)
     }
 }
 
@@ -95,7 +99,7 @@ private struct GeneralPrefsTab: View {
         }
         .formStyle(.grouped)
         .padding(20)
-        .frame(width: 540)
+        .frame(maxWidth: .infinity)
         .task { await loadModelsDir() }
     }
 
@@ -139,10 +143,14 @@ private struct InferencePrefsTab: View {
     private var isCustom: Bool { state.selectedRecipe == "Custom" }
 
     var body: some View {
+        // Wrap in a vertical ScrollView so the new Advanced section (and
+        // any future sections) don't overflow the fixed-height window.
+        ScrollView(.vertical) {
         VStack(alignment: .leading, spacing: 16) {
             Text("Recipe")
                 .font(.headline)
                 .padding(.horizontal, 20)
+                .padding(.top, 16)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
@@ -217,7 +225,7 @@ private struct InferencePrefsTab: View {
             .padding(.horizontal, 20)
             .padding(.bottom, 20)
         }
-        .frame(width: 540)
+        }  // end ScrollView
     }
 }
 
@@ -575,7 +583,7 @@ private struct PerformancePrefsTab: View {
         }
         .formStyle(.grouped)
         .padding(20)
-        .frame(width: 540)
+        .frame(maxWidth: .infinity)
         .onAppear { state.loadRecommendationsIfNeeded() }
     }
 }
@@ -784,7 +792,7 @@ private struct SystemPromptPrefsTab: View {
         }
         .formStyle(.grouped)
         .padding(20)
-        .frame(width: 540)
+        .frame(maxWidth: .infinity)
     }
 }
 
