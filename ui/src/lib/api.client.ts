@@ -14,6 +14,11 @@ export interface LocalModel {
   format?: string;        // 'mlx' | 'gguf' | …
   path?: string;
   size_bytes?: number;
+  size_gb?: number;
+  is_loaded?: boolean;
+  context_length?: number | null;
+  param_label?: string | null;
+  supports_vision?: boolean;
 }
 
 export interface ConversationMeta {
@@ -77,4 +82,18 @@ export async function patchConversation(
 export async function unloadModel(): Promise<void> {
   const r = await fetch('/api/models/unload', { method: 'POST' });
   if (!r.ok) throw new Error(`unload → HTTP ${r.status}`);
+}
+
+export async function loadModel(name: string, ctxSize: number): Promise<void> {
+  const r = await fetch('/api/models/load', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, ctx_size: ctxSize }),
+  });
+  if (!r.ok) throw new Error(`load ${name} → HTTP ${r.status}`);
+}
+
+export async function deleteModel(name: string): Promise<void> {
+  const r = await fetch(`/api/models/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  if (!r.ok) throw new Error(`delete model ${name} → HTTP ${r.status}`);
 }
