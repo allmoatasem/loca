@@ -135,3 +135,52 @@ export async function startDownload(
 export async function cancelDownload(id: string): Promise<void> {
   await fetch(`/api/models/download/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
 }
+
+// Vault Analyser
+export interface DetectedVault { path: string; name: string }
+export interface VaultStats {
+  note_count: number; link_count: number; total_words: number;
+  tag_count: number; top_tags: Array<{ tag: string; count: number }>;
+  folder_count: number; daily_note_count: number;
+  open_tasks: number; done_tasks: number;
+}
+export interface OrphanNote { rel_path: string; title: string; modified?: number }
+export interface BrokenLink { source: string; target: string }
+export interface DeadEnd    { rel_path: string; title: string }
+export interface TagOrphan  { tag: string; count: number }
+export interface LinkSuggestion { source: string; target: string; score: number }
+export interface VaultAnalysis {
+  stats: VaultStats;
+  orphans: OrphanNote[];
+  dead_ends: DeadEnd[];
+  broken_links: BrokenLink[];
+  tag_orphans: TagOrphan[];
+  link_suggestions: LinkSuggestion[];
+}
+export interface VaultSearchHit { rel_path: string; title: string; snippet: string; score?: number }
+
+export async function detectVaults(): Promise<DetectedVault[]> {
+  const data = await jsonGet<{ vaults: DetectedVault[] }>('/api/vault/detect');
+  return data.vaults ?? [];
+}
+
+export async function scanVault(path: string): Promise<{ ok: boolean } & Partial<VaultStats>> {
+  const r = await fetch('/api/vault/scan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (!r.ok) throw new Error(`scan ${path} → HTTP ${r.status}`);
+  return r.json();
+}
+
+export async function fetchVaultAnalysis(path: string): Promise<VaultAnalysis> {
+  return jsonGet<VaultAnalysis>(`/api/vault/analysis?path=${encodeURIComponent(path)}`);
+}
+
+export async function searchVault(path: string, q: string, limit = 30): Promise<VaultSearchHit[]> {
+  const data = await jsonGet<{ results: VaultSearchHit[] }>(
+    `/api/vault/semantic-search?path=${encodeURIComponent(path)}&q=${encodeURIComponent(q)}&limit=${limit}`,
+  );
+  return data.results ?? [];
+}
