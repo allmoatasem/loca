@@ -46,6 +46,7 @@ Loca manages its own inference backend (MLX on Apple Silicon, llama.cpp everywhe
 | Python 3.12 | `brew install python@3.12` |
 | llama.cpp server | `brew install llama.cpp` |
 | mlx_lm (optional, Apple Silicon only) | `pip install mlx_lm` |
+| espeak-ng (voice mode) | auto-installed by `start_services.sh`; `brew install espeak-ng` to do it manually |
 | Xcode (native app only) | App Store |
 
 ### Linux
@@ -53,12 +54,14 @@ Loca manages its own inference backend (MLX on Apple Silicon, llama.cpp everywhe
 |---|---|
 | Python 3.12+ | `sudo apt install python3.12 python3.12-venv` |
 | llama-server | [llama.cpp releases](https://github.com/ggerganov/llama.cpp/releases) |
+| espeak-ng (voice mode) | `sudo apt install espeak-ng` |
 
 ### Windows
 | Requirement | Install |
 |---|---|
 | Python 3.12 | [python.org](https://www.python.org/downloads) |
 | llama-server.exe | [llama.cpp releases](https://github.com/ggerganov/llama.cpp/releases) |
+| espeak-ng (voice mode) | [espeak-ng releases](https://github.com/espeak-ng/espeak-ng/releases) |
 
 ---
 

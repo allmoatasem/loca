@@ -25,9 +25,27 @@ elif [ "$DIR/requirements.txt" -nt "$VENV/bin/pip" ]; then
     "$VENV/bin/pip" install -r "$DIR/requirements.txt" -q
 fi
 
+# spaCy English model — needed by Kokoro/misaki for voice TTS. Without it,
+# misaki's runtime auto-download path shells out to pip and can crash
+# synthesis with HTTP 500. One-time install.
+if ! "$VENV/bin/python" -c "import en_core_web_sm" 2>/dev/null; then
+    log "Installing spaCy English model (voice TTS)..."
+    "$VENV/bin/python" -m spacy download en_core_web_sm -q \
+        || log "spaCy model install failed — voice TTS will not work until it succeeds."
+fi
+
 # ── 2. Check llama-server is available ────────────────────────────────────────
 if ! command -v llama-server > /dev/null 2>&1; then
     bail "llama-server not found. Install llama.cpp: https://github.com/ggerganov/llama.cpp/releases"
+fi
+
+# espeak-ng — G2P fallback for Kokoro TTS. Without it, voice replies
+# break on out-of-dictionary words (see macOS script for the full
+# explanation). Soft-warn only: voice mode is optional and chat still
+# works without TTS.
+if ! command -v espeak-ng > /dev/null 2>&1; then
+    log "espeak-ng not found — voice TTS may break on uncommon words."
+    log "Install: sudo apt install espeak-ng  (or your distro's equivalent)."
 fi
 
 # ── 3. SearXNG setup (optional, first-run) ────────────────────────────────────

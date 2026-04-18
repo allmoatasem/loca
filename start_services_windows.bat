@@ -25,6 +25,24 @@ if not exist "%VENV%\Scripts\python.exe" (
     )
 )
 
+REM ── 1b. spaCy English model (voice TTS — Kokoro/misaki) ───────────────────
+REM Without this the first /v1/audio/speech request can crash when misaki
+REM tries to auto-download via pip. One-time install.
+"%VENV%\Scripts\python" -c "import en_core_web_sm" >nul 2>&1
+if errorlevel 1 (
+    echo [Loca] Installing spaCy English model (voice TTS)...
+    "%VENV%\Scripts\python" -m spacy download en_core_web_sm -q
+)
+
+REM ── 1c. espeak-ng (voice TTS fallback) ────────────────────────────────────
+REM Without espeak-ng, voice replies break on uncommon words. Soft-warn;
+REM voice mode is optional and chat still works.
+where espeak-ng >nul 2>&1
+if errorlevel 1 (
+    echo [Loca] espeak-ng not found on PATH — voice TTS may break on uncommon words.
+    echo        Install from https://github.com/espeak-ng/espeak-ng/releases
+)
+
 REM ── 2. Check llama-server ──────────────────────────────────────────────────
 where llama-server >nul 2>&1
 if errorlevel 1 (
