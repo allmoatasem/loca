@@ -182,6 +182,19 @@ class TestBroadQueryDetection:
     def test_specific_topic_is_not_broad(self):
         assert _is_broad_query("what's the best way to embed PDFs?") is False
 
+    def test_what_do_you_know_about_external_topic_is_not_broad(self):
+        # Historically this hit the "what do you know" marker and fanned
+        # out to user-facet sub-queries. Soft marker now requires a
+        # personal pronoun in the query, so this stays narrow.
+        assert _is_broad_query("what do you know about FastAPI?") is False
+        assert _is_broad_query("what do you know about the Transformer paper") is False
+
+    def test_what_do_you_know_about_me_still_broad(self):
+        assert _is_broad_query("what do you know about me as a developer?") is True
+
+    def test_what_do_you_know_about_my_project_still_broad(self):
+        assert _is_broad_query("what do you know about my current project?") is True
+
 
 class TestMetaQueryDetection:
     def test_training_data_phrase_is_meta(self):
