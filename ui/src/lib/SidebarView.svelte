@@ -182,6 +182,7 @@
   <div class="divider"></div>
 
   <nav class="footer">
+    <button onclick={() => openPanel('/ui/vault')}>Vault</button>
     <button onclick={() => openPanel('/ui/glossary')}>Glossary</button>
     <button onclick={() => openPanel('/ui/preferences')}>Preferences</button>
     <button onclick={() => openPanel('/ui/philosophy')}>Philosophy</button>

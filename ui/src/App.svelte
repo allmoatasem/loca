@@ -11,6 +11,7 @@
   import GlossaryView from './lib/GlossaryView.svelte';
   import PreferencesView from './lib/PreferencesView.svelte';
   import ManageModelsView from './lib/ManageModelsView.svelte';
+  import VaultView from './lib/VaultView.svelte';
   import ChatView from './lib/ChatView.svelte';
 
   let path = $state(location.pathname);
@@ -21,10 +22,11 @@
     path = to;
   }
 
-  const openOverlay = $derived.by<null | 'glossary' | 'preferences' | 'manage-models'>(() => {
+  const openOverlay = $derived.by<null | 'glossary' | 'preferences' | 'manage-models' | 'vault'>(() => {
     if (path.endsWith('/glossary'))       return 'glossary';
     if (path.endsWith('/preferences'))    return 'preferences';
     if (path.endsWith('/manage-models'))  return 'manage-models';
+    if (path.endsWith('/vault'))          return 'vault';
     return null;
   });
 
@@ -53,6 +55,8 @@
         <PreferencesView onClose={() => navigate('/ui')} />
       {:else if openOverlay === 'manage-models'}
         <ManageModelsView onClose={() => navigate('/ui')} />
+      {:else if openOverlay === 'vault'}
+        <VaultView onClose={() => navigate('/ui')} />
       {/if}
     </div>
   {/if}
