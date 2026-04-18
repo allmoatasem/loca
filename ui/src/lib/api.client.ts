@@ -97,3 +97,41 @@ export async function deleteModel(name: string): Promise<void> {
   const r = await fetch(`/api/models/${encodeURIComponent(name)}`, { method: 'DELETE' });
   if (!r.ok) throw new Error(`delete model ${name} → HTTP ${r.status}`);
 }
+
+// Discover — HF search, repo files, downloads
+export interface HFSearchHit { repo_id: string; downloads: number; likes: number }
+export interface RepoFile    { name: string; size_gb: number }
+
+export async function searchHF(q: string, format: 'gguf' | 'mlx', limit = 8): Promise<HFSearchHit[]> {
+  const data = await jsonGet<{ models: HFSearchHit[] }>(
+    `/api/hf-search?q=${encodeURIComponent(q)}&format=${format}&limit=${limit}`,
+  );
+  return data.models ?? [];
+}
+
+export async function listRepoFiles(repoId: string, format: 'gguf' | 'mlx'): Promise<RepoFile[]> {
+  const data = await jsonGet<{ files: RepoFile[] }>(
+    `/api/repo-files?repo_id=${encodeURIComponent(repoId)}&format=${format}`,
+  );
+  return data.files ?? [];
+}
+
+export async function startDownload(
+  repoId: string,
+  format: 'gguf' | 'mlx',
+  filename?: string,
+): Promise<string> {
+  const r = await fetch('/api/models/download', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ repo_id: repoId, format, filename }),
+  });
+  if (!r.ok) throw new Error(`download ${repoId} → HTTP ${r.status}`);
+  const data = await r.json();
+  if (!data.download_id) throw new Error('no download_id in response');
+  return data.download_id as string;
+}
+
+export async function cancelDownload(id: string): Promise<void> {
+  await fetch(`/api/models/download/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
+}
