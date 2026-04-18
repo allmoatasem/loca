@@ -23,6 +23,9 @@ struct ResearchWorkspaceView: View {
     @State private var detail: ProjectDetail?
     @State private var items: [ProjectItem] = []
     @State private var isLoading = false
+    // Source-kind filter — mirrors the Svelte dropdown so Mac users can
+    // narrow Sources to a single kind. Empty string = all.
+    @State private var filterKind: String = ""
 
     // New-project form
     @State private var newTitle = ""
@@ -74,7 +77,13 @@ struct ResearchWorkspaceView: View {
                 get: { state.activeProjectId ?? "" },
                 set: { state.setActiveProject($0.isEmpty ? nil : $0) }
             )) {
-                Text("No project").tag("")
+                Text(state.projects.isEmpty
+                     ? "Create your first project"
+                     : "Choose a project…"
+                ).tag("")
+                if state.activeProjectId != nil {
+                    Text("— Unset active project —").tag("")
+                }
                 ForEach(state.projects) { p in
                     Text(p.title).tag(p.id)
                 }
@@ -233,7 +242,28 @@ struct ResearchWorkspaceView: View {
     @ViewBuilder
     private func sourcesTab(_ d: ProjectDetail) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("SOURCES (\(items.count))").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
+            HStack {
+                Text("SOURCES (\(items.count))")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.secondary)
+                Spacer()
+                Picker("", selection: $filterKind) {
+                    Text("All").tag("")
+                    Text("Conversations").tag("conv")
+                    Text("Quotes").tag("quote")
+                    Text("Web URLs").tag("web_url")
+                    Text("Memories").tag("memory")
+                    Text("Vault chunks").tag("vault_chunk")
+                    Text("Vault syncs").tag("vault_sync")
+                }
+                .labelsHidden()
+                .frame(maxWidth: 160)
+                .onChange(of: filterKind) { _, _ in
+                    if let id = state.activeProjectId {
+                        Task { await reloadItems(id) }
+                    }
+                }
+            }
             HStack {
                 TextField("Obsidian vault path", text: $vaultPath)
                     .textFieldStyle(.roundedBorder)
@@ -382,9 +412,19 @@ struct ResearchWorkspaceView: View {
             let d = try await BackendClient.shared.getProject(id)
             detail = d
             scopeDraft = d.scope
-            items = try await BackendClient.shared.listProjectItems(id)
+            await reloadItems(id)
         } catch {
             detail = nil
+            items = []
+        }
+    }
+
+    private func reloadItems(_ id: String) async {
+        do {
+            items = try await BackendClient.shared.listProjectItems(
+                id, kind: filterKind.isEmpty ? nil : filterKind
+            )
+        } catch {
             items = []
         }
     }
@@ -449,7 +489,7 @@ struct ResearchWorkspaceView: View {
             let fresh = r.bookmarks.filter { !$0.duplicate }.count
             digStatus = "Bookmarked \(fresh) new source\(fresh == 1 ? "" : "s") of \(r.total)."
             digDraft = ""
-            items = try await BackendClient.shared.listProjectItems(pid)
+            await reloadItems(pid)
         } catch {
             digStatus = "Failed."
         }
@@ -465,7 +505,7 @@ struct ResearchWorkspaceView: View {
         do {
             let r = try await BackendClient.shared.syncVault(projectId: pid, path: p)
             vaultStatus = "Synced: \(r.stored) stored, \(r.skipped) skipped (of \(r.total))."
-            items = try await BackendClient.shared.listProjectItems(pid)
+            await reloadItems(pid)
         } catch {
             vaultStatus = "Failed."
         }
@@ -496,7 +536,7 @@ struct ResearchWorkspaceView: View {
         guard let pid = state.activeProjectId else { return }
         do {
             try await BackendClient.shared.deleteProjectItem(projectId: pid, itemId: iid)
-            items = try await BackendClient.shared.listProjectItems(pid)
+            await reloadItems(pid)
         } catch {}
     }
 }

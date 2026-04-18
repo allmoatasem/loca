@@ -1453,6 +1453,7 @@ async def api_sync_vault(project_id: str, request: Request) -> JSONResponse:
 
     import hashlib as _hashlib  # noqa: PLC0415
     import json as _json  # noqa: PLC0415
+    from pathlib import Path as _Path  # noqa: PLC0415
     stats = {
         "path": path_str,
         "stored": stored,
@@ -1464,9 +1465,6 @@ async def api_sync_vault(project_id: str, request: Request) -> JSONResponse:
     # Hash the path alone so re-syncing the same vault upserts rather
     # than piling up `vault_sync` items.
     content_hash = _hashlib.sha256(f"vault:{path_str}".encode()).hexdigest()
-    # Remove any prior vault_sync for this path, then insert fresh row
-    # with updated stats. The dedup path in add_project_item would block
-    # the insert otherwise.
     for existing in list_project_items(project_id, kind="vault_sync", limit=200):
         if existing.get("content_hash") == content_hash:
             delete_project_item(existing["id"])
@@ -1478,6 +1476,50 @@ async def api_sync_vault(project_id: str, request: Request) -> JSONResponse:
         url=path_str,
         content_hash=content_hash,
     )
+    # Also create one `vault_chunk` item per markdown note in the vault
+    # so Sources actually shows the user's notes (not just a single
+    # summary row). Dedup via content-hash per note — re-running sync
+    # is a no-op when files haven't changed. Capped at 200 notes to
+    # keep the Sources list scannable; users with larger vaults see
+    # the vault_sync row + the top 200 notes.
+    note_count = 0
+    try:
+        root = _Path(path_str).expanduser().resolve()
+        if root.is_dir():
+            md_files: list[_Path] = []
+            for ext in ("*.md", "*.markdown"):
+                md_files.extend(root.rglob(ext))
+            # Stable ordering + cap.
+            md_files = sorted(md_files)[:200]
+            for p in md_files:
+                try:
+                    text = p.read_text(encoding="utf-8", errors="replace")
+                except Exception:
+                    continue
+                if not text.strip():
+                    continue
+                note_hash = _hashlib.sha256(
+                    (f"note:{p}:" + text).encode("utf-8", errors="replace")
+                ).hexdigest()
+                rel = p.relative_to(root) if root in p.parents else p.name
+                title = p.stem
+                snippet = text.strip().replace("\n\n", "\n")[:500]
+                iid = add_project_item(
+                    project_id,
+                    kind="vault_chunk",
+                    title=title,
+                    body=snippet,
+                    url=str(p),
+                    content_hash=note_hash,
+                )
+                if iid is not None:
+                    note_count += 1
+                # Reference rel inside body-less flows is unused here —
+                # silence the linter without a noqa.
+                _ = rel
+    except Exception as exc:  # pragma: no cover
+        logger.warning("vault sync item-pass failed: %s", exc)
+    stats["notes_bookmarked"] = note_count
     return JSONResponse({"ok": True, **stats})
 
 
