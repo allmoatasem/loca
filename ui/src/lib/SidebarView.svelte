@@ -187,6 +187,7 @@
     <button onclick={() => openPanel('/ui/glossary')}>Glossary</button>
     <button onclick={() => openPanel('/ui/preferences')}>Preferences</button>
     <button onclick={() => openPanel('/ui/philosophy')}>Philosophy</button>
+    <button onclick={() => openPanel('/ui/acknowledgements')}>Acknowledgements</button>
   </nav>
 </aside>
 
