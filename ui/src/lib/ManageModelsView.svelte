@@ -15,11 +15,15 @@
     unloadModel as apiUnloadModel,
     type LocalModel,
   } from './api.client';
+  import DiscoverTab from './DiscoverTab.svelte';
 
   interface Props {
     onClose?: () => void;
   }
   let { onClose }: Props = $props();
+
+  type Tab = 'downloaded' | 'discover';
+  let tab = $state<Tab>('downloaded');
 
   let models = $state<LocalModel[]>([]);
   let loading = $state<boolean>(false);
@@ -107,8 +111,19 @@
     {/if}
   </header>
 
+  <nav class="tabs">
+    <button class:active={tab === 'downloaded'} onclick={() => tab = 'downloaded'}>
+      Downloaded ({models.length})
+    </button>
+    <button class:active={tab === 'discover'} onclick={() => tab = 'discover'}>
+      Discover
+    </button>
+  </nav>
+
   <div class="body">
-    {#if loading && models.length === 0}
+    {#if tab === 'discover'}
+      <DiscoverTab onModelsChanged={refresh} />
+    {:else if loading && models.length === 0}
       <p class="hint">Loading…</p>
     {:else if models.length === 0}
       <div class="empty">
@@ -184,7 +199,27 @@
   header {
     display: flex; align-items: center; justify-content: space-between;
     padding: 14px 20px;
+  }
+  .tabs {
+    display: flex;
+    gap: 4px;
+    padding: 0 20px 8px;
     border-bottom: 1px solid var(--loca-color-border);
+  }
+  .tabs button {
+    background: none;
+    border: none;
+    padding: 6px 12px;
+    font-size: 12px;
+    color: var(--loca-color-text-muted);
+    cursor: pointer;
+    border-radius: var(--loca-radius-sm);
+  }
+  .tabs button:hover { color: var(--loca-color-text); }
+  .tabs button.active {
+    background: color-mix(in srgb, var(--loca-color-accent) 15%, transparent);
+    color: var(--loca-color-accent);
+    font-weight: 500;
   }
   h2 { font-size: 14px; font-weight: 600; margin: 0; }
   .close {
