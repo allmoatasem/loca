@@ -423,7 +423,11 @@ extension AppState {
         var lastUsage: UsageStats?
 
         do {
-            for try await raw in BackendClient.shared.streamChat(request) {
+            for try await raw in BackendClient.shared.streamChat(
+                request,
+                chatTemplateKwargsJSON: chatTemplateKwargsJSON.isEmpty ? nil : chatTemplateKwargsJSON,
+                extraBodyJSON:          extraBodyJSON.isEmpty          ? nil : extraBodyJSON
+            ) {
                 guard let data = raw.data(using: .utf8),
                       let chunk = try? JSONDecoder().decode(SSEChunk.self, from: data) else { continue }
 

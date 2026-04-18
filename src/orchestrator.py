@@ -77,6 +77,8 @@ class Orchestrator:
         repeat_penalty: float | None = None,
         max_tokens: int | None = None,
         system_prompt_override: str | None = None,
+        chat_template_kwargs: dict | None = None,
+        extra_body: dict | None = None,
     ) -> dict | AsyncIterator[str | dict]:
         user_message = _last_user_content(messages)
         result: RouteResult = route(user_message, has_image=has_image, model_hint=model_hint)
@@ -153,12 +155,16 @@ class Orchestrator:
                 provenance_seed=provenance_seed,
                 temperature=temperature, top_p=top_p, top_k=top_k,
                 repeat_penalty=repeat_penalty, max_tokens=max_tokens,
+                chat_template_kwargs=chat_template_kwargs,
+                extra_body=extra_body,
             )
 
         return await self._call_with_tools(
             model_name, api_base, full_messages, result, num_ctx=num_ctx,
             temperature=temperature, top_p=top_p, top_k=top_k,
             repeat_penalty=repeat_penalty, max_tokens=max_tokens,
+            chat_template_kwargs=chat_template_kwargs,
+            extra_body=extra_body,
         )
 
     # ------------------------------------------------------------------
@@ -184,6 +190,8 @@ class Orchestrator:
         repeat_penalty: float | None = None,
         max_tokens: int | None = None,
         system_prompt_override: str | None = None,
+        chat_template_kwargs: dict | None = None,
+        extra_body: dict | None = None,
     ) -> dict | AsyncIterator[bytes]:
         user_message = _last_user_content(messages)
         result: RouteResult = route(user_message, has_image=has_image, model_hint=model_hint)
@@ -218,6 +226,8 @@ class Orchestrator:
                 model_name, api_base, full_messages, tools, tool_choice,
                 num_ctx=num_ctx, temperature=temperature, top_p=top_p, top_k=top_k,
                 repeat_penalty=repeat_penalty, max_tokens=max_tokens,
+                chat_template_kwargs=chat_template_kwargs,
+                extra_body=extra_body,
             )
 
         return await self._chat(
@@ -225,6 +235,8 @@ class Orchestrator:
             tools=tools, tool_choice=tool_choice,
             num_ctx=num_ctx, temperature=temperature, top_p=top_p, top_k=top_k,
             repeat_penalty=repeat_penalty, max_tokens=max_tokens,
+            chat_template_kwargs=chat_template_kwargs,
+            extra_body=extra_body,
         )
 
     async def _passthrough_stream_bytes(
@@ -240,12 +252,20 @@ class Orchestrator:
         top_k: int | None = None,
         repeat_penalty: float | None = None,
         max_tokens: int | None = None,
+        chat_template_kwargs: dict | None = None,
+        extra_body: dict | None = None,
     ) -> AsyncIterator[bytes]:
         """Forward backend SSE stream verbatim so tool_calls deltas reach the client."""
         base = api_base.rstrip("/")
         payload: dict = {"model": model, "messages": messages, "stream": True, "tools": tools}
+        if extra_body:
+            for k, v in extra_body.items():
+                if k not in ("model", "messages", "stream", "tools"):
+                    payload[k] = v
         if tool_choice is not None:
             payload["tool_choice"] = tool_choice
+        if chat_template_kwargs:
+            payload["chat_template_kwargs"] = chat_template_kwargs
         if num_ctx:
             payload["num_ctx"] = num_ctx
         if temperature is not None:
@@ -354,6 +374,8 @@ class Orchestrator:
         top_k: int | None = None,
         repeat_penalty: float | None = None,
         max_tokens: int | None = None,
+        chat_template_kwargs: dict | None = None,
+        extra_body: dict | None = None,
     ) -> dict:
         """Call model, handle tool calls, return final response."""
         tool_call_count = 0
@@ -363,6 +385,8 @@ class Orchestrator:
                 model_name, api_base, messages, stream=False, num_ctx=num_ctx,
                 temperature=temperature, top_p=top_p, top_k=top_k,
                 repeat_penalty=repeat_penalty, max_tokens=max_tokens,
+                chat_template_kwargs=chat_template_kwargs,
+                extra_body=extra_body,
             )
             assistant_text: str = _extract_content(response)
 
@@ -386,6 +410,8 @@ class Orchestrator:
             model_name, api_base, messages, stream=False, num_ctx=num_ctx,
             temperature=temperature, top_p=top_p, top_k=top_k,
             repeat_penalty=repeat_penalty, max_tokens=max_tokens,
+            chat_template_kwargs=chat_template_kwargs,
+            extra_body=extra_body,
         )
 
     async def _stream_with_tools(
@@ -403,6 +429,8 @@ class Orchestrator:
         top_k: int | None = None,
         repeat_penalty: float | None = None,
         max_tokens: int | None = None,
+        chat_template_kwargs: dict | None = None,
+        extra_body: dict | None = None,
     ) -> AsyncIterator[str | dict[str, Any]]:
         """Streaming: collects full response (for tool-call simplicity), yields in chunks.
         Yields a metadata dict first so the proxy can forward the actual model name."""
@@ -410,6 +438,8 @@ class Orchestrator:
             model_name, api_base, messages, route_result, num_ctx=num_ctx,
             temperature=temperature, top_p=top_p, top_k=top_k,
             repeat_penalty=repeat_penalty, max_tokens=max_tokens,
+            chat_template_kwargs=chat_template_kwargs,
+            extra_body=extra_body,
         )
         actual_model = response.get("model", model_name)
         yield {
@@ -437,10 +467,28 @@ class Orchestrator:
         max_tokens: int | None = None,
         tools: list[dict] | None = None,
         tool_choice: str | dict | None = None,
+        chat_template_kwargs: dict | None = None,
+        extra_body: dict | None = None,
     ) -> dict:
-        """Call an OpenAI-compatible /v1/chat/completions endpoint with retry on 400/503."""
+        """Call an OpenAI-compatible /v1/chat/completions endpoint with retry on 400/503.
+
+        `chat_template_kwargs` forwards Jinja-template vars the model's chat
+        template reads (e.g. `enable_thinking`, `preserve_thinking` on Qwen3).
+
+        `extra_body` is the OpenAI-SDK convention: arbitrary top-level fields
+        the backend understands but Loca doesn't model explicitly (min_p,
+        mirostat_*, xtc_*, dry_*, grammar, …). Shallow-merged into the
+        payload; explicit Loca fields win on key collision so the UI's
+        temperature/top_p/top_k/etc. can't be silently overridden.
+        """
         base = api_base.rstrip("/")
         payload: dict = {"model": model, "messages": messages, "stream": stream}
+        # Apply extra_body FIRST so explicit Loca fields below can overwrite
+        # any accidentally-colliding keys.
+        if extra_body:
+            for k, v in extra_body.items():
+                if k not in ("model", "messages", "stream"):
+                    payload[k] = v
         if num_ctx:
             payload["num_ctx"] = num_ctx
         if temperature is not None:
@@ -457,6 +505,8 @@ class Orchestrator:
             payload["tools"] = tools
         if tool_choice is not None:
             payload["tool_choice"] = tool_choice
+        if chat_template_kwargs:
+            payload["chat_template_kwargs"] = chat_template_kwargs
         last_exc: Exception | None = None
 
         for attempt in range(3):

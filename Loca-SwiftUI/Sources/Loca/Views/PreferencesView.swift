@@ -210,12 +210,128 @@ private struct InferencePrefsTab: View {
                         enabled: isCustom
                     ) { state.selectedRecipe = "Custom" }
                 }
+
+                AdvancedBackendArgsSection()
             }
             .formStyle(.grouped)
             .padding(.horizontal, 20)
             .padding(.bottom, 20)
         }
         .frame(width: 540)
+    }
+}
+
+// MARK: - Advanced backend args (chat_template_kwargs + extra_body)
+
+/// Exposes the raw JSON fields that Loca forwards to the backend:
+///   - chat_template_kwargs → Jinja template vars (Qwen3 enable_thinking,
+///     Qwen3.6 preserve_thinking, …)
+///   - extra_body           → arbitrary sampling extras (min_p,
+///     mirostat_tau, xtc_probability, dry_multiplier, grammar, …)
+/// Also surfaces a three-state thinking-mode segmented control that keeps
+/// the template-kwargs JSON in sync without the user editing it by hand.
+private struct AdvancedBackendArgsSection: View {
+    @EnvironmentObject var state: AppState
+
+    private enum ThinkingMode: String, CaseIterable, Identifiable {
+        case auto     = "Auto"
+        case off      = "Off"
+        case preserve = "Preserve"
+        var id: String { rawValue }
+    }
+
+    @State private var ctkError: String?
+    @State private var ebError:  String?
+
+    private var thinkingMode: ThinkingMode {
+        guard let data = state.chatTemplateKwargsJSON.data(using: .utf8),
+              let obj  = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return .auto
+        }
+        if obj["preserve_thinking"] as? Bool == true { return .preserve }
+        if obj["enable_thinking"]   as? Bool == false { return .off }
+        return .auto
+    }
+
+    private func setThinkingMode(_ m: ThinkingMode) {
+        var obj: [String: Any] = [:]
+        if let data = state.chatTemplateKwargsJSON.data(using: .utf8),
+           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            obj = existing
+        }
+        obj.removeValue(forKey: "enable_thinking")
+        obj.removeValue(forKey: "preserve_thinking")
+        switch m {
+        case .auto:     break
+        case .off:      obj["enable_thinking"] = false
+        case .preserve: obj["preserve_thinking"] = true
+        }
+        if obj.isEmpty {
+            state.chatTemplateKwargsJSON = ""
+        } else if let data = try? JSONSerialization.data(
+            withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]
+        ), let str = String(data: data, encoding: .utf8) {
+            state.chatTemplateKwargsJSON = str
+        }
+        ctkError = nil
+    }
+
+    private func validate(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return nil }
+        guard let data = trimmed.data(using: .utf8) else { return "Invalid UTF-8" }
+        do {
+            _ = try JSONSerialization.jsonObject(with: data)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    var body: some View {
+        Section("Advanced") {
+            Text("Forwarded verbatim to the backend. Use **chat_template_kwargs** for template vars (Qwen3 `enable_thinking`, Qwen3.6 `preserve_thinking`). Use **extra_body** for sampling extras (`min_p`, `mirostat_tau`, `xtc_probability`, `dry_multiplier`, `grammar`, …).")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                Text("Thinking mode")
+                    .font(.system(size: 12))
+                Spacer()
+                Picker("", selection: Binding(
+                    get: { thinkingMode },
+                    set: { setThinkingMode($0) }
+                )) {
+                    ForEach(ThinkingMode.allCases) { m in Text(m.rawValue).tag(m) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 220)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("chat_template_kwargs (JSON)").font(.caption).foregroundColor(.secondary)
+                TextEditor(text: $state.chatTemplateKwargsJSON)
+                    .font(.system(size: 11, design: .monospaced))
+                    .frame(minHeight: 60, maxHeight: 120)
+                    .onChange(of: state.chatTemplateKwargsJSON) { _, new in ctkError = validate(new) }
+                if let e = ctkError {
+                    Text(e).font(.caption).foregroundColor(.red)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("extra_body (JSON)").font(.caption).foregroundColor(.secondary)
+                TextEditor(text: $state.extraBodyJSON)
+                    .font(.system(size: 11, design: .monospaced))
+                    .frame(minHeight: 60, maxHeight: 120)
+                    .onChange(of: state.extraBodyJSON) { _, new in ebError = validate(new) }
+                if let e = ebError {
+                    Text(e).font(.caption).foregroundColor(.red)
+                }
+            }
+        }
     }
 }
 

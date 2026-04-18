@@ -119,16 +119,30 @@
       return { role: m.role, content: m.content };
     });
 
+    // Load advanced params from Preferences (see PreferencesView.svelte > Advanced).
+    // Both are validated JSON at save-time, so parse-errors here should be rare —
+    // if they happen, silently drop the field rather than block the request.
+    function parseJsonPref(key: string): unknown | undefined {
+      const raw = localStorage.getItem(key);
+      if (!raw || !raw.trim()) return undefined;
+      try { return JSON.parse(raw); } catch { return undefined; }
+    }
+    const chatTemplateKwargs = parseJsonPref('loca-template-kwargs');
+    const extraBody          = parseJsonPref('loca-extra-body');
+
     try {
+      const body: Record<string, unknown> = {
+        mode: app.selectedCapability,
+        messages: wireMessages,
+        stream: true,
+        num_ctx: app.contextWindow,
+      };
+      if (chatTemplateKwargs) body.chat_template_kwargs = chatTemplateKwargs;
+      if (extraBody)          body.extra_body            = extraBody;
       const resp = await fetch('/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mode: app.selectedCapability,
-          messages: wireMessages,
-          stream: true,
-          num_ctx: app.contextWindow,
-        }),
+        body: JSON.stringify(body),
       });
       if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
 
