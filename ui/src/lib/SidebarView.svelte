@@ -71,6 +71,21 @@
     if (!confirm(`Delete "${title || 'Untitled'}"? This cannot be undone.`)) return;
     await app.deleteConv(id);
   }
+
+  async function onToggleStar(id: string, e: MouseEvent): Promise<void> {
+    e.stopPropagation();
+    await app.toggleStar(id);
+  }
+
+  async function onMoveFolder(id: string, current: string | null | undefined, e: MouseEvent): Promise<void> {
+    e.stopPropagation();
+    const next = prompt(
+      'Move to folder (leave empty to remove from folder):',
+      current ?? '',
+    );
+    if (next === null) return; // user cancelled
+    await app.setFolder(id, next);
+  }
 </script>
 
 <aside class="sidebar">
@@ -161,18 +176,36 @@
           <div
             class="conv-row"
             class:active={app.activeConvId === conv.id}
+            class:starred={conv.starred}
             role="button"
             tabindex="0"
             onclick={() => app.selectConversation(conv.id)}
             onkeydown={(e) => { if (e.key === 'Enter') app.selectConversation(conv.id); }}
           >
+            {#if conv.starred}
+              <span class="star-badge" aria-hidden="true">★</span>
+            {/if}
             <span class="conv-title">{conv.title || 'Untitled'}</span>
-            <button
-              class="conv-del"
-              aria-label="Delete conversation"
-              title="Delete"
-              onclick={(e) => onDelete(conv.id, conv.title, e)}
-            >×</button>
+            <div class="conv-actions">
+              <button
+                class="conv-act"
+                aria-label={conv.starred ? 'Unstar conversation' : 'Star conversation'}
+                title={conv.starred ? 'Unstar' : 'Star'}
+                onclick={(e) => onToggleStar(conv.id, e)}
+              >{conv.starred ? '★' : '☆'}</button>
+              <button
+                class="conv-act"
+                aria-label="Move to folder"
+                title="Move to folder"
+                onclick={(e) => onMoveFolder(conv.id, conv.folder, e)}
+              >◰</button>
+              <button
+                class="conv-act danger"
+                aria-label="Delete conversation"
+                title="Delete"
+                onclick={(e) => onDelete(conv.id, conv.title, e)}
+              >×</button>
+            </div>
           </div>
         {/each}
       {/each}
@@ -322,17 +355,36 @@
   .conv-row:hover { background: rgba(127, 127, 127, 0.1); }
   .conv-row.active { background: color-mix(in srgb, var(--loca-color-accent) 15%, transparent); }
   .conv-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .conv-del {
-    background: none; border: none;
-    color: var(--loca-color-text-muted);
-    font-size: 14px; line-height: 1;
-    cursor: pointer;
-    padding: 0 4px;
+
+  .star-badge {
+    color: var(--loca-color-warning);
+    font-size: 11px;
+    line-height: 1;
+    margin-right: 4px;
+    flex-shrink: 0;
+  }
+
+  .conv-actions {
+    display: inline-flex;
+    gap: 2px;
+    margin-left: 6px;
     opacity: 0;
     transition: opacity 120ms;
   }
-  .conv-row:hover .conv-del { opacity: 1; }
-  .conv-del:hover { color: var(--loca-color-danger); }
+  .conv-row:hover .conv-actions,
+  .conv-row:focus-within .conv-actions { opacity: 1; }
+
+  .conv-act {
+    background: none;
+    border: none;
+    padding: 0 4px;
+    font-size: 13px;
+    line-height: 1;
+    color: var(--loca-color-text-muted);
+    cursor: pointer;
+  }
+  .conv-act:hover { color: var(--loca-color-text); }
+  .conv-act.danger:hover { color: var(--loca-color-danger); }
 
   .footer { display: flex; gap: 6px; padding: 8px 12px; flex-wrap: wrap; }
   .footer button { background: none; border: none; color: var(--loca-color-text-muted); font-size: 11px; padding: 2px 4px; cursor: pointer; }

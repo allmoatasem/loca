@@ -28,6 +28,11 @@ export interface ConversationMeta {
   created?: number;
   model?: string;
   folder?: string | null;
+  starred?: boolean;
+}
+
+export interface ConversationDetail extends ConversationMeta {
+  messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>;
 }
 
 async function jsonGet<T>(path: string): Promise<T> {
@@ -53,6 +58,10 @@ export async function fetchActiveModel(): Promise<string | null> {
 export async function fetchConversations(): Promise<ConversationMeta[]> {
   const data = await jsonGet<{ conversations: ConversationMeta[] }>('/api/conversations');
   return data.conversations ?? [];
+}
+
+export async function fetchConversation(id: string): Promise<ConversationDetail> {
+  return jsonGet<ConversationDetail>(`/api/conversations/${encodeURIComponent(id)}`);
 }
 
 export async function searchConversations(q: string): Promise<ConversationMeta[]> {

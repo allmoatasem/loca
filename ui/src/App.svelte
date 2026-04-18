@@ -85,6 +85,8 @@
 
   main {
     overflow: hidden;
+    /* Visible edge between sidebar and chat — matches SwiftUI's split. */
+    border-left: 1px solid var(--loca-color-border);
   }
 
   .overlay {
