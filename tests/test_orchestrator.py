@@ -300,6 +300,27 @@ class TestRerankMemories:
         out = _rerank_memories("the and", mems, keep=2)
         assert [m["id"] for m in out] == ["a", "b"]
 
+    def test_zero_overlap_memories_dropped(self):
+        # Pre-floor the rank_bonus alone was enough to keep noise in the
+        # top-K. Now zero-overlap memories are filtered out entirely.
+        mems = [
+            {"id": "noise_top", "content": "completely unrelated content about cats"},
+            {"id": "match", "content": "python backend code"},
+        ]
+        out = _rerank_memories("python backend", mems, keep=5)
+        assert [m["id"] for m in out] == ["match"]
+
+    def test_returns_empty_when_no_memory_matches(self):
+        # If nothing in the pool matches, the model gets no injection and
+        # falls back on pretraining / conversation context rather than
+        # being cited against noise chunks.
+        mems = [
+            {"id": "a", "content": "weather in Paris"},
+            {"id": "b", "content": "best Tokyo ramen"},
+        ]
+        out = _rerank_memories("python backend", mems, keep=5)
+        assert out == []
+
 
 # ---------------------------------------------------------------------------
 # Orchestrator.handle — non-streaming

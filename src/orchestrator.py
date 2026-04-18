@@ -14,6 +14,7 @@ Flow per turn:
 import asyncio
 import json
 import logging
+import os
 import re
 from typing import Any, AsyncIterator, cast
 
@@ -897,6 +898,14 @@ _RERANK_STOPWORDS = frozenset({
 })
 _RERANK_TOKEN_RE = re.compile(r"\w+")
 
+# Minimum content-token overlap with the query for a memory to survive
+# rerank. With overlap = 0 the only score contribution is `rank_bonus` —
+# a recall-ordering position bump — which lets unrelated chunks get
+# injected when the vault simply has nothing relevant to the query.
+# Grounding discipline (`[memory: N]` citations) then binds the model to
+# those noise chunks. Env override exists for experimentation.
+_MIN_RERANK_OVERLAP = int(os.environ.get("LOCA_MIN_RERANK_OVERLAP", "1"))
+
 
 def _rerank_memories(query: str, memories: list[dict], keep: int) -> list[dict]:
     """Lightweight keyword-overlap rerank over top-N recall hits.
@@ -906,6 +915,11 @@ def _rerank_memories(query: str, memories: list[dict], keep: int) -> list[dict]:
     matches query terms and penalising category-label-sized memories. A proper
     cross-encoder pass is a future upgrade (would require sentence-transformers
     + torch which conflicts with Loca's MLX-first footprint).
+
+    Applies a relevance floor (`_MIN_RERANK_OVERLAP`): when the query has
+    meaningful tokens, memories with zero overlap are dropped rather than
+    kept-by-rank. Prevents "least-bad-irrelevant" chunks from being cited
+    when nothing in the vault actually matches.
     """
     if keep <= 0 or not memories:
         return []
@@ -924,6 +938,8 @@ def _rerank_memories(query: str, memories: list[dict], keep: int) -> list[dict]:
             continue
         m_set = set(m_tokens)
         overlap = len(q_tokens & m_set)
+        if overlap < _MIN_RERANK_OVERLAP:
+            continue
         overlap_score = overlap / len(q_tokens)
         density = overlap / len(m_tokens)
         rank_bonus = 1.0 / (1 + rank)
