@@ -13,6 +13,8 @@
   import ManageModelsView from './lib/ManageModelsView.svelte';
   import VaultView from './lib/VaultView.svelte';
   import MemoryView from './lib/MemoryView.svelte';
+  import PhilosophyView from './lib/PhilosophyView.svelte';
+  import AcknowledgementsView from './lib/AcknowledgementsView.svelte';
   import ChatView from './lib/ChatView.svelte';
 
   let path = $state(location.pathname);
@@ -23,12 +25,15 @@
     path = to;
   }
 
-  const openOverlay = $derived.by<null | 'glossary' | 'preferences' | 'manage-models' | 'vault' | 'memory'>(() => {
-    if (path.endsWith('/glossary'))       return 'glossary';
-    if (path.endsWith('/preferences'))    return 'preferences';
-    if (path.endsWith('/manage-models'))  return 'manage-models';
-    if (path.endsWith('/vault'))          return 'vault';
-    if (path.endsWith('/memory'))         return 'memory';
+  type OverlayKind = 'glossary' | 'preferences' | 'manage-models' | 'vault' | 'memory' | 'philosophy' | 'acknowledgements';
+  const openOverlay = $derived.by<null | OverlayKind>(() => {
+    if (path.endsWith('/glossary'))         return 'glossary';
+    if (path.endsWith('/preferences'))      return 'preferences';
+    if (path.endsWith('/manage-models'))    return 'manage-models';
+    if (path.endsWith('/vault'))            return 'vault';
+    if (path.endsWith('/memory'))           return 'memory';
+    if (path.endsWith('/philosophy'))       return 'philosophy';
+    if (path.endsWith('/acknowledgements')) return 'acknowledgements';
     return null;
   });
 
@@ -61,6 +66,10 @@
         <VaultView onClose={() => navigate('/ui')} />
       {:else if openOverlay === 'memory'}
         <MemoryView onClose={() => navigate('/ui')} />
+      {:else if openOverlay === 'philosophy'}
+        <PhilosophyView onClose={() => navigate('/ui')} />
+      {:else if openOverlay === 'acknowledgements'}
+        <AcknowledgementsView onClose={() => navigate('/ui')} />
       {/if}
     </div>
   {/if}
