@@ -13,7 +13,9 @@ struct ChatView: View {
     @State private var chatSearch = ""
     @State private var showChatSearch = false
     @StateObject private var voiceRecorder = AudioRecorder()
+    @StateObject private var voicePlayer = AudioPlayer()
     @State private var wasStreaming = false
+    @State private var isSpeakingResponse = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -72,8 +74,11 @@ struct ChatView: View {
         }
         .onChange(of: state.isStreaming) {
             if wasStreaming && !state.isStreaming && state.isVoiceMode {
-                // LLM response done — resume listening for next utterance
-                voiceRecorder.resumeListening()
+                // LLM response done — speak it, then resume listening when
+                // playback finishes. If synthesis fails or returns nothing,
+                // `speakLastResponse` falls back to an immediate resume so
+                // the loop never gets stuck.
+                speakLastResponse()
             }
             wasStreaming = state.isStreaming
         }
@@ -82,6 +87,8 @@ struct ChatView: View {
                 voiceRecorder.start()
             } else {
                 voiceRecorder.stop()
+                voicePlayer.stop()
+                isSpeakingResponse = false
             }
         }
         .onChange(of: voiceRecorder.completedAudio) {
@@ -96,7 +103,43 @@ struct ChatView: View {
         }
     }
 
-    // MARK: - Voice transcription
+    // MARK: - Voice transcription + playback
+
+    private func speakLastResponse() {
+        guard state.isVoiceMode else { return }
+        let text = state.messages.reversed()
+            .first(where: { $0.role == "assistant" })?
+            .content.plainText
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !text.isEmpty else {
+            voiceRecorder.resumeListening()
+            return
+        }
+        isSpeakingResponse = true
+        let voice = state.voiceConfig?.tts_voice
+        let speed = state.voiceConfig?.tts_speed
+        voicePlayer.onFinished = { @MainActor in
+            isSpeakingResponse = false
+            if state.isVoiceMode { voiceRecorder.resumeListening() }
+        }
+        Task {
+            do {
+                let data = try await BackendClient.shared.synthesizeSpeech(
+                    text: text, voice: voice, speed: speed,
+                )
+                await MainActor.run {
+                    guard state.isVoiceMode else { isSpeakingResponse = false; return }
+                    voicePlayer.play(data)
+                }
+            } catch {
+                await MainActor.run {
+                    state.voiceError = error.localizedDescription
+                    isSpeakingResponse = false
+                    if state.isVoiceMode { voiceRecorder.resumeListening() }
+                }
+            }
+        }
+    }
 
     private func handleVoiceAudio(_ wavData: Data) {
         state.isTranscribing = true

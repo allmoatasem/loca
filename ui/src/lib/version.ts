@@ -3,8 +3,4 @@
  * sync with the legacy HTML (src/static/index.html) and Swift
  * AcknowledgementsView.swift via the per-PR version bump.
  */
-<<<<<<< HEAD
-export const APP_VERSION = 'v0.18.4';
-=======
-export const APP_VERSION = 'v0.18.2';
->>>>>>> 9652d56 (feat: Voice parity — full Svelte voice mode matching SwiftUI)
+export const APP_VERSION = 'v0.19.0';

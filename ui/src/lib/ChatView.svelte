@@ -27,7 +27,7 @@
   import { app } from './app-store.svelte';
   import MessageBubble, { type Role } from './MessageBubble.svelte';
   import StatsBar from './StatsBar.svelte';
-  import { transcribeAudio } from './api.client';
+  import { transcribeAudio, synthesizeSpeech } from './api.client';
   import { VoiceRecorder, type VoiceState } from './voice-recorder';
   import { tick, onDestroy } from 'svelte';
 
@@ -85,12 +85,15 @@
 
   // Voice mode — parity with Swift's AudioRecorder + ChatView integration.
   // The recorder owns the mic; the store holds flags (isVoiceMode,
-  // isTranscribing, voiceAudioLevel) the rest of the UI listens to. When
-  // VAD completes an utterance we transcribe → inject into input → send,
-  // then resumeListening() once streaming ends so hands-free loops.
+  // isTranscribing, voiceAudioLevel) the rest of the UI listens to.
+  // Full loop: VAD utterance → transcribe → inject into input → send →
+  // stream response → synthesize response as WAV → play it → when audio
+  // ends, resumeListening() so hands-free conversation continues.
   let voiceRecorder: VoiceRecorder | null = null;
   let voiceState = $state<VoiceState>('idle');
   let pendingVoiceResume = $state<boolean>(false);
+  let ttsAudio: HTMLAudioElement | null = null;
+  let isSpeaking = $state<boolean>(false);
 
   async function toggleVoiceMode(): Promise<void> {
     if (app.isVoiceMode) {
@@ -126,9 +129,53 @@
     voiceRecorder = null;
     voiceState = 'idle';
     pendingVoiceResume = false;
+    stopSpeaking();
     app.setVoiceMode(false);
     app.setVoiceAudioLevel(0);
     app.setTranscribing(false);
+  }
+
+  function stopSpeaking(): void {
+    if (ttsAudio) {
+      try { ttsAudio.pause(); } catch { /* no-op */ }
+      try { URL.revokeObjectURL(ttsAudio.src); } catch { /* no-op */ }
+      ttsAudio = null;
+    }
+    isSpeaking = false;
+  }
+
+  async function speakAndResume(text: string): Promise<void> {
+    const trimmed = text.trim();
+    if (!trimmed || !app.isVoiceMode) {
+      voiceRecorder?.resumeListening();
+      return;
+    }
+    isSpeaking = true;
+    try {
+      const blob = await synthesizeSpeech(trimmed, {
+        voice: app.voiceConfig?.tts_voice,
+        speed: app.voiceConfig?.tts_speed,
+      });
+      if (!app.isVoiceMode) return;            // user toggled off mid-synth
+      stopSpeaking();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      ttsAudio = audio;
+      isSpeaking = true;
+      audio.addEventListener('ended', () => {
+        stopSpeaking();
+        if (app.isVoiceMode) voiceRecorder?.resumeListening();
+      });
+      audio.addEventListener('error', () => {
+        stopSpeaking();
+        if (app.isVoiceMode) voiceRecorder?.resumeListening();
+      });
+      await audio.play();
+    } catch (e) {
+      app.setVoiceError(e instanceof Error ? e.message : String(e));
+      stopSpeaking();
+      if (app.isVoiceMode) voiceRecorder?.resumeListening();
+    }
   }
 
   async function handleUtterance(wav: Blob): Promise<void> {
@@ -152,19 +199,25 @@
     }
   }
 
-  // After a streamed response finishes, re-open the mic for the next
-  // utterance. Guarded by `pendingVoiceResume` so manual text sends in
-  // voice mode still return to listening.
+  // After a streamed response finishes, speak it back through TTS, then
+  // re-open the mic for the next utterance. Guarded by
+  // `pendingVoiceResume` so manual text sends in voice mode still loop
+  // through the same play-then-listen path.
   $effect(() => {
     if (!streaming && pendingVoiceResume && app.isVoiceMode) {
       pendingVoiceResume = false;
-      voiceRecorder?.resumeListening();
+      const lastAssistant = [...history].reverse().find((m) => m.role === 'assistant');
+      const replyText = lastAssistant?.content ?? '';
+      void speakAndResume(replyText);
     }
   });
 
-  onDestroy(() => { voiceRecorder?.stop(); });
+  onDestroy(() => { voiceRecorder?.stop(); stopSpeaking(); });
 
-  function voicePlaceholder(s: VoiceState, transcribing: boolean): string {
+  function voicePlaceholder(
+    s: VoiceState, transcribing: boolean, speaking: boolean,
+  ): string {
+    if (speaking)     return 'Speaking…';
     if (transcribing) return 'Transcribing…';
     switch (s) {
       case 'listening':  return 'Listening… speak when ready';
@@ -525,7 +578,7 @@
       }}
     />
     <textarea
-      placeholder={app.isVoiceMode ? voicePlaceholder(voiceState, app.isTranscribing) : 'Message Loca…  (⌘↵ to send)'}
+      placeholder={app.isVoiceMode ? voicePlaceholder(voiceState, app.isTranscribing, isSpeaking) : 'Message Loca…  (⌘↵ to send)'}
       bind:value={input}
       onkeydown={onKeydown}
       rows="3"
