@@ -1094,10 +1094,10 @@ struct InputBar: View {
 
             HStack(spacing: 8) {
                 InputToolButton(
-                    icon: "magnifyingglass", label: "Research",
+                    icon: "drop", label: "Deep Dive",
                     isActive: state.researchMode, isDisabled: state.lockdownMode
                 ) { if !state.lockdownMode { state.researchMode.toggle() } }
-                .help("Deep Research — SearXNG + Playwright browser")
+                .help("Deep Dive — render full pages (not just snippets) and pull richer web context into the turn")
 
                 InputToolButton(
                     icon: "lock", label: "Lockdown",

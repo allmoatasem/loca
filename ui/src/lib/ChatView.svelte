@@ -454,8 +454,8 @@
       class:active={researchMode}
       disabled={lockdownMode}
       onclick={toggleResearch}
-      title="Deep Research — SearXNG + web fetching"
-    >🔍 Research</button>
+      title="Deep Dive — render full pages (not just snippets) and pull richer web context into the turn"
+    >🌊 Deep Dive</button>
     <button
       class="tool"
       class:active={lockdownMode}
