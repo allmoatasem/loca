@@ -21,20 +21,6 @@
     return renderMarkdown(split.answer);
   });
 
-  let bodyEl: HTMLDivElement | undefined = $state();
-
-  // Run Prism over any code blocks after each render.
-  $effect(() => {
-    // touch answerHtml so we rerun when content changes
-    void answerHtml;
-    if (!bodyEl) return;
-    const prism = (window as unknown as { Prism?: { highlightElement: (el: Element) => void } }).Prism;
-    if (!prism) return;
-    for (const code of bodyEl.querySelectorAll('pre > code')) {
-      prism.highlightElement(code);
-    }
-  });
-
   let copied = $state(false);
   async function copyToClipboard(): Promise<void> {
     const text = split ? split.answer : content;
@@ -65,7 +51,7 @@
       <ThinkBlock text={split.thinking} defaultOpen={split.answer === ''} />
     {/if}
     <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-    <div class="md" bind:this={bodyEl}>{@html answerHtml}</div>
+    <div class="md">{@html answerHtml}</div>
     {#if !isStreaming && split.answer.trim()}
       <button class="copy" onclick={copyToClipboard} aria-label="Copy reply">
         {copied ? '✓ Copied' : 'Copy'}

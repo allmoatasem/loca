@@ -1,24 +1,62 @@
 /**
- * Markdown + math renderer used by the Svelte chat view.
+ * Markdown + math + syntax highlighting renderer used by the Svelte chat
+ * view.
  *
  * Markdown: GFM subset (tables, task lists, fenced code, nested lists) via
  * `marked`. Output is sanitised with DOMPurify before handing to Svelte's
  * `{@html}` since model output is untrusted.
  *
- * Math: `$$…$$` (display) and `$…$` (inline) LaTeX expressions are extracted
- * to opaque placeholders before Markdown parsing so the `$` characters don't
- * interact with emphasis or other inline rules. After sanitisation the
- * placeholders are substituted with KaTeX-rendered HTML. A malformed
- * expression falls back to a literal code span rather than throwing.
+ * Syntax highlighting: Prism is bundled via marked-highlight, so the
+ * `<pre><code>` output already contains `<span class="token …">` wrappers
+ * by the time the DOM sees it. No post-mount highlighter pass needed, and
+ * no external script-load timing race.
  *
- * Streaming: partial input renders best-effort each tick. An unclosed fence
- * or half-written `$$` simply waits for the next chunk to complete.
+ * Math: `$$…$$` (display) and `$…$` (inline) LaTeX expressions are
+ * extracted to opaque placeholders before Markdown parsing so the `$`
+ * characters don't interact with emphasis or other inline rules. After
+ * sanitisation the placeholders are substituted with KaTeX-rendered HTML.
+ * Malformed expressions fall back to a literal code span rather than
+ * throwing.
  */
 
 import { marked } from 'marked';
+import { markedHighlight } from 'marked-highlight';
 import DOMPurify from 'dompurify';
 import katex from 'katex';
+import Prism from 'prismjs';
+// Core Prism theme for the token colours.
+import 'prismjs/themes/prism.css';
+// Language grammars bundled with the app. Keep in sync with what Loca
+// typically emits — rarer languages fall back to unhighlighted <code>.
+import 'prismjs/components/prism-markup';
+import 'prismjs/components/prism-markup-templating';
+import 'prismjs/components/prism-clike';
+import 'prismjs/components/prism-javascript';
+import 'prismjs/components/prism-typescript';
+import 'prismjs/components/prism-python';
+import 'prismjs/components/prism-bash';
+import 'prismjs/components/prism-json';
+import 'prismjs/components/prism-yaml';
+import 'prismjs/components/prism-css';
+import 'prismjs/components/prism-swift';
+import 'prismjs/components/prism-rust';
+import 'prismjs/components/prism-go';
+import 'prismjs/components/prism-java';
+import 'prismjs/components/prism-c';
+import 'prismjs/components/prism-cpp';
+import 'prismjs/components/prism-sql';
+import 'prismjs/components/prism-diff';
 
+marked.use(
+  markedHighlight({
+    langPrefix: 'language-',
+    highlight(code, lang) {
+      const grammar = lang && Prism.languages[lang];
+      if (grammar) return Prism.highlight(code, grammar, lang);
+      return code;
+    },
+  }),
+);
 marked.setOptions({ gfm: true, breaks: false });
 
 // Anchors opened via markdown should behave like external links.
