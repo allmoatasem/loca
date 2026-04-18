@@ -1348,7 +1348,10 @@ struct MemoryPanel: View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                Text("Memories (\(state.memories.count))")
+                // Show the total — `memories.count` is just the current
+                // page (50), which made users think they'd lost facts
+                // after opening a large store.
+                Text("Memories (\(state.memoriesTotal))")
                     .font(.headline)
                 Spacer()
                 Button {

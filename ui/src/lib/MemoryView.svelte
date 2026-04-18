@@ -136,9 +136,13 @@
   <header>
     <h2>
       Memory
-      {#if total > 0}
-        <span class="count">{total} fact{total === 1 ? '' : 's'}</span>
-      {/if}
+      <span class="count">
+        {#if loading}
+          loading…
+        {:else}
+          {total} fact{total === 1 ? '' : 's'}
+        {/if}
+      </span>
     </h2>
     {#if onClose}
       <button class="close" aria-label="Close" onclick={onClose}>×</button>

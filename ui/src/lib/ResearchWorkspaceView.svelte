@@ -243,7 +243,12 @@
         value={app.activeProjectId ?? ''}
         onchange={(e) => app.setActiveProject((e.currentTarget as HTMLSelectElement).value || null)}
       >
-        <option value="">No project</option>
+        <option value="">
+          {app.projects.length === 0 ? 'Create your first project' : 'Choose a project…'}
+        </option>
+        {#if app.activeProjectId}
+          <option value="" disabled>— Unset active project —</option>
+        {/if}
         {#each app.projects as p (p.id)}
           <option value={p.id}>{p.title}</option>
         {/each}
@@ -507,8 +512,12 @@
     width: 24px; height: 24px; border-radius: 50%; border: none;
     background: rgba(128, 128, 128, 0.1); color: var(--loca-color-text-muted);
     font-size: 14px; line-height: 1; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 0;
   }
   .close:hover { background: rgba(128, 128, 128, 0.2); }
+  .close:focus { outline: none; background: rgba(128, 128, 128, 0.2); }
+  .close:focus-visible { outline: 2px solid var(--loca-color-accent); outline-offset: 2px; }
 
   .tabs { display: flex; gap: 4px; padding: 0 20px 10px; }
   .tab {

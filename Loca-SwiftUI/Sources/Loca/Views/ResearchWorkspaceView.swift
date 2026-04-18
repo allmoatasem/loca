@@ -95,7 +95,8 @@ struct ResearchWorkspaceView: View {
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+        .padding(.top, 14)
+        .padding(.bottom, 10)
     }
 
     private var tabBar: some View {
@@ -122,7 +123,7 @@ struct ResearchWorkspaceView: View {
             Spacer()
         }
         .padding(.horizontal, 20)
-        .padding(.bottom, 10)
+        .padding(.vertical, 8)
     }
 
     @ViewBuilder

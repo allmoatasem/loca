@@ -161,7 +161,7 @@ async def _watches_loop() -> None:
             for w in due:
                 sub_scope = w["sub_scope"]
                 try:
-                    result = await web_search(
+                    hits = await web_search(
                         query=sub_scope,
                         searxng_url=os.environ.get("SEARXNG_URL", "http://localhost:8888"),
                         max_results=5,
@@ -170,7 +170,7 @@ async def _watches_loop() -> None:
                 except Exception as exc:
                     logger.warning("watch %s search failed: %s", w["id"], exc)
                     continue
-                urls = [h.get("url") for h in (result.get("results") or []) if h.get("url")]
+                urls = [h.url for h in hits if h.url]
                 snapshot_hash = _hashlib.sha256("\n".join(urls).encode()).hexdigest()
                 if snapshot_hash == (w.get("last_snapshot_hash") or ""):
                     mark_watch_ran(w["id"], snapshot_hash)
@@ -180,17 +180,17 @@ async def _watches_loop() -> None:
                     if existing.get("url"):
                         prev_urls.add(existing["url"])
                 new_count = 0
-                for hit in (result.get("results") or []):
-                    u = hit.get("url")
+                for hit in hits:
+                    u = hit.url
                     if not u or u in prev_urls:
                         continue
-                    title = (hit.get("title") or u).strip()
+                    title = (hit.title or u).strip()
                     content_hash = _hashlib.sha256(f"url:{u}".encode()).hexdigest()
                     iid = add_project_item(
                         w["project_id"],
                         kind="web_url",
                         title=title,
-                        body=(hit.get("snippet") or "")[:500],
+                        body=(hit.snippet or "")[:500],
                         url=u,
                         content_hash=content_hash,
                     )
@@ -1070,6 +1070,10 @@ async def ui_asset(file_path: str) -> Response:
 
 @app.get("/system-stats")
 async def system_stats() -> JSONResponse:
+    """Report system-wide RAM use, matching Activity Monitor's
+    'Memory Used' (App + Wired + Compressed). The previous
+    implementation hard-coded page = 4096, which quartered the
+    reading on Apple Silicon (16384-byte pages)."""
     import asyncio
     import os
     import re
@@ -1081,7 +1085,12 @@ async def system_stats() -> JSONResponse:
         )
         out, _ = await proc.communicate()
         text = out.decode()
-        page = 4096
+
+        # Parse the page size from `vm_stat`'s header — Apple Silicon
+        # reports 16384, Intel reports 4096. SC_PAGE_SIZE is a reliable
+        # fallback if the header format ever shifts.
+        page_match = re.search(r"page size of (\d+) bytes", text)
+        page = int(page_match.group(1)) if page_match else os.sysconf("SC_PAGE_SIZE")
 
         def pages(key: str) -> int:
             m = re.search(rf"{key}:\s+(\d+)", text)
@@ -1367,20 +1376,19 @@ async def api_dig_deeper(project_id: str, request: Request) -> JSONResponse:
     from .importers.service import build_default_service  # noqa: PLC0415
     from .tools.web_search import web_search  # noqa: PLC0415
 
-    search_result = await web_search(
+    hits = await web_search(
         query=sub_scope,
         searxng_url=os.environ.get("SEARXNG_URL", "http://localhost:8888"),
         max_results=max_results,
         research_mode=False,
     )
-    hits = search_result.get("results") or []
 
     svc = build_default_service(_plugin_manager.memory_plugin)  # type: ignore[arg-type]
     bookmarks: list[dict] = []
     import hashlib as _hashlib  # noqa: PLC0415
     for hit in hits:
-        url = hit.get("url")
-        title = (hit.get("title") or url or "").strip()
+        url = hit.url
+        title = (hit.title or url).strip()
         if not url:
             continue
         # Import into memory for global recall, best-effort.
@@ -1395,7 +1403,7 @@ async def api_dig_deeper(project_id: str, request: Request) -> JSONResponse:
             project_id,
             kind="web_url",
             title=title,
-            body=(hit.get("snippet") or "")[:500],
+            body=(hit.snippet or "")[:500],
             url=url,
             content_hash=content_hash,
         )
