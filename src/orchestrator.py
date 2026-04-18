@@ -810,11 +810,19 @@ def _extract_tool_call(text: str) -> tuple[str, dict] | None:
 # Broad queries like "what do you know about me" surface too few relevant
 # memories when a single embedding lookup has to cover every aspect of the
 # user. Detect them and expand into sub-queries covering common facets.
-_BROAD_MARKERS = (
-    "about me", "about myself", "who am i", "what do you know",
+#
+# Strong markers fire on their own — the phrase itself targets the user's
+# own knowledge base. Soft markers require a personal pronoun nearby, so
+# "what do you know about FastAPI" doesn't get fanned into user-facet
+# sub-queries (that happened pre-PR: rerank then fought with irrelevant
+# personal memories and polluted the answer).
+_BROAD_STRONG_MARKERS = (
+    "about me", "about myself", "who am i",
     "know about me", "tell me everything", "tell me about me",
     "anything about me", "everything about me",
 )
+_BROAD_SOFT_MARKERS = ("what do you know", "tell me what you know")
+_BROAD_PERSONAL_TOKENS = frozenset({"me", "my", "myself", "i"})
 _BROAD_SHORT_TOKENS = {"me", "i", "myself"}
 _EXPANDED_SUB_QUERIES = (
     "user's profession, role, and current work",
@@ -824,11 +832,18 @@ _EXPANDED_SUB_QUERIES = (
 )
 
 
+def _tokenise(query: str) -> list[str]:
+    return [w.strip("?.,!;:'\"") for w in query.lower().split()]
+
+
 def _is_broad_query(query: str) -> bool:
     low = query.lower()
-    if any(marker in low for marker in _BROAD_MARKERS):
+    if any(marker in low for marker in _BROAD_STRONG_MARKERS):
         return True
-    words = [w.strip("?.,!;:'\"") for w in low.split()]
+    words = _tokenise(query)
+    token_set = set(words)
+    if any(marker in low for marker in _BROAD_SOFT_MARKERS) and (token_set & _BROAD_PERSONAL_TOKENS):
+        return True
     if len(words) <= 3 and any(w in _BROAD_SHORT_TOKENS for w in words):
         return True
     return False
