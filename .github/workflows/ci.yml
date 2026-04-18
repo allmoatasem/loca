@@ -49,20 +49,13 @@ jobs:
             --cov-report=xml \
             --cov-report=term-missing \
             -v \
-            --ignore=tests/test_tools.py \
-            --ignore=tests/e2e  # e2e tests run in separate job
+            --ignore=tests/test_tools.py
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:
           file: coverage.xml
           fail_ci_if_error: false
-
-  # e2e job disabled to conserve GitHub Actions minutes — run locally before opening PRs
-  # e2e:
-  #   name: E2E tests (Playwright)
-  #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-  #   ...
 
   security-audit:
     name: Dependency audit (pip-audit)
