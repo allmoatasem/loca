@@ -68,6 +68,7 @@ class Provenance:
     cited: list[int]
     phantoms: list[int]
     conv_id: str | None = None
+    skipped_meta_query: bool = False
     timestamp: str = field(
         default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
@@ -81,6 +82,7 @@ class Provenance:
             "cited": list(self.cited),
             "phantoms": list(self.phantoms),
             "conv_id": self.conv_id,
+            "skipped_meta_query": self.skipped_meta_query,
             "timestamp": self.timestamp,
         }
 
@@ -94,6 +96,7 @@ class Provenance:
             cited=list(data.get("cited", [])),
             phantoms=list(data.get("phantoms", [])),
             conv_id=data.get("conv_id"),
+            skipped_meta_query=bool(data.get("skipped_meta_query", False)),
             timestamp=data["timestamp"],
         )
 
@@ -176,6 +179,8 @@ def _render_markdown(prov: Provenance) -> str:
     if prov.conv_id:
         lines.append(f"**Conversation:** `{prov.conv_id}`")
     lines.append(f"**User query:** {prov.user_query.strip() or '_(empty)_'}")
+    if prov.skipped_meta_query:
+        lines.append("**Recall:** skipped — meta-query referenced parametric knowledge")
     if prov.expanded_queries and len(prov.expanded_queries) > 1:
         lines.append(f"**Expanded queries:** {len(prov.expanded_queries)} (broad query detected)")
     lines.append("")

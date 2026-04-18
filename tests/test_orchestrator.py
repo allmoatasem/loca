@@ -29,6 +29,7 @@ from src.orchestrator import (
     _extract_tool_call,
     _inject_search_context,
     _is_broad_query,
+    _is_meta_query,
     _last_user_content,
     _merge_recall_results,
     _prepend_system,
@@ -180,6 +181,28 @@ class TestBroadQueryDetection:
 
     def test_specific_topic_is_not_broad(self):
         assert _is_broad_query("what's the best way to embed PDFs?") is False
+
+
+class TestMetaQueryDetection:
+    def test_training_data_phrase_is_meta(self):
+        assert _is_meta_query("what do you know about the Transformer from your training data") is True
+
+    def test_pretraining_phrase_is_meta(self):
+        assert _is_meta_query("Explain attention from your pre-training.") is True
+
+    def test_parametric_knowledge_is_meta(self):
+        assert _is_meta_query("what's in your parametric knowledge about BERT?") is True
+
+    def test_what_you_were_trained_on_is_meta(self):
+        assert _is_meta_query("Summarise what you were trained on about BLEU scores") is True
+
+    def test_plain_question_is_not_meta(self):
+        assert _is_meta_query("summarise this paper") is False
+
+    def test_mention_of_training_on_its_own_is_not_meta(self):
+        # We require the full phrase to avoid false positives when the user
+        # is actually asking about ML training pipelines in general.
+        assert _is_meta_query("how do I choose a training set for fine-tuning?") is False
 
 
 class TestExpandQuery:

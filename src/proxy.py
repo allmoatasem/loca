@@ -400,7 +400,12 @@ async def _openai_stream_response(
         asyncio.create_task(orchestrator.extract_and_save_memories(full_messages))
 
     # Provenance sidecar — fire-and-forget. Never blocks the response.
-    if retrieved_raw and full_reply:
+    # Also written when retrieval was skipped due to a meta-query, so the
+    # audit trail captures the "no-recall" turns for later tuning.
+    should_log_prov = bool(full_reply) and (
+        bool(retrieved_raw) or provenance_seed.get("skipped_meta_query")
+    )
+    if should_log_prov:
         try:
             retrieved = [RetrievedMemory(**m) for m in retrieved_raw]
             prov = Provenance(
@@ -411,6 +416,7 @@ async def _openai_stream_response(
                 cited=[n for n in _citations_in(full_reply) if 1 <= n <= len(retrieved)],
                 phantoms=phantoms,
                 conv_id=None,
+                skipped_meta_query=bool(provenance_seed.get("skipped_meta_query", False)),
             )
             asyncio.create_task(_write_provenance_async(prov))
         except Exception as exc:

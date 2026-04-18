@@ -102,7 +102,8 @@ class Orchestrator:
         recall_query = ""
         expanded_queries: list[str] = []
         retrieved_for_provenance: list[RetrievedMemory] = []
-        if self._memory:
+        skipped_meta_query = _is_meta_query(user_message)
+        if self._memory and not skipped_meta_query:
             recall_query = _build_recall_query(messages)
             expanded_queries = _expand_query(recall_query)
             per_query_limit = 25 if len(expanded_queries) == 1 else 15
@@ -127,6 +128,9 @@ class Orchestrator:
                     score=float(score),
                     content=str(m.get("content", "")),
                 ))
+        elif skipped_meta_query:
+            logger.info("Skipping memory recall: meta-query detected in user message")
+            mem_ctx = ""
         else:
             mem_ctx = get_memories_context()
         if mem_ctx:
@@ -145,6 +149,7 @@ class Orchestrator:
             "recall_query": recall_query,
             "expanded_queries": expanded_queries,
             "retrieved": [m.to_dict() for m in retrieved_for_provenance],
+            "skipped_meta_query": skipped_meta_query,
         }
 
         if stream:
@@ -204,7 +209,7 @@ class Orchestrator:
             system_prompt = _build_system_prompt(result.model, model_name, self._hw)
 
         # Memory injection — still on, this is the differentiator vs Ollama/LM-Studio.
-        if self._memory:
+        if self._memory and not _is_meta_query(user_message):
             recall_query = _build_recall_query(messages)
             queries = _expand_query(recall_query)
             per_query_limit = 25 if len(queries) == 1 else 15
@@ -214,6 +219,9 @@ class Orchestrator:
             pool = _merge_recall_results(buckets, limit=50)
             relevant = _rerank_memories(recall_query, pool, keep=10)
             mem_ctx = self._memory.format_for_prompt(relevant)
+        elif self._memory:
+            logger.info("Skipping memory recall: meta-query detected in user message")
+            mem_ctx = ""
         else:
             mem_ctx = get_memories_context()
         if mem_ctx:
@@ -830,6 +838,37 @@ def _expand_query(query: str) -> list[str]:
     if _is_broad_query(query):
         return [query, *_EXPANDED_SUB_QUERIES]
     return [query]
+
+
+# Phrases that unambiguously ask the model to reason from its pretraining
+# weights instead of from Loca's injected memory context. When the user
+# asks "what do you know about X from your training data", a literal
+# bigram match on "training data" in the vault pulls in ML-textbook
+# chunks that hijack the answer; skipping recall for the turn lets the
+# model fall back on parametric knowledge as requested.
+_META_QUERY_MARKERS = (
+    "training data",
+    "pre-training",
+    "pretraining",
+    "pre-train",
+    "pretrain",
+    "parametric",
+    "model's weights",
+    "your weights",
+    "model knowledge",
+    "your model's knowledge",
+    "what you learned during training",
+    "what you were trained on",
+)
+
+
+def _is_meta_query(query: str) -> bool:
+    """True when the query asks the model to reason from pretraining
+    knowledge rather than injected memory. Retrieval is skipped for the
+    turn so vault chunks matching the literal meta-phrase don't hijack
+    the answer.
+    """
+    return any(marker in query.lower() for marker in _META_QUERY_MARKERS)
 
 
 # Minimal English stopword list so "what do you know about me" doesn't inflate
