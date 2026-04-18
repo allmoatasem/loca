@@ -1033,7 +1033,7 @@ struct CodeBlock: View {
                 .background(Color.secondary.opacity(0.06))
             }
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(code)
+                Text(SyntaxHighlighter.highlight(code, language: language))
                     .font(.system(size: 12, design: .monospaced))
                     .textSelection(.enabled)
                     .padding(10)
