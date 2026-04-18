@@ -26,6 +26,7 @@
 <script lang="ts">
   import { app } from './app-store.svelte';
   import MessageBubble, { type Role } from './MessageBubble.svelte';
+  import StatsBar from './StatsBar.svelte';
   import { tick } from 'svelte';
 
   interface Attachment {
@@ -40,6 +41,17 @@
     imageUrls?: string[];
   }
 
+  interface TurnStats {
+    model: string;
+    promptTokens: number;
+    completionTokens: number;
+    ttftMs: number;        // time-to-first-token in milliseconds
+    totalMs: number;       // wall time for the whole turn
+    tokensPerSec: number;
+    searchTriggered: boolean;
+    memoryInjected: boolean;
+  }
+
   let history = $state<Message[]>([]);
   let input   = $state<string>('');
   let attachments = $state<Attachment[]>([]);
@@ -47,6 +59,9 @@
   let errorMsg  = $state<string | null>(null);
   let scroller: HTMLDivElement | undefined = $state();
   let fileInput: HTMLInputElement | undefined = $state();
+  // Last turn's generation stats — rendered as a dense mono-spaced bar
+  // above the scroller, mirroring SwiftUI's GenerationStatsBar.
+  let lastStats = $state<TurnStats | null>(null);
   // Session-only toggles, same as SwiftUI's AppState.researchMode /
   // lockdownMode. Research enables SearXNG + web fetching; lockdown
   // disables all network tools and mutually excludes research.
@@ -164,6 +179,13 @@
       const decoder = new TextDecoder();
       let buf = '';
       let assembled = '';
+      const tStart = performance.now();
+      let tFirst: number | null = null;
+      let usagePromptTokens = 0;
+      let usageCompletionTokens = 0;
+      let modelName = app.activeModelName ?? 'local';
+      let searchTriggered = false;
+      let memoryInjected  = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -177,17 +199,43 @@
           if (!payload || payload === '[DONE]') continue;
           try {
             const parsed = JSON.parse(payload);
+            if (parsed?.model) modelName = parsed.model;
             const delta = parsed?.choices?.[0]?.delta?.content;
             if (typeof delta === 'string' && delta.length > 0) {
+              if (tFirst === null) tFirst = performance.now();
               assembled += delta;
               const updated = [...history];
               updated[assistantIdx] = { role: 'assistant', content: assembled };
               history = updated;
               await scrollToBottom();
             }
+            // Final usage payload — proxy emits these stats right before [DONE].
+            const usage = parsed?.usage;
+            if (usage) {
+              usagePromptTokens     = Number(usage.prompt_tokens)     || usagePromptTokens;
+              usageCompletionTokens = Number(usage.completion_tokens) || usageCompletionTokens;
+              if (typeof usage.search_triggered === 'boolean') searchTriggered = usage.search_triggered;
+              if (typeof usage.memory_injected  === 'boolean') memoryInjected  = usage.memory_injected;
+            }
           } catch { /* ignore malformed SSE lines */ }
         }
       }
+
+      const tEnd = performance.now();
+      const totalMs = tEnd - tStart;
+      const ttftMs  = tFirst === null ? 0 : tFirst - tStart;
+      const genSeconds = tFirst === null ? 0 : (tEnd - tFirst) / 1000;
+      if (!usageCompletionTokens) usageCompletionTokens = Math.max(1, Math.ceil(assembled.length / 4));
+      lastStats = {
+        model: modelName,
+        promptTokens: usagePromptTokens,
+        completionTokens: usageCompletionTokens,
+        ttftMs,
+        totalMs,
+        tokensPerSec: genSeconds > 0 ? usageCompletionTokens / genSeconds : 0,
+        searchTriggered,
+        memoryInjected,
+      };
     } catch (e) {
       errorMsg = e instanceof Error ? e.message : String(e);
       if (history[assistantIdx]?.content === '') {
@@ -257,6 +305,7 @@
     convId = null;
     convTitle = '';
     errorMsg = null;
+    lastStats = null;
   }
 </script>
 
@@ -275,6 +324,7 @@
       <div class="drop-card">Drop files to attach</div>
     </div>
   {/if}
+  <StatsBar stats={lastStats} contextWindow={app.contextWindow} />
   <div class="scroller" bind:this={scroller}>
     {#if history.length === 0}
       <div class="empty">
