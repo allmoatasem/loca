@@ -7,7 +7,6 @@
 - [ ] `make check` (ruff + mypy)
 - [ ] `make test` (pytest)
 - [ ] `swift build --package-path Loca-SwiftUI` (or `./build_app.sh` for a full bundle)
-- [ ] Playwright e2e if any HTML/Svelte change (`make e2e`)
 - [ ] Manual verification of the user-facing change
 
 ## UI parity (tick whichever applies; leave rest)

@@ -20,7 +20,7 @@
 ┌───────────────────────────────────────────────────────────────────────┐
 │  FastAPI proxy  src/proxy.py  :8000                                   │
 │                                                                       │
-│  • Serves the chat UI (src/static/index.html)                         │
+│  • Serves the Svelte chat UI (src/static/ui/, built from ui/)         │
 │  • POST /v1/chat/completions  →  Orchestrator                         │
 │  • GET/POST /api/conversations  →  SQLite store                       │
 │  • GET/POST /api/memories  →  SQLite store                            │
@@ -103,7 +103,7 @@ Separate process:
 | `src/tools/web_fetch.py` | Fetch and clean a single URL. |
 | `src/tools/file_ops.py` | file_read / file_write tools. |
 | `src/tools/shell.py` | Allowlisted shell_exec tool. |
-| `src/static/index.html` | Single-file chat UI. All HTML, CSS, and JS. |
+| `ui/` | Svelte source — built to `src/static/ui/` via `npm run build --prefix ui`. |
 | `prompts/system_*.md` | System prompts per mode. Loaded fresh on every request. |
 | `config.yaml` | All runtime configuration — inference backend, models dir, routing, search, tools, proxy. |
 | `Loca-SwiftUI/` | Native macOS SwiftUI app. MVVM with `AppState` as the single source of truth, `BackendClient` for HTTP, and views in `Sources/Loca/Views/`. See [SWIFT_ARCHITECTURE.md](SWIFT_ARCHITECTURE.md). |
