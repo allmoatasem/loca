@@ -699,7 +699,7 @@ private struct ServerPrefsTab: View {
                 .padding(.bottom, 20)
             }
         }
-        .frame(width: 540, height: 520)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear {
             hostInput = state.serverHost
             checkConnection()
@@ -877,7 +877,7 @@ private struct KnowledgePrefsTab: View {
         }
         .formStyle(.grouped)
         .padding(20)
-        .frame(width: 540, height: 520)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task { await loadHistory() }
     }
 
