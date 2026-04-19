@@ -59,6 +59,7 @@ class InferenceBackend:
         self._current_model: str | None = None        # display name (basename)
         self._current_model_path: str | None = None   # full path — used as "model" field in API calls
         self._current_backend: Backend | None = None
+        self._current_adapter_path: str | None = None  # None when no LoRA adapter active
         self._stderr_lines: list[str] = []   # rolling buffer for error reporting
         self._load_lock = asyncio.Lock()      # prevents concurrent start() calls
         self._llama_outdated: bool | None = None   # None = not checked yet
@@ -74,13 +75,16 @@ class InferenceBackend:
         n_gpu_layers: int | None = None,
         batch_size: int | None = None,
         num_threads: int | None = None,
+        adapter_path: str | None = None,
     ) -> None:
         """Start the inference server for the given model path."""
         if self.lm_studio_mode:
             logger.info("LM Studio mode — skipping local backend start")
             return
         async with self._load_lock:
-            await self._start_locked(model_path, ctx_size, n_gpu_layers, batch_size, num_threads)
+            await self._start_locked(
+                model_path, ctx_size, n_gpu_layers, batch_size, num_threads, adapter_path,
+            )
 
     async def _start_locked(
         self,
@@ -89,6 +93,7 @@ class InferenceBackend:
         n_gpu_layers: int | None = None,
         batch_size: int | None = None,
         num_threads: int | None = None,
+        adapter_path: str | None = None,
     ) -> None:
         """Internal: called only while _load_lock is held."""
         if self._proc and self._proc.returncode is None:
@@ -97,7 +102,9 @@ class InferenceBackend:
 
         ctx = ctx_size or self.default_ctx_size
         backend = self._detect_backend(model_path)
-        args = self._build_args(backend, model_path, ctx, n_gpu_layers, batch_size, num_threads)
+        args = self._build_args(
+            backend, model_path, ctx, n_gpu_layers, batch_size, num_threads, adapter_path,
+        )
 
         # Check llama.cpp version once per session (non-blocking: fire and cache).
         if backend == "llama.cpp" and self._llama_outdated is None:
@@ -126,6 +133,7 @@ class InferenceBackend:
         self._current_model = Path(model_path).name
         self._current_model_path = model_path
         self._current_backend = backend
+        self._current_adapter_path = adapter_path
 
         # Stream server stderr in background so logs aren't silently swallowed
         asyncio.create_task(self._log_stderr())
@@ -154,6 +162,7 @@ class InferenceBackend:
         self._current_model = None
         self._current_model_path = None
         self._current_backend = None
+        self._current_adapter_path = None
         logger.info("Inference backend stopped")
 
     async def restart(
@@ -163,10 +172,13 @@ class InferenceBackend:
         n_gpu_layers: int | None = None,
         batch_size: int | None = None,
         num_threads: int | None = None,
+        adapter_path: str | None = None,
     ) -> None:
         """Stop then start with a new model."""
         await self.stop()
-        await self.start(model_path, ctx_size, n_gpu_layers, batch_size, num_threads)
+        await self.start(
+            model_path, ctx_size, n_gpu_layers, batch_size, num_threads, adapter_path,
+        )
 
     async def health_check(self) -> bool:
         """Return True if the backend is responding."""
@@ -214,6 +226,12 @@ class InferenceBackend:
 
     def current_backend(self) -> Backend | None:
         return self._current_backend
+
+    def current_adapter_path(self) -> str | None:
+        """Absolute path of the LoRA adapter currently active, or None."""
+        if self._proc is not None and self._proc.returncode is not None:
+            self._current_adapter_path = None
+        return self._current_adapter_path
 
     def api_base(self) -> str:
         if self.lm_studio_mode:
@@ -323,12 +341,19 @@ class InferenceBackend:
         n_gpu_layers: int | None = None,
         batch_size: int | None = None,
         num_threads: int | None = None,
+        adapter_path: str | None = None,
     ) -> list[str]:
         if backend == "mlx":
-            return self._build_mlx_args(model_path, ctx_size)
+            return self._build_mlx_args(model_path, ctx_size, adapter_path)
+        # llama.cpp LoRA loading is deferred until the GGUF fine-tuning path
+        # lands — for now we silently ignore adapter_path for this backend
+        # rather than error out, because the UI guards adapter activation
+        # behind the MLX model picker.
         return self._build_llama_args(model_path, ctx_size, n_gpu_layers, batch_size, num_threads)
 
-    def _build_mlx_args(self, model_path: str, ctx_size: int) -> list[str]:
+    def _build_mlx_args(
+        self, model_path: str, ctx_size: int, adapter_path: str | None = None,
+    ) -> list[str]:
         # Use mlx-vlm for vision models, mlx_lm for text-only.
         # Detected from config.json: presence of "vision_config" or "visual" key.
         module = "mlx_lm"
@@ -345,6 +370,12 @@ class InferenceBackend:
         # --max-tokens is mlx_lm only; mlx_vlm uses --max-kv-size
         if module == "mlx_lm":
             args += ["--max-tokens", str(ctx_size)]
+
+        # LoRA adapter — only threaded for mlx_lm. mlx_vlm doesn't currently
+        # accept `--adapter-path` in its server CLI, so we skip silently
+        # there rather than pass an unknown flag that would fail startup.
+        if adapter_path and module == "mlx_lm":
+            args += ["--adapter-path", adapter_path]
 
         return args
 

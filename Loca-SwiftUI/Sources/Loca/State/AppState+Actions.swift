@@ -73,9 +73,39 @@ extension AppState {
             let active = try? await BackendClient.shared.activeModel()
             activeModelName = active?.name
             activeBackend   = active?.backend
+            activeAdapter   = active?.adapter
+            if let name = active?.name {
+                await _loadAdapters(name)
+            } else {
+                adapters = []
+            }
         } catch {
             // Non-fatal
         }
+    }
+
+    // MARK: - LoRA adapters
+
+    func _loadAdapters(_ modelName: String) async {
+        do {
+            adapters = try await BackendClient.shared.listAdapters(model: modelName)
+        } catch {
+            adapters = []
+        }
+    }
+
+    func _activateAdapter(model: String, adapter: String?) async {
+        activateBusy = true
+        modelLoadError = nil
+        do {
+            try await BackendClient.shared.activateAdapter(model: model, adapter: adapter)
+            // Re-poll active + local models so the UI reflects the new
+            // adapter + whatever is_loaded state the server now reports.
+            await _loadLocalModels()
+        } catch {
+            modelLoadError = error.localizedDescription
+        }
+        activateBusy = false
     }
 
     func _loadModel(_ name: String, ctxSize: Int? = nil) async {

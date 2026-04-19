@@ -55,6 +55,60 @@ export async function fetchActiveModel(): Promise<string | null> {
   }
 }
 
+// ── LoRA adapters ─────────────────────────────────────────────────────────────
+
+export interface Adapter {
+  name: string;
+  path: string;
+  base_model: string;
+  size_mb: number;
+  rank?: number | null;
+  alpha?: number | null;
+  trained_at?: number | null;
+}
+
+export interface ActiveModelDetail {
+  name: string | null;
+  backend: string | null;
+  api_base: string;
+  running: boolean;
+  adapter: string | null;
+}
+
+export async function fetchActiveModelDetail(): Promise<ActiveModelDetail | null> {
+  try {
+    return await jsonGet<ActiveModelDetail>('/api/models/active');
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchAdapters(modelName: string): Promise<Adapter[]> {
+  const data = await jsonGet<{ adapters: Adapter[] }>(
+    `/api/adapters?model=${encodeURIComponent(modelName)}`,
+  );
+  return data.adapters ?? [];
+}
+
+/** Activate a LoRA adapter on the given model (or pass `null` to clear). */
+export async function activateAdapter(
+  model: string, adapter: string | null,
+): Promise<void> {
+  const r = await fetch('/api/adapters/activate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, adapter }),
+  });
+  if (!r.ok) {
+    let msg = `activate adapter → HTTP ${r.status}`;
+    try {
+      const body = await r.json() as { error?: string };
+      if (body?.error) msg = body.error;
+    } catch { /* swallow */ }
+    throw new Error(msg);
+  }
+}
+
 export async function fetchConversations(): Promise<ConversationMeta[]> {
   const data = await jsonGet<{ conversations: ConversationMeta[] }>('/api/conversations');
   return data.conversations ?? [];

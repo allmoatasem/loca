@@ -76,7 +76,16 @@ private struct DownloadedModelsTab: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 6) {
                         if !state.localModels.isEmpty {
-                            ForEach(state.localModels) { m in modelRow(m) }
+                            ForEach(state.localModels) { m in
+                                modelRow(m)
+                                // LoRA adapter picker nested under its
+                                // base model. Only shows for the loaded
+                                // MLX model — llama-server LoRA is
+                                // deferred.
+                                if m.is_loaded && m.format == "mlx" {
+                                    adapterPicker(for: m)
+                                }
+                            }
                         }
 
                         // Speech Models section
@@ -184,6 +193,50 @@ private struct DownloadedModelsTab: View {
         .padding(.vertical, 10)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private func adapterPicker(for model: LocalModel) -> some View {
+        HStack(spacing: 8) {
+            Text("ADAPTER")
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.4)
+                .foregroundColor(.secondary)
+            Picker("", selection: Binding<String>(
+                get: { state.activeAdapter ?? "" },
+                set: { newValue in
+                    let pick: String? = newValue.isEmpty ? nil : newValue
+                    state.activateAdapter(model: model.name, adapter: pick)
+                }
+            )) {
+                Text("— none (base model only) —").tag("")
+                ForEach(state.adapters) { a in
+                    Text(adapterLabel(a)).tag(a.name)
+                }
+            }
+            .labelsHidden()
+            .disabled(state.activateBusy)
+            if state.activateBusy {
+                ProgressView().scaleEffect(0.6)
+                Text("applying…")
+                    .font(.system(size: 10)).italic()
+                    .foregroundColor(.secondary)
+            } else if state.adapters.isEmpty {
+                Text("No adapters trained yet — run `make train`.")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(.leading, 32)
+        .padding(.trailing, 14)
+        .padding(.vertical, 6)
+    }
+
+    private func adapterLabel(_ a: Adapter) -> String {
+        var parts: [String] = [a.name]
+        if let rank = a.rank { parts.append("rank \(rank)") }
+        parts.append(String(format: "%.1f MB", a.size_mb))
+        return parts.joined(separator: " — ")
     }
 
     private func speechModelRow(_ vm: VoiceModel) -> some View {

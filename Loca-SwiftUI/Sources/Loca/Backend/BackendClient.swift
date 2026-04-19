@@ -89,6 +89,31 @@ actor BackendClient {
         return try JSONDecoder().decode(ActiveModelResponse.self, from: data)
     }
 
+    func listAdapters(model: String) async throws -> [Adapter] {
+        let encoded = model.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? model
+        let (data, _) = try await get("/api/adapters?model=\(encoded)")
+        return try JSONDecoder().decode(AdaptersResponse.self, from: data).adapters
+    }
+
+    /// Activate (or clear, when `adapter` is nil) a LoRA adapter on the
+    /// given base model. Restarts mlx_lm.server — expect ~2–3 s latency.
+    func activateAdapter(model: String, adapter: String?) async throws {
+        var body: [String: Any] = ["model": model]
+        body["adapter"] = adapter ?? NSNull()
+        let (data, resp) = try await postRaw("/api/adapters/activate", body: body)
+        if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
+            var message = "activateAdapter → HTTP \(http.statusCode)"
+            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let err = obj["error"] as? String {
+                message = err
+            }
+            throw BackendError.decode(NSError(
+                domain: "Loca", code: http.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: message]
+            ))
+        }
+    }
+
     func startDownload(repoId: String, filename: String?, format: String) async throws -> String {
         var body: [String: Any] = ["repo_id": repoId, "format": format]
         if let f = filename { body["filename"] = f }

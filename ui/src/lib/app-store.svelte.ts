@@ -3,8 +3,10 @@
  * Only what's needed for Phase 2 lives here; more state lands phase by phase.
  */
 import {
+  activateAdapter as apiActivateAdapter,
   deleteConversation as apiDelete,
-  fetchActiveModel,
+  fetchActiveModelDetail,
+  fetchAdapters,
   fetchConversations,
   fetchLocalModels,
   fetchProjects as apiFetchProjects,
@@ -12,6 +14,7 @@ import {
   patchConversation as apiPatch,
   searchConversations as apiSearch,
   unloadModel as apiUnload,
+  type Adapter,
   type ConversationMeta,
   type LocalModel,
   type Project,
@@ -39,6 +42,12 @@ function appStore() {
   let contextWindow      = $state<number>(32768);
   let localModels        = $state<LocalModel[]>([]);
   let activeModelName    = $state<string | null>(null);
+  // LoRA adapter layered on the active model, if any. `null` = base
+  // model only. `activateBusy` gates the UI while the 2–3s server
+  // restart runs so the user doesn't click through stale state.
+  let activeAdapter      = $state<string | null>(null);
+  let adapters           = $state<Adapter[]>([]);
+  let activateBusy       = $state<boolean>(false);
   let conversations      = $state<ConversationMeta[]>([]);
   let searchResults      = $state<ConversationMeta[]>([]);
   let searchQuery        = $state<string>('');
@@ -71,18 +80,54 @@ function appStore() {
     try {
       const [models, active, convs, projs] = await Promise.all([
         fetchLocalModels(),
-        fetchActiveModel(),
+        fetchActiveModelDetail(),
         fetchConversations(),
         apiFetchProjects().catch(() => [] as Project[]),
       ]);
       localModels = models;
-      activeModelName = active;
+      activeModelName = active?.name ?? null;
+      activeAdapter = active?.adapter ?? null;
       conversations = convs;
       projects = projs;
+      // Kick off adapter discovery for the active model so the picker is
+      // ready the moment the user opens Manage Models.
+      if (active?.name) void refreshAdapters(active.name);
     } catch (e) {
       errorMsg = e instanceof Error ? e.message : String(e);
     } finally {
       loading = false;
+    }
+  }
+
+  async function refreshAdapters(modelName: string): Promise<void> {
+    try {
+      adapters = await fetchAdapters(modelName);
+    } catch {
+      adapters = [];
+    }
+  }
+
+  /** Activate a LoRA adapter on the given model (or clear by passing null).
+   *  Shows a busy state during the ~2–3 s mlx_lm.server restart. */
+  async function activateAdapter(
+    modelName: string, adapterName: string | null,
+  ): Promise<void> {
+    activateBusy = true;
+    try {
+      await apiActivateAdapter(modelName, adapterName);
+      activeAdapter = adapterName;
+      // Re-poll /api/models/active to pick up the new running state after
+      // the server comes back up.
+      const detail = await fetchActiveModelDetail();
+      if (detail) {
+        activeModelName = detail.name;
+        activeAdapter = detail.adapter;
+      }
+    } catch (e) {
+      errorMsg = e instanceof Error ? e.message : String(e);
+      throw e;
+    } finally {
+      activateBusy = false;
     }
   }
 
@@ -207,6 +252,9 @@ function appStore() {
     get localModels() { return localModels; },
     get activeModelName() { return activeModelName; },
     set activeModelName(v) { activeModelName = v; },
+    get activeAdapter() { return activeAdapter; },
+    get adapters() { return adapters; },
+    get activateBusy() { return activateBusy; },
     get conversations() { return conversations; },
     get searchQuery() { return searchQuery; },
     get searchResults() { return searchResults; },
@@ -246,6 +294,8 @@ function appStore() {
     setVoiceAudioLevel,
     setVoiceError,
     setShowVoiceSetup,
+    refreshAdapters,
+    activateAdapter,
   };
 }
 

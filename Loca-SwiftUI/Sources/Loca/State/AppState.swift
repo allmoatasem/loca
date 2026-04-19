@@ -102,6 +102,13 @@ final class AppState: ObservableObject {
     @Published var modelLoadError: String?
     @Published var isSettingsOpen     = false
 
+    // LoRA adapter layered on the active model. `nil` = base-only.
+    // `activateBusy` gates the Settings picker during the ~2–3 s
+    // mlx_lm.server restart so the user can't double-click through.
+    @Published var activeAdapter: String?
+    @Published var adapters: [Adapter] = []
+    @Published var activateBusy: Bool = false
+
     // MARK: - Active download (persists across sheet open/close)
 
     struct ActiveDownload {
@@ -315,6 +322,8 @@ final class AppState: ObservableObject {
     func searchConversations()                             { Task { await _searchConversations() } }
     func reloadLocalModels()    { Task { await _loadLocalModels() } }
     func loadModel(_ name: String, ctxSize: Int? = nil) { Task { await _loadModel(name, ctxSize: ctxSize) } }
+    func reloadAdapters(for model: String) { Task { await _loadAdapters(model) } }
+    func activateAdapter(model: String, adapter: String?) { Task { await _activateAdapter(model: model, adapter: adapter) } }
     func suggestPerformanceParams() { Task { await _suggestPerformanceParams() } }
     func deleteModel(_ name: String) { Task { await _deleteModel(name) } }
     func unloadModel()               { Task { await _unloadModel() } }
