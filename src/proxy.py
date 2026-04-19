@@ -221,6 +221,14 @@ async def openai_chat(request: Request) -> Response:
     model_override: str | None = body.get("model_override")
     num_ctx: int | None = body.get("num_ctx")
     research_mode: bool = body.get("research_mode", False)
+    # Autonomous multi-role loop. When true, the orchestrator hands the
+    # turn off to the research_loop module (Researcher → Writer → Verifier)
+    # instead of a single model call. Independent of `research_mode`
+    # which is just a web_search transport flag.
+    autonomous_loop: bool = body.get("autonomous_loop", False)
+    # Conversation id — the loop uses it to name its plan checkpoint so
+    # an interrupted session leaves a readable trail on disk.
+    conv_id: str | None = body.get("conv_id")
     # Research Partner inputs — partner_mode swaps the layered system
     # prompt (critique / teach), project_id scopes retrieval. Both are
     # opt-in; absent means default behaviour.
@@ -281,6 +289,7 @@ async def openai_chat(request: Request) -> Response:
                 chat_template_kwargs=chat_template_kwargs,
                 extra_body=extra_body,
                 partner_mode=partner_mode, project_id=project_id,
+                autonomous_loop=autonomous_loop, conv_id=conv_id,
             ),
             media_type="text/event-stream",
         )
@@ -289,6 +298,7 @@ async def openai_chat(request: Request) -> Response:
         messages, has_image=has_image, stream=False,
         model_hint=mode_hint, model_override=model_override,
         num_ctx=num_ctx, research_mode=research_mode,
+        autonomous_loop=autonomous_loop, conv_id=conv_id,
         partner_mode=partner_mode, project_id=project_id,
         temperature=temperature, top_p=top_p, top_k=top_k,
         repeat_penalty=repeat_penalty, max_tokens=max_tokens,
@@ -341,6 +351,8 @@ async def _openai_stream_response(
     extra_body: dict | None = None,
     partner_mode: str | None = None,
     project_id: str | None = None,
+    autonomous_loop: bool = False,
+    conv_id: str | None = None,
 ) -> AsyncIterator[bytes]:
     output_chars = 0
     actual_model = model_override or model_hint or "local"
@@ -353,6 +365,7 @@ async def _openai_stream_response(
             messages, has_image=has_image, stream=True,
             model_hint=model_hint, model_override=model_override,
             num_ctx=num_ctx, research_mode=research_mode,
+            autonomous_loop=autonomous_loop, conv_id=conv_id,
             partner_mode=partner_mode, project_id=project_id,
             temperature=temperature, top_p=top_p, top_k=top_k,
             repeat_penalty=repeat_penalty, max_tokens=max_tokens,
