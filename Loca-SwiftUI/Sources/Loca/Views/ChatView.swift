@@ -1229,23 +1229,14 @@ struct InputBar: View {
                     icon: "drop", label: "Deep Dive",
                     isActive: state.researchMode, isDisabled: state.lockdownMode
                 ) { if !state.lockdownMode { state.researchMode.toggle() } }
-                .help("Deep Dive — render full pages (not just snippets) and pull richer web context into the turn")
-
-                InputToolButton(
-                    icon: "brain.head.profile", label: "Agent",
-                    isActive: state.autonomousLoop, isDisabled: state.lockdownMode
-                ) { if !state.lockdownMode { state.autonomousLoop.toggle() } }
-                .help("Research Agent — multi-step turn: plan sub-queries, search, synthesise with citations, verify")
+                .help("Deep Dive — multi-step research: plan sub-queries, fetch full pages, synthesise with citations, verify")
 
                 InputToolButton(
                     icon: "lock", label: "Lockdown",
                     isActive: state.lockdownMode, isDisabled: false
                 ) {
                     state.lockdownMode.toggle()
-                    if state.lockdownMode {
-                        state.researchMode = false
-                        state.autonomousLoop = false
-                    }
+                    if state.lockdownMode { state.researchMode = false }
                 }
                 .help("Lockdown — disable all network tools")
 

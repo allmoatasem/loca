@@ -220,12 +220,12 @@ async def openai_chat(request: Request) -> Response:
     mode_hint: str | None = body.get("mode") or body.get("model")
     model_override: str | None = body.get("model_override")
     num_ctx: int | None = body.get("num_ctx")
+    # Deep Dive = autonomous loop (Researcher → Writer → Verifier) +
+    # Playwright full-page fetch for every sub-agent web search.
+    # Consolidated in omnibus #92; the previous split between this flag
+    # and `autonomous_loop` confused users without adding any value
+    # (they always wanted both together).
     research_mode: bool = body.get("research_mode", False)
-    # Autonomous multi-role loop. When true, the orchestrator hands the
-    # turn off to the research_loop module (Researcher → Writer → Verifier)
-    # instead of a single model call. Independent of `research_mode`
-    # which is just a web_search transport flag.
-    autonomous_loop: bool = body.get("autonomous_loop", False)
     # Conversation id — the loop uses it to name its plan checkpoint so
     # an interrupted session leaves a readable trail on disk.
     conv_id: str | None = body.get("conv_id")
@@ -289,7 +289,7 @@ async def openai_chat(request: Request) -> Response:
                 chat_template_kwargs=chat_template_kwargs,
                 extra_body=extra_body,
                 partner_mode=partner_mode, project_id=project_id,
-                autonomous_loop=autonomous_loop, conv_id=conv_id,
+                conv_id=conv_id,
             ),
             media_type="text/event-stream",
         )
@@ -298,7 +298,7 @@ async def openai_chat(request: Request) -> Response:
         messages, has_image=has_image, stream=False,
         model_hint=mode_hint, model_override=model_override,
         num_ctx=num_ctx, research_mode=research_mode,
-        autonomous_loop=autonomous_loop, conv_id=conv_id,
+        conv_id=conv_id,
         partner_mode=partner_mode, project_id=project_id,
         temperature=temperature, top_p=top_p, top_k=top_k,
         repeat_penalty=repeat_penalty, max_tokens=max_tokens,
@@ -351,7 +351,6 @@ async def _openai_stream_response(
     extra_body: dict | None = None,
     partner_mode: str | None = None,
     project_id: str | None = None,
-    autonomous_loop: bool = False,
     conv_id: str | None = None,
 ) -> AsyncIterator[bytes]:
     output_chars = 0
@@ -365,7 +364,7 @@ async def _openai_stream_response(
             messages, has_image=has_image, stream=True,
             model_hint=model_hint, model_override=model_override,
             num_ctx=num_ctx, research_mode=research_mode,
-            autonomous_loop=autonomous_loop, conv_id=conv_id,
+            conv_id=conv_id,
             partner_mode=partner_mode, project_id=project_id,
             temperature=temperature, top_p=top_p, top_k=top_k,
             repeat_penalty=repeat_penalty, max_tokens=max_tokens,
@@ -1417,19 +1416,83 @@ async def api_project_related(project_id: str, limit: int = 10) -> JSONResponse:
                 "score": float(raw_score),
                 "memory_id": h.get("id"),
             })
-    results.sort(key=lambda r: r.get("score", 0.0), reverse=True)
-    # Strip duplicates by title before capping.
-    seen: set[str] = set()
-    deduped: list[dict] = []
+    # Polish pass (omnibus #92):
+    #   1. Strip Obsidian wiki-link syntax — `[[target|display]]` →
+    #      `display`, `[[target]]` → `target`. Raw brackets looked
+    #      like markup in the UI.
+    #   2. Drop rows whose snippet is just YAML frontmatter (leading
+    #      `---\ntags: ...\n---`) — those are metadata lines that
+    #      happened to score above the threshold, not actual content.
+    #   3. Truncate long titles at a word boundary with `…`, not mid-
+    #      word, so "What notati…" becomes "What…".
+    #   4. Dedup across memory+vault by *normalised* title, preferring
+    #      the higher-scoring origin. Before this change a note that
+    #      existed as both an ingested memory chunk and a vault chunk
+    #      appeared twice on the Related Notes card.
     for r in results:
-        key = (r.get("title") or "") + "|" + (r.get("snippet", "")[:80])
-        if key in seen:
+        r["title"] = _truncate_words(_strip_wikilinks(r.get("title") or ""), 72)
+        r["snippet"] = _strip_wikilinks(r.get("snippet", ""))
+    results = [r for r in results if not _is_frontmatter_only(r.get("snippet", ""))]
+    results.sort(key=lambda r: r.get("score", 0.0), reverse=True)
+    dedup: dict[str, dict] = {}
+    for r in results:
+        key = _norm_title(r.get("title") or "")
+        if not key:
             continue
-        seen.add(key)
-        deduped.append(r)
-        if len(deduped) >= limit:
-            break
-    return JSONResponse({"items": deduped})
+        existing = dedup.get(key)
+        if existing is None or r.get("score", 0.0) > existing.get("score", 0.0):
+            dedup[key] = r
+    ranked = sorted(dedup.values(), key=lambda r: r.get("score", 0.0), reverse=True)
+    return JSONResponse({"items": ranked[:limit]})
+
+
+# ---- Related-Notes polish helpers ----
+
+def _strip_wikilinks(text: str) -> str:
+    """Collapse Obsidian `[[target|display]]` to `display` and
+    `[[target]]` to `target`. Keeps prose readable when a vault note
+    has raw wiki-link syntax in its headers."""
+    import re  # noqa: PLC0415
+    def repl(m: "re.Match[str]") -> str:
+        body = m.group(1)
+        return body.split("|", 1)[1] if "|" in body else body
+    return re.sub(r"\[\[([^\[\]]+)\]\]", repl, text)
+
+
+def _is_frontmatter_only(snippet: str) -> bool:
+    """True if the snippet is nothing but a YAML frontmatter block.
+    These slip through because tags happen to match the scope query
+    but aren't useful content in Related Notes."""
+    s = snippet.strip()
+    if not s.startswith("---"):
+        return False
+    # After the first `---`, everything up to the closing `---` (if any)
+    # is frontmatter. If the snippet has no actual body after it, drop.
+    closing = s.find("---", 3)
+    if closing == -1:
+        return True
+    body = s[closing + 3:].strip()
+    return not body
+
+
+def _norm_title(title: str) -> str:
+    """Lowercase + collapse whitespace so 'Al-Andalus' and 'al-andalus '
+    dedup together. Avoid unicode normalisation — titles are already
+    user-facing display strings."""
+    return " ".join(title.lower().split())
+
+
+def _truncate_words(text: str, max_chars: int) -> str:
+    """Cut at the last word boundary within budget and append `…`."""
+    text = text.strip()
+    if len(text) <= max_chars:
+        return text
+    cut = text[:max_chars]
+    # Find the last whitespace so we don't slice mid-word.
+    space = cut.rfind(" ")
+    if space > max_chars // 2:  # don't leave an empty truncation
+        cut = cut[:space]
+    return cut.rstrip(" ,.;:-") + "…"
 
 
 @app.post("/api/projects/{project_id}/dig-deeper")

@@ -158,7 +158,14 @@
     padding: 2px 10px;
     color: var(--loca-color-text-muted);
   }
-  .md :global(a) { color: var(--loca-color-accent); }
+  .md :global(a) {
+    color: var(--loca-color-accent);
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+  }
+  .md :global(a:hover) { text-decoration-thickness: 2px; }
 
   .md :global(table) {
     border-collapse: collapse;

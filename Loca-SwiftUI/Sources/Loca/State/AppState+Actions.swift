@@ -440,7 +440,6 @@ extension AppState {
             stream:         true,
             num_ctx:        contextWindow,
             research_mode:  researchMode && !lockdownMode,
-            autonomous_loop: autonomousLoop && !lockdownMode,
             conv_id:        activeConversationId,
             partner_mode:   partnerMode == .default_ ? nil : partnerMode.rawValue,
             project_id:     activeProjectId,

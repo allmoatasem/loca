@@ -72,7 +72,6 @@ class Orchestrator:
         model_override: str | None = None,
         num_ctx: int | None = None,
         research_mode: bool = False,
-        autonomous_loop: bool = False,
         conv_id: str | None = None,
         partner_mode: str | None = None,
         project_id: str | None = None,
@@ -92,17 +91,21 @@ class Orchestrator:
             + (f" | override={model_override}" if model_override else "")
             + (f" | partner={partner_mode}" if partner_mode else "")
             + (f" | project={project_id}" if project_id else "")
-            + (" | autonomous_loop" if autonomous_loop else "")
+            + (" | deep_dive" if research_mode else "")
         )
 
         model_name, api_base = await self.mm.ensure_loaded(result.model, model_name_override=model_override)
 
-        # Autonomous research loop takes over the whole turn: Researcher
-        # plans + runs searches, Writer synthesises with citations,
-        # Verifier catches phantoms. We need the model loaded (above) but
-        # we skip routing/tool-loop/single-call paths — those happen
-        # inside the loop's Writer step via its own chat + search fns.
-        if autonomous_loop:
+        # Deep Dive = autonomous multi-role loop + Playwright web fetch.
+        # Agent and Deep Dive used to be separate toggles; consolidated
+        # into this single flag in omnibus #92 — they were effectively
+        # augmenting each other. When `research_mode` is True we:
+        #   (a) hand the whole turn to the loop (Researcher → Reviewer →
+        #       Writer → Verifier), and
+        #   (b) the loop's `web_search` calls go through Playwright so
+        #       each source hit has full-page content, not snippets.
+        # When False: standard single model call + snippet-only search.
+        if research_mode:
             return self._stream_autonomous_loop(
                 messages=messages,
                 user_message=user_message,
@@ -558,12 +561,15 @@ class Orchestrator:
             )
 
         async def _search_fn(*, query: str, max_results: int = 5) -> list[SearchResult]:
+            # research_mode=True: Playwright fetches the full page for
+            # every hit instead of trafilatura snippets. Deep Dive = loop
+            # + full-page content, consolidated into one flag in #92.
             return await web_search(
                 query=query,
                 searxng_url=self._search_cfg.get("searxng_url", ""),
                 max_results=max_results,
                 max_tokens_per_result=self._search_cfg.get("max_tokens_per_result", 500),
-                research_mode=False,
+                research_mode=True,
             )
 
         # Metadata dict first — the proxy reads `__model__` etc. and the

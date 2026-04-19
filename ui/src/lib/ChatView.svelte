@@ -65,28 +65,18 @@
   // above the scroller, mirroring SwiftUI's GenerationStatsBar.
   let lastStats = $state<TurnStats | null>(null);
   // Session-only toggles, same as SwiftUI's AppState.researchMode /
-  // lockdownMode. Research enables SearXNG + web fetching; lockdown
-  // disables all network tools and mutually excludes research.
+  // lockdownMode. Deep Dive = autonomous loop + Playwright full-page
+  // web content (consolidated in omnibus #92 — used to be two buttons).
+  // Lockdown disables all network tools and mutually excludes Deep Dive.
   let researchMode = $state<boolean>(false);
   let lockdownMode = $state<boolean>(false);
-  // Autonomous research loop — when on, the backend splits each turn
-  // into Researcher → Writer → Verifier with its own web searches.
-  // Orthogonal to researchMode (which only flips web_search transport).
-  let autonomousLoop = $state<boolean>(false);
   function toggleResearch(): void {
     if (lockdownMode) return;
     researchMode = !researchMode;
   }
-  function toggleAutonomousLoop(): void {
-    if (lockdownMode) return;
-    autonomousLoop = !autonomousLoop;
-  }
   function toggleLockdown(): void {
     lockdownMode = !lockdownMode;
-    if (lockdownMode) {
-      researchMode = false;
-      autonomousLoop = false;
-    }
+    if (lockdownMode) researchMode = false;
   }
 
   // Round-trip the conversation to /api/conversations so a refresh
@@ -383,6 +373,14 @@
   async function send(): Promise<void> {
     const text = input.trim();
     if ((!text && attachments.length === 0) || streaming) return;
+    // Friendly no-model guard — the old behaviour was to fire the
+    // request anyway and surface a raw "all connection attempts
+    // failed" error from the inference backend. Now we catch it at
+    // the UI layer and point the user to Manage Models (#92).
+    if (!app.activeModelName) {
+      errorMsg = 'No model loaded. Open Manage Models and load one before sending.';
+      return;
+    }
     errorMsg = null;
 
     const imageAttachments = attachments.filter((a) => a.type === 'image');
@@ -698,15 +696,8 @@
       class:active={researchMode}
       disabled={lockdownMode}
       onclick={toggleResearch}
-      title="Deep Dive — render full pages (not just snippets) and pull richer web context into the turn"
+      title="Deep Dive — multi-step research: plan sub-queries, fetch full pages, synthesise with citations, verify"
     >🌊 Deep Dive</button>
-    <button
-      class="tool"
-      class:active={autonomousLoop}
-      disabled={lockdownMode}
-      onclick={toggleAutonomousLoop}
-      title="Research Agent — multi-step turn: plan sub-queries, search, synthesise with citations, verify"
-    >🤖 Agent</button>
     <button
       class="tool"
       class:active={lockdownMode}

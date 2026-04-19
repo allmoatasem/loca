@@ -9,10 +9,10 @@ struct ChatRequest: Encodable {
     let messages: [ChatMessage]
     let stream: Bool
     let num_ctx: Int
+    // Deep Dive — autonomous multi-role loop + Playwright full-page
+    // content. Server-side flag name stays `research_mode` for
+    // wire-compat with older clients.
     let research_mode: Bool
-    // Autonomous research loop — Researcher/Writer/Verifier pipeline.
-    // Optional so older clients' payloads still decode server-side.
-    let autonomous_loop: Bool?
     // Conversation id so the loop can write its plan checkpoint to the
     // right file. Optional — a loop without a conv_id still runs, it
     // just lands in `no-conv-id.md`.

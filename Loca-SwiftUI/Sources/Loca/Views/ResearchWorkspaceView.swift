@@ -493,8 +493,11 @@ struct ResearchWorkspaceView: View {
                 Text("Weekly").tag(10080)
             }
             .pickerStyle(.menu)
+            // .borderedProminent reads as an actual button — `.borderless`
+            // rendered as faint text that first-time users missed (omnibus #92).
             Button("Create watch") { Task { await createWatch() } }
-                .buttonStyle(.borderless)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
                 .disabled(watchScope.trimmingCharacters(in: .whitespaces).isEmpty)
             if let s = watchStatus {
                 Text(s).font(.system(size: 11)).foregroundColor(.secondary)
