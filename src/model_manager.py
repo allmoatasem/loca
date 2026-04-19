@@ -164,6 +164,26 @@ class ModelManager:
         return self.backend.api_base()
 
     # ------------------------------------------------------------------
+    # Adapters
+    # ------------------------------------------------------------------
+
+    def list_adapters(self, model_name: str) -> list[dict]:
+        """Return LoRA adapters available for a given locally-installed model."""
+        from .adapters import list_adapters  # noqa: PLC0415
+        model = self.get_model(model_name)
+        if not model:
+            return []
+        return [a.to_dict() for a in list_adapters(model.path, model.name)]
+
+    def current_adapter_name(self) -> str | None:
+        """Display name of the adapter directory currently loaded (last
+        path component), or None. Used by `GET /api/models/active`."""
+        p = self.backend.current_adapter_path()
+        if not p:
+            return None
+        return Path(p).name
+
+    # ------------------------------------------------------------------
     # Load / switch
     # ------------------------------------------------------------------
 
@@ -174,15 +194,39 @@ class ModelManager:
         n_gpu_layers: int | None = None,
         batch_size: int | None = None,
         num_threads: int | None = None,
+        adapter: str | None = None,
     ) -> tuple[str, str]:
-        """Load a model by name into the inference backend."""
+        """Load a model by name into the inference backend.
+
+        `adapter` is the directory name of a LoRA adapter under
+        `<model.path>/adapters/`. When provided, it's passed through to
+        mlx_lm.server as `--adapter-path`. Invalid adapter names raise
+        rather than silently fall back — the caller (UI) can then show a
+        clear error instead of the user wondering why their fine-tune
+        isn't taking effect.
+        """
         model = self.get_model(model_name)
         if not model:
             raise InferenceBackendError(f"Model '{model_name}' not found in {self.models_dir}")
-        await self.backend.restart(model.path, ctx_size, n_gpu_layers, batch_size, num_threads)
-        # Persist active model in config (relative path from models_dir)
+        adapter_path: str | None = None
+        if adapter:
+            from .adapters import resolve_adapter_path  # noqa: PLC0415
+            resolved = resolve_adapter_path(model.path, adapter)
+            if resolved is None:
+                raise InferenceBackendError(
+                    f"Adapter '{adapter}' not found under {model.path}/adapters/",
+                )
+            adapter_path = str(resolved)
+        await self.backend.restart(
+            model.path, ctx_size, n_gpu_layers, batch_size, num_threads,
+            adapter_path=adapter_path,
+        )
+        # Persist active model + adapter in config (relative paths from
+        # models_dir) so the next proxy startup auto-restores the combination.
         rel = Path(model.path).relative_to(self.models_dir)
-        self.config.setdefault("inference", {})["active_model"] = str(rel)
+        inf = self.config.setdefault("inference", {})
+        inf["active_model"] = str(rel)
+        inf["active_adapter"] = adapter if adapter else None
         return model.name, self.backend.api_base()
 
     async def ensure_loaded(

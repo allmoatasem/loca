@@ -127,6 +127,14 @@
             </button>
           {/if}
         </div>
+        {#if activeModel && app.activeAdapter}
+          <!-- LoRA adapter pill — clarifies that responses are coming
+               from the base model + a fine-tuned layer on top of it. -->
+          <div class="adapter-pill" title={`LoRA adapter: ${app.activeAdapter}. Open Manage Models to change.`}>
+            <span class="adapter-dot">✨</span>
+            <span class="adapter-name">{app.activeAdapter}</span>
+          </div>
+        {/if}
       {:else}
         <div class="model-empty">No local models yet.</div>
       {/if}
@@ -415,6 +423,24 @@
   }
   .conv-act:hover { color: var(--loca-color-text); }
   .conv-act.danger:hover { color: var(--loca-color-danger); }
+
+  .adapter-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 4px;
+    padding: 2px 8px;
+    font-size: 10px;
+    color: color-mix(in srgb, var(--loca-color-accent) 85%, var(--loca-color-text));
+    background: color-mix(in srgb, var(--loca-color-accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--loca-color-accent) 35%, transparent);
+    border-radius: 999px;
+    width: fit-content;
+    max-width: 100%;
+    overflow: hidden;
+  }
+  .adapter-dot { font-size: 10px; line-height: 1; }
+  .adapter-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .footer {
     display: flex;

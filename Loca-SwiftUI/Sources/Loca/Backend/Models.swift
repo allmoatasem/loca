@@ -243,6 +243,31 @@ struct ActiveModelResponse: Decodable {
     let backend: String?
     let api_base: String?
     let running: Bool
+    /// Name of the LoRA adapter layered on the active model, or nil when
+    /// running the base model straight. The UI uses this to render the
+    /// "+ <adapter>" pill next to the model name.
+    let adapter: String?
+}
+
+struct Adapter: Decodable, Identifiable, Hashable {
+    let name: String
+    let path: String
+    let base_model: String
+    let size_mb: Double
+    let rank: Int?
+    let alpha: Double?
+    let trained_at: Double?
+
+    var id: String { path }
+}
+
+struct AdaptersResponse: Decodable { let adapters: [Adapter] }
+
+struct ActivateAdapterResponse: Decodable {
+    let ok: Bool
+    let model: String?
+    let adapter: String?
+    let api_base: String?
 }
 
 struct DownloadProgress: Decodable {
@@ -725,6 +750,8 @@ struct Project: Identifiable, Decodable, Equatable {
     let updated: Double
     let item_count: Int?
     let conv_count: Int?
+    /// Preferred LoRA adapter to activate when the project becomes active.
+    let adapter_name: String?
 }
 
 struct ProjectItem: Identifiable, Decodable, Equatable {
@@ -759,6 +786,7 @@ struct ProjectDetail: Decodable {
     let items_count: Int
     let conversations: [ConversationMeta]
     let watches: [ProjectWatch]
+    let adapter_name: String?
 }
 
 struct CreateProjectResponse: Decodable {

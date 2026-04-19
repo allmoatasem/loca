@@ -185,6 +185,14 @@ def _migrate(c: sqlite3.Connection) -> None:
         ON project_watches(project_id);
     """)
 
+    # Per-project LoRA adapter preference — activated when the project
+    # becomes the focus so a writing-style project can override the
+    # globally-active adapter for the duration of the session. Runs
+    # after the projects table is created/guaranteed above.
+    project_cols = {r[1] for r in c.execute("PRAGMA table_info(projects)")}
+    if "adapter_name" not in project_cols:
+        c.execute("ALTER TABLE projects ADD COLUMN adapter_name TEXT")
+
     c.commit()
 
 
@@ -570,7 +578,8 @@ def get_project(project_id: str) -> dict | None:
 
 
 def patch_project(
-    project_id: str, *, title=_MISSING, scope=_MISSING, notes=_MISSING,
+    project_id: str, *,
+    title=_MISSING, scope=_MISSING, notes=_MISSING, adapter_name=_MISSING,
 ) -> None:
     parts: list[str] = []
     vals: list[object] = []
@@ -583,6 +592,9 @@ def patch_project(
     if notes is not _MISSING:
         parts.append("notes = ?")
         vals.append(notes)
+    if adapter_name is not _MISSING:
+        parts.append("adapter_name = ?")
+        vals.append(adapter_name)
     if not parts:
         return
     parts.append("updated = ?")

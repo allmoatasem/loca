@@ -1,0 +1,20 @@
+{"id": "style-01", "tag": "style", "prompt": "Write a two-sentence book recommendation to a friend."}
+{"id": "style-02", "tag": "style", "prompt": "How would you describe your writing voice in three words?"}
+{"id": "style-03", "tag": "style", "prompt": "Reply to this email in one paragraph: 'Hey, can we push the meeting to next week? Let me know what works for you.'"}
+{"id": "tone-01", "tag": "tone", "prompt": "Explain to a seven-year-old why the sky is blue."}
+{"id": "tone-02", "tag": "tone", "prompt": "Give a blunt performance review for a colleague who misses deadlines."}
+{"id": "tone-03", "tag": "tone", "prompt": "Congratulate someone on a promotion — be warm but not effusive."}
+{"id": "structure-01", "tag": "structure", "prompt": "Summarise the plot of Hamlet in exactly five bullet points."}
+{"id": "structure-02", "tag": "structure", "prompt": "List three trade-offs between SQL and NoSQL databases. One line each."}
+{"id": "structure-03", "tag": "structure", "prompt": "Give me a numbered checklist for reviewing a pull request."}
+{"id": "reason-01", "tag": "reason", "prompt": "A farmer has 15 sheep. All but 8 die. How many are left, and why?"}
+{"id": "reason-02", "tag": "reason", "prompt": "If I'm making tea and the kettle has been boiling for 90 seconds, should I turn it off now or wait?"}
+{"id": "reason-03", "tag": "reason", "prompt": "Your train leaves in 35 minutes. It's a 12-minute walk. You haven't packed. Give me the order of operations."}
+{"id": "factual-01", "tag": "factual", "prompt": "What is the boiling point of water at sea level in both Celsius and Fahrenheit?"}
+{"id": "factual-02", "tag": "factual", "prompt": "Name three programming languages that compile to WebAssembly."}
+{"id": "factual-03", "tag": "factual", "prompt": "In what year did the Apollo 11 mission land on the Moon?"}
+{"id": "code-01", "tag": "code", "prompt": "Write a Python function that returns the longest word in a list of strings."}
+{"id": "code-02", "tag": "code", "prompt": "Explain what 'idempotent' means in the context of HTTP methods."}
+{"id": "code-03", "tag": "code", "prompt": "Show me a minimal curl command to POST JSON to an API."}
+{"id": "critical-01", "tag": "critical", "prompt": "Someone says 'remote work is always more productive than in-office.' What's your one-paragraph counterpoint?"}
+{"id": "critical-02", "tag": "critical", "prompt": "Name a common piece of advice that's actually bad — and say why."}

@@ -57,6 +57,10 @@ def client(tmp_path, monkeypatch):
     mock_mm.load = AsyncMock(return_value=("test-model", "http://localhost:11434"))
     mock_mm.delete = MagicMock()
     mock_mm.download = AsyncMock()
+    # Default adapter state — no active adapter. MagicMock returns a
+    # MagicMock by default which isn't JSON-serialisable, so pin to None.
+    mock_mm.current_adapter_name.return_value = None
+    mock_mm.list_adapters.return_value = []
 
     mock_orch = MagicMock()
     mock_orch.handle = AsyncMock()

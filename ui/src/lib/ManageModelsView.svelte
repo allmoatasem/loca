@@ -45,6 +45,23 @@
 
   $effect(() => { void refresh(); });
 
+  // Whenever the active model changes, pull its available adapters so
+  // the picker on that model's row has fresh options.
+  $effect(() => {
+    const name = app.activeModelName;
+    if (name) void app.refreshAdapters(name);
+  });
+
+  async function activateAdapterSafe(model: string, adapter: string | null): Promise<void> {
+    errorMsg = null;
+    try {
+      await app.activateAdapter(model, adapter);
+      await refresh();
+    } catch (e) {
+      errorMsg = e instanceof Error ? e.message : String(e);
+    }
+  }
+
   function formatSize(m: LocalModel): string {
     const gb = m.size_gb ?? (m.size_bytes ? m.size_bytes / 1_000_000_000 : null);
     if (gb == null) return '';
@@ -159,6 +176,39 @@
               <button class="danger" onclick={() => confirmDelete = m} title="Delete from disk">Delete</button>
             </div>
           </div>
+          {#if m.is_loaded && m.format === 'mlx'}
+            <!-- LoRA adapter picker sits under the active MLX model, so
+                 the trained adapters are right where the user expects to
+                 find them. Activating restarts mlx_lm.server (~2–3s) and
+                 the UI is gated by `activateBusy` during that window. -->
+            <div class="adapter-row">
+              <span class="adapter-label">Adapter</span>
+              <select
+                disabled={app.activateBusy}
+                value={app.activeAdapter ?? ''}
+                onchange={(e) => {
+                  const v = (e.currentTarget as HTMLSelectElement).value || null;
+                  void activateAdapterSafe(m.name, v);
+                }}
+              >
+                <option value="">— none (base model only) —</option>
+                {#each app.adapters as a (a.name)}
+                  <option value={a.name}>
+                    {a.name}
+                    {#if a.rank}(rank {a.rank}){/if}
+                    — {a.size_mb.toFixed(1)} MB
+                  </option>
+                {/each}
+              </select>
+              {#if app.activateBusy}
+                <span class="busy">applying…</span>
+              {:else if app.adapters.length === 0}
+                <span class="hint-inline">
+                  No adapters yet — train one with <code>make train</code>.
+                </span>
+              {/if}
+            </div>
+          {/if}
         {/each}
       </div>
     {/if}
@@ -277,6 +327,43 @@
   .badge.mlx  { background: color-mix(in srgb, #8a5cf6 15%, transparent); color: #8a5cf6; }
   .badge.gguf { background: color-mix(in srgb, var(--loca-color-accent) 15%, transparent); color: var(--loca-color-accent); }
   .badge.vision { background: color-mix(in srgb, var(--loca-color-warning) 18%, transparent); color: var(--loca-color-warning); }
+
+  /* Adapter picker sits directly beneath an MLX model's row, indented
+     to visually pair with the model above. Disabled while the server
+     restart is in flight. */
+  .adapter-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px 8px 34px;
+    font-size: 11px;
+    color: var(--loca-color-text-muted);
+  }
+  .adapter-row .adapter-label {
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .adapter-row select {
+    flex: 1;
+    min-width: 0;
+    padding: 3px 6px;
+    font-size: 11px;
+    background: var(--loca-color-surface);
+    color: var(--loca-color-text);
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-sm);
+  }
+  .adapter-row select:disabled { opacity: 0.6; }
+  .adapter-row .busy { font-style: italic; }
+  .adapter-row .hint-inline { font-size: 10px; }
+  .adapter-row .hint-inline code {
+    padding: 1px 4px;
+    font-family: var(--loca-font-mono);
+    background: var(--loca-color-surface);
+    border-radius: 3px;
+  }
 
   .actions { display: flex; gap: 6px; }
   .actions button {

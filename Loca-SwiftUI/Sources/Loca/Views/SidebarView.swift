@@ -145,21 +145,44 @@ struct SidebarView: View {
                 }
             }
         } label: {
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(state.activeModelName != nil ? Color.green : Color.secondary.opacity(0.4))
-                    .frame(width: 6, height: 6)
-                Text(state.activeModelName
-                    ?? state.selectedModelId
-                    ?? state.localModels.first?.name
-                    ?? "No model")
-                    .font(.system(size: 12))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 9))
-                    .foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(state.activeModelName != nil ? Color.green : Color.secondary.opacity(0.4))
+                        .frame(width: 6, height: 6)
+                    Text(state.activeModelName
+                        ?? state.selectedModelId
+                        ?? state.localModels.first?.name
+                        ?? "No model")
+                        .font(.system(size: 12))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                }
+                // LoRA adapter pill — mirrors the Svelte sidebar. Shown
+                // only when a model is loaded AND an adapter is active.
+                if state.activeModelName != nil, let adapter = state.activeAdapter {
+                    HStack(spacing: 3) {
+                        Text("✨")
+                            .font(.system(size: 9))
+                        Text(adapter)
+                            .font(.system(size: 10, weight: .medium))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Color.accentColor.opacity(0.12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 999)
+                            .stroke(Color.accentColor.opacity(0.35))
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 999))
+                    .foregroundColor(.accentColor)
+                }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)

@@ -258,6 +258,42 @@ struct ResearchWorkspaceView: View {
             }
         }
 
+        // LoRA adapter binding. Only useful when a model is loaded — the
+        // picker has nothing to hang an adapter off otherwise.
+        if state.activeModelName != nil {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("ADAPTER").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
+                Text("Attach a fine-tuned LoRA adapter. Switching to this project activates it on the loaded model automatically.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Picker("", selection: Binding<String>(
+                    get: { d.adapter_name ?? "" },
+                    set: { newValue in
+                        let pick: String? = newValue.isEmpty ? nil : newValue
+                        Task { await saveProjectAdapter(pick) }
+                    }
+                )) {
+                    Text("— none (use whatever's active) —").tag("")
+                    ForEach(state.adapters) { a in
+                        Text(adapterLabel(a)).tag(a.name)
+                    }
+                }
+                .labelsHidden()
+                .disabled(state.activateBusy)
+                if state.activateBusy {
+                    Text("applying…")
+                        .font(.system(size: 11)).italic()
+                        .foregroundColor(.secondary)
+                } else if state.adapters.isEmpty {
+                    Text("No adapters trained for \(state.activeModelName ?? "this model") yet — run `make train`.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+
         VStack(alignment: .leading, spacing: 6) {
             Text("DIG DEEPER").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
             Text("Bounded web research on a sub-scope. Top hits are imported into memory and bookmarked here.")
@@ -711,6 +747,28 @@ struct ResearchWorkspaceView: View {
         } catch {
             // No-op — manual entry still works.
         }
+    }
+
+    private func saveProjectAdapter(_ adapterName: String?) async {
+        guard let id = state.activeProjectId else { return }
+        do {
+            try await BackendClient.shared.patchProject(id, adapter: .some(adapterName))
+            if let modelName = state.activeModelName {
+                state.activateAdapter(model: modelName, adapter: adapterName)
+            }
+            await refreshDetail(id)
+        } catch {
+            // Refresh pulls the picker back to the server's view of truth
+            // so the user can see their intended value didn't stick.
+            await refreshDetail(id)
+        }
+    }
+
+    private func adapterLabel(_ a: Adapter) -> String {
+        var parts: [String] = [a.name]
+        if let rank = a.rank { parts.append("rank \(rank)") }
+        parts.append(String(format: "%.1f MB", a.size_mb))
+        return parts.joined(separator: " — ")
     }
 
     private func saveQuote() async {

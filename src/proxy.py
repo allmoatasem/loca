@@ -573,6 +573,48 @@ async def active_model() -> JSONResponse:
         "backend": _inference_backend.current_backend(),
         "api_base": _inference_backend.api_base(),
         "running": _inference_backend.is_running(),
+        # Adapter is null unless a LoRA adapter was activated on this model.
+        # The UI uses this to render the "<model> + <adapter>" pill.
+        "adapter": _model_manager.current_adapter_name() if _model_manager else None,
+    })
+
+
+@app.get("/api/adapters")
+async def list_adapters(model: str) -> JSONResponse:
+    """Return the LoRA adapters available under a given model's directory.
+
+    The `model` parameter is the model's display name (same as returned
+    by `/api/local-models`). Adapters live in `<model>/adapters/<name>/`
+    so the filesystem layout enforces base-model compatibility — callers
+    can only see adapters that were trained against this base.
+    """
+    assert _model_manager is not None
+    return JSONResponse({"adapters": _model_manager.list_adapters(model)})
+
+
+@app.post("/api/adapters/activate")
+async def activate_adapter(request: Request) -> JSONResponse:
+    """Activate (or clear) a LoRA adapter on the given base model.
+
+    Body: `{"model": "<model-name>", "adapter": "<adapter-name>" | null}`.
+
+    Restarts `mlx_lm.server` with `--adapter-path` pointing at the
+    resolved adapter directory. ~2–3s on a warm file cache for a 7B Q4
+    model — the UI shows a progress indicator while this runs.
+    Passing `adapter: null` relaunches without an adapter (deactivate).
+    """
+    assert _model_manager is not None
+    body = await request.json()
+    model = (body.get("model") or "").strip()
+    adapter = body.get("adapter")
+    if not model:
+        return JSONResponse({"error": "model is required"}, status_code=400)
+    try:
+        name, api_base = await _model_manager.load(model, adapter=adapter)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse({
+        "ok": True, "model": name, "adapter": adapter, "api_base": api_base,
     })
 
 
@@ -1205,8 +1247,41 @@ async def api_patch_project(project_id: str, request: Request) -> JSONResponse:
         kwargs["scope"] = body["scope"]
     if "notes" in body:
         kwargs["notes"] = body["notes"]
+    # `adapter` (nullable) binds a preferred LoRA adapter to the project.
+    # The client explicitly sending `null` clears the binding; omit the
+    # key to leave it alone.
+    if "adapter" in body:
+        kwargs["adapter_name"] = body["adapter"]
     patch_project(project_id, **kwargs)
     return JSONResponse({"ok": True, "project": get_project(project_id)})
+
+
+@app.post("/api/projects/{project_id}/activate-adapter")
+async def api_project_activate_adapter(project_id: str) -> JSONResponse:
+    """Activate the project's stored adapter on the currently loaded model.
+
+    Called by the UI when the user switches to a project — keeps the
+    adapter-routing logic server-side so both clients share the same
+    policy (incompatible adapter → clear error, no adapter bound →
+    deactivate, missing model → no-op).
+    """
+    assert _model_manager is not None
+    proj = get_project(project_id)
+    if not proj:
+        return JSONResponse({"error": "project not found"}, status_code=404)
+    adapter = proj.get("adapter_name")
+    active_model = _inference_backend.current_model() if _inference_backend else None
+    if not active_model:
+        # No model loaded — the UI shouldn't even show the picker in
+        # this state, but handle gracefully just in case.
+        return JSONResponse({"ok": True, "model": None, "adapter": None})
+    try:
+        name, api_base = await _model_manager.load(active_model, adapter=adapter)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse({
+        "ok": True, "model": name, "adapter": adapter, "api_base": api_base,
+    })
 
 
 @app.delete("/api/projects/{project_id}")
