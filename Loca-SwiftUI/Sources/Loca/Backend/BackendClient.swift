@@ -372,7 +372,7 @@ actor BackendClient {
         title: String? = nil,
         scope: String? = nil,
         notes: String? = nil,
-        adapter: String?? = nil,
+        adapter: String?? = nil
     ) async throws {
         var body: [String: Any] = [:]
         if let title { body["title"] = title }
@@ -392,7 +392,7 @@ actor BackendClient {
     /// mlx_lm.server — see `/api/projects/{id}/activate-adapter`.
     func activateProjectAdapter(_ projectId: String) async throws {
         let (data, resp) = try await postRaw(
-            "/api/projects/\(projectId)/activate-adapter", body: [:],
+            "/api/projects/\(projectId)/activate-adapter", body: [:]
         )
         if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
             var message = "activate project adapter → HTTP \(http.statusCode)"
