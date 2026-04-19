@@ -4,6 +4,7 @@
  */
 import {
   activateAdapter as apiActivateAdapter,
+  activateProjectAdapter as apiActivateProjectAdapter,
   deleteConversation as apiDelete,
   fetchActiveModelDetail,
   fetchAdapters,
@@ -142,6 +143,20 @@ function appStore() {
   function setActiveProject(id: string | null): void {
     activeProjectId = id;
     if (id === null) partnerMode = 'default';
+    // When the user focuses a project, apply its bound adapter to the
+    // currently loaded model. Fire-and-forget: the server handles the
+    // "no adapter bound → deactivate" case, and errors surface via
+    // errorMsg without blocking the switch.
+    if (id) {
+      void apiActivateProjectAdapter(id)
+        .then(async () => {
+          const detail = await fetchActiveModelDetail();
+          if (detail) activeAdapter = detail.adapter;
+        })
+        .catch((e: unknown) => {
+          errorMsg = e instanceof Error ? e.message : String(e);
+        });
+    }
   }
 
   function setPartnerMode(mode: PartnerMode): void {

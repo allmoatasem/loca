@@ -521,6 +521,19 @@ extension AppState {
     func setActiveProject(_ id: String?) {
         activeProjectId = id
         if id == nil { partnerMode = .default_ }
+        // Apply the project's bound adapter on focus. Server decides
+        // how to route — no adapter bound means deactivate, incompatible
+        // bound adapter returns 400 which we surface via modelLoadError.
+        if let pid = id {
+            Task {
+                do {
+                    try await BackendClient.shared.activateProjectAdapter(pid)
+                    await _loadLocalModels()
+                } catch {
+                    modelLoadError = error.localizedDescription
+                }
+            }
+        }
     }
 
     func _loadMoreMemories() async {

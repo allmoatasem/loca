@@ -66,6 +66,11 @@ train:
 	@[ "$(model)" ] && [ "$(data)" ] || (echo "Usage: make train model=<path> data=<dataset-dir> [iters=1000] [adapter=./loca-adapter]"; exit 1)
 	$(PYTHON) -m src.training.cli train --model "$(model)" --data "$(data)" --iters $${iters:-1000} --adapter-out $${adapter:-./loca-adapter}
 
+eval:
+	@[ "$(base)" ] && [ "$(adapter)" ] || (echo "Usage: make eval base=<model-name> adapter=<adapter-name> [prompts=<path>] [out=<path>]"; exit 1)
+	$(PYTHON) -m src.training.eval_cli run --base "$(base)" --adapter "$(adapter)" \
+		$${prompts:+--prompts "$(prompts)"} $${out:+--out "$(out)"}
+
 # ── Svelte UI (second UI — full parity with SwiftUI) ──────────────────────────
 
 ui-dev:

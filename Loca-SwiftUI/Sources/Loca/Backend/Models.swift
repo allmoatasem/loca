@@ -750,6 +750,8 @@ struct Project: Identifiable, Decodable, Equatable {
     let updated: Double
     let item_count: Int?
     let conv_count: Int?
+    /// Preferred LoRA adapter to activate when the project becomes active.
+    let adapter_name: String?
 }
 
 struct ProjectItem: Identifiable, Decodable, Equatable {
@@ -784,6 +786,7 @@ struct ProjectDetail: Decodable {
     let items_count: Int
     let conversations: [ConversationMeta]
     let watches: [ProjectWatch]
+    let adapter_name: String?
 }
 
 struct CreateProjectResponse: Decodable {

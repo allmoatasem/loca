@@ -367,13 +367,44 @@ actor BackendClient {
         return try JSONDecoder().decode(CreateProjectResponse.self, from: data).project
     }
 
-    func patchProject(_ id: String, title: String? = nil, scope: String? = nil, notes: String? = nil) async throws {
+    func patchProject(
+        _ id: String,
+        title: String? = nil,
+        scope: String? = nil,
+        notes: String? = nil,
+        adapter: String?? = nil,
+    ) async throws {
         var body: [String: Any] = [:]
         if let title { body["title"] = title }
         if let scope { body["scope"] = scope }
         if let notes { body["notes"] = notes }
+        // `adapter` is a double-optional so callers can distinguish "don't
+        // touch it" (nil) from "clear the binding" (.some(nil)).
+        if let adapterValue = adapter {
+            body["adapter"] = adapterValue ?? NSNull()
+        }
         guard !body.isEmpty else { return }
         _ = try await patchRaw("/api/projects/\(id)", body: body)
+    }
+
+    /// Activate the project's stored adapter on the currently loaded
+    /// model. Server resolves the stored binding and restarts
+    /// mlx_lm.server — see `/api/projects/{id}/activate-adapter`.
+    func activateProjectAdapter(_ projectId: String) async throws {
+        let (data, resp) = try await postRaw(
+            "/api/projects/\(projectId)/activate-adapter", body: [:],
+        )
+        if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
+            var message = "activate project adapter → HTTP \(http.statusCode)"
+            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let err = obj["error"] as? String {
+                message = err
+            }
+            throw BackendError.decode(NSError(
+                domain: "Loca", code: http.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: message]
+            ))
+        }
     }
 
     func deleteProject(_ id: String) async throws {

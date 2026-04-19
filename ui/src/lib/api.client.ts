@@ -109,6 +109,25 @@ export async function activateAdapter(
   }
 }
 
+/** Apply a project's stored adapter binding to the currently loaded model.
+ *  Server looks up `projects.adapter_name`, resolves the adapter path,
+ *  and restarts mlx_lm.server. Pass-through error on incompatible
+ *  adapter or missing adapter directory. No-op when no model is loaded. */
+export async function activateProjectAdapter(projectId: string): Promise<void> {
+  const r = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/activate-adapter`,
+    { method: 'POST' },
+  );
+  if (!r.ok) {
+    let msg = `project-adapter activate → HTTP ${r.status}`;
+    try {
+      const body = await r.json() as { error?: string };
+      if (body?.error) msg = body.error;
+    } catch { /* swallow */ }
+    throw new Error(msg);
+  }
+}
+
 export async function fetchConversations(): Promise<ConversationMeta[]> {
   const data = await jsonGet<{ conversations: ConversationMeta[] }>('/api/conversations');
   return data.conversations ?? [];
@@ -175,6 +194,8 @@ export interface Project {
   updated: number;
   item_count?: number;
   conv_count?: number;
+  /** Preferred LoRA adapter to activate when this project becomes active. */
+  adapter_name?: string | null;
 }
 
 export interface ProjectItem {
@@ -237,7 +258,7 @@ export async function createProject(title: string, scope: string): Promise<Proje
 
 export async function patchProject(
   id: string,
-  patch: { title?: string; scope?: string; notes?: string },
+  patch: { title?: string; scope?: string; notes?: string; adapter?: string | null },
 ): Promise<void> {
   const r = await fetch(`/api/projects/${encodeURIComponent(id)}`, {
     method: 'PATCH',

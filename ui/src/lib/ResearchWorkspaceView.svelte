@@ -242,6 +242,26 @@
     await refreshDetail(app.activeProjectId);
   }
 
+  /** Persist the project's adapter binding and immediately apply it so
+   *  the user sees the swap take effect without having to re-focus the
+   *  project. A null value clears the binding AND deactivates. */
+  async function saveProjectAdapter(adapterName: string | null): Promise<void> {
+    if (!app.activeProjectId) return;
+    try {
+      await patchProject(app.activeProjectId, { adapter: adapterName });
+      if (app.activeModelName) {
+        await app.activateAdapter(app.activeModelName, adapterName);
+      }
+      await refreshDetail(app.activeProjectId);
+    } catch (e) {
+      // The store's activateAdapter already captures errorMsg; surface
+      // here via detail refresh so the picker resets to its stored
+      // value if the activate failed.
+      await refreshDetail(app.activeProjectId);
+      throw e;
+    }
+  }
+
   async function handleAttachCurrent(): Promise<void> {
     if (!app.activeProjectId || !app.activeConvId) return;
     // Attach via the store endpoint and refresh detail.
@@ -404,6 +424,46 @@
           <button onclick={openQuoteModal}>Pin a quote</button>
         </div>
       </section>
+
+      <!-- LoRA adapter binding — when set, switching to this project
+           auto-activates the adapter on the currently loaded model.
+           Only rendered when a model is loaded (otherwise there's
+           nothing to swap the adapter onto). -->
+      {#if app.activeModelName}
+        <section class="group">
+          <h3>Adapter</h3>
+          <p class="hint">
+            Attach a fine-tuned LoRA adapter to this project. When you
+            switch to this project, Loca activates the adapter on
+            <strong>{app.activeModelName}</strong> automatically.
+          </p>
+          <select
+            disabled={app.activateBusy}
+            value={detail.adapter_name ?? ''}
+            onchange={(e) => {
+              const v = (e.currentTarget as HTMLSelectElement).value || null;
+              void saveProjectAdapter(v);
+            }}
+          >
+            <option value="">— none (use whatever's active) —</option>
+            {#each app.adapters as a (a.name)}
+              <option value={a.name}>
+                {a.name}
+                {#if a.rank}(rank {a.rank}){/if}
+                — {a.size_mb.toFixed(1)} MB
+              </option>
+            {/each}
+          </select>
+          {#if app.activateBusy}
+            <p class="status">applying…</p>
+          {:else if app.adapters.length === 0}
+            <p class="hint">
+              No adapters trained for <strong>{app.activeModelName}</strong> yet.
+              Run <code>make train</code> to create one.
+            </p>
+          {/if}
+        </section>
+      {/if}
 
       <section class="group">
         <h3>Dig deeper</h3>
