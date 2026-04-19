@@ -397,3 +397,88 @@ export async function searchVault(path: string, q: string, limit = 30): Promise<
   );
   return data.results ?? [];
 }
+
+// ── Voice (STT + TTS + end-to-end voice chat) ────────────────────────────────
+// Kept deliberately close to BackendClient.swift's voice methods; the
+// Python routes (src/proxy.py §voice) are OpenAI-compatible so both clients
+// hit the same endpoints.
+
+export interface VoiceModel {
+  name: string;
+  repo_id: string;
+  model_type: 'stt' | 'tts';
+  downloaded: boolean;
+  size_gb: number;
+}
+
+export interface VoiceConfig {
+  stt_model: string;
+  tts_model: string;
+  tts_voice: string;
+  tts_speed: number;
+  auto_tts: boolean;
+  models: VoiceModel[];
+}
+
+export interface VoiceChatResult {
+  transcription: string;
+  response: string;
+  audio?: string | null;   // base64 WAV
+  model?: string | null;
+}
+
+export async function fetchVoiceConfig(): Promise<VoiceConfig> {
+  return jsonGet<VoiceConfig>('/api/voice/config');
+}
+
+export async function fetchVoiceModels(): Promise<VoiceModel[]> {
+  const data = await jsonGet<{ models: VoiceModel[] }>('/api/voice/models');
+  return data.models ?? [];
+}
+
+/** POST /v1/audio/transcriptions — multipart upload, returns text. */
+export async function transcribeAudio(audio: Blob, filename = 'recording.wav'): Promise<string> {
+  const form = new FormData();
+  form.append('file', audio, filename);
+  const r = await fetch('/v1/audio/transcriptions', { method: 'POST', body: form });
+  if (!r.ok) throw new Error(`transcribe → HTTP ${r.status}`);
+  const data = await r.json() as { text: string };
+  return data.text;
+}
+
+/** POST /v1/audio/speech — returns a Blob of WAV bytes. */
+export async function synthesizeSpeech(
+  text: string,
+  opts: { voice?: string; speed?: number } = {},
+): Promise<Blob> {
+  const payload: Record<string, unknown> = { input: text, response_format: 'wav' };
+  if (opts.voice) payload.voice = opts.voice;
+  if (opts.speed != null) payload.speed = opts.speed;
+  const r = await fetch('/v1/audio/speech', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) {
+    let msg = `synthesize → HTTP ${r.status}`;
+    try {
+      const body = await r.json() as { error?: string };
+      if (body?.error) msg = `TTS failed: ${body.error}`;
+    } catch { /* swallow */ }
+    throw new Error(msg);
+  }
+  return r.blob();
+}
+
+/** POST /api/voice/chat — end-to-end audio-in / audio-out turn. */
+export async function voiceChat(
+  audio: Blob,
+  messages: Array<{ role: string; content: string }>,
+): Promise<VoiceChatResult> {
+  const form = new FormData();
+  form.append('file', audio, 'recording.wav');
+  form.append('messages', JSON.stringify(messages));
+  const r = await fetch('/api/voice/chat', { method: 'POST', body: form });
+  if (!r.ok) throw new Error(`voiceChat → HTTP ${r.status}`);
+  return r.json() as Promise<VoiceChatResult>;
+}

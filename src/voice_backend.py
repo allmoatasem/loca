@@ -315,18 +315,9 @@ def _clean_for_tts(text: str) -> str:
     s = re.sub(r"\n", " ", s)
     s = re.sub(r"\s{2,}", " ", s)
 
-    s = s.strip()
-
-    # Truncate to ~500 chars for reasonable TTS duration
-    if len(s) > 500:
-        # Cut at last sentence boundary within limit
-        cut = s[:500]
-        for sep in [". ", "! ", "? "]:
-            idx = cut.rfind(sep)
-            if idx > 100:
-                s = cut[: idx + 1]
-                break
-        else:
-            s = cut + "…"
-
-    return s
+    return s.strip()
+    # Note: no length cap. The client splits long responses into sentence
+    # chunks and calls this endpoint per chunk so playback can start on
+    # chunk 1 while chunks 2+ are still synthesising. Capping here would
+    # silently truncate longer replies, which is worse than the latency
+    # it was trying to prevent.

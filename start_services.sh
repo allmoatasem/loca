@@ -68,16 +68,33 @@ bail() {
 }
 
 # ── 1. Check inference backend binaries ──────────────────────────────────────
+BREW=""
+for _b in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+    [ -x "$_b" ] && BREW="$_b" && break
+done
+
 if ! command -v llama-server > /dev/null 2>&1; then
-    BREW=""
-    for _b in /opt/homebrew/bin/brew /usr/local/bin/brew; do
-        [ -x "$_b" ] && BREW="$_b" && break
-    done
     if [ -n "$BREW" ]; then
         status "Installing llama.cpp…" 5
         "$BREW" install llama.cpp || bail "Failed to install llama.cpp via Homebrew."
     else
         bail "llama-server not found and Homebrew is not installed. Install Homebrew first: https://brew.sh"
+    fi
+fi
+
+# espeak-ng — G2P fallback for Kokoro TTS via misaki. Without it, misaki
+# logs "OOD words will be skipped" and silently returns None for out-of-
+# dictionary tokens, which then crashes Kokoro's pipeline with
+# `TypeError: unsupported operand type(s) for +: 'NoneType' and 'str'`
+# on the second synthesis call. Soft-fail: if Homebrew isn't available,
+# voice mode still works for basic dictionary text — it just breaks on
+# uncommon words until the user installs espeak-ng themselves.
+if ! command -v espeak-ng > /dev/null 2>&1 \
+   && [ ! -x /opt/homebrew/bin/espeak-ng ] \
+   && [ ! -x /usr/local/bin/espeak-ng ]; then
+    if [ -n "$BREW" ]; then
+        status "Installing espeak-ng (voice fallback)…" 7
+        "$BREW" install espeak-ng || true
     fi
 fi
 
@@ -111,6 +128,17 @@ if [ "$_venv_ok" -eq 0 ]; then
 elif [ "$DIR/requirements.txt" -nt "$VENV/bin/pip" ]; then
     status "Installing new dependencies…" 20
     "$VENV/bin/pip" install -r "$DIR/requirements.txt" -q || bail "Failed to install dependencies."
+fi
+
+# spaCy English model — required by `misaki` (Kokoro's G2P frontend).
+# Without this, the first TTS synthesis in the app falls into misaki's
+# runtime auto-download path which invokes `spacy cli.download`, which
+# invokes pip — and pip can fail in the bundled venv, crashing the TTS
+# request with a 500. Pre-installing closes that failure mode for good.
+if ! "$VENV/bin/python" -c "import en_core_web_sm" 2>/dev/null; then
+    status "Installing speech model…" 25
+    "$VENV/bin/python" -m spacy download en_core_web_sm -q \
+        || bail "Failed to install spaCy English model (needed for voice TTS)."
 fi
 
 # ── 3. SearXNG setup (first-run) ─────────────────────────────────────────────

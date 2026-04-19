@@ -13,7 +13,7 @@ Loca manages its own inference backend (MLX on Apple Silicon, llama.cpp everywhe
 - **External server toggle** — switch to LM Studio, Ollama, or any OpenAI-compatible server from Preferences → Inference
 - **MLX + GGUF** — MLX directories for native Apple Silicon speed; GGUF for cross-platform compatibility
 - **Vision** — image uploads with multi-modal support; auto-detects vision capability from `config.json` and GGUF mmproj files
-- **Voice mode** — speech-to-text via mlx-whisper with voice activity detection; transcribes and sends automatically
+- **Voice mode** — speech-to-text via mlx-whisper with voice activity detection; transcribes and sends automatically. Available in both the SwiftUI native app and the Svelte browser UI, with matching VAD thresholds and hands-free auto-resume after each response
 
 ### Model management
 - **Hardware-aware discovery** — llmfit analyses your RAM/GPU and ranks models by fit score, with tokens/sec estimates, format filters, and 491+ models paginated
@@ -46,6 +46,7 @@ Loca manages its own inference backend (MLX on Apple Silicon, llama.cpp everywhe
 | Python 3.12 | `brew install python@3.12` |
 | llama.cpp server | `brew install llama.cpp` |
 | mlx_lm (optional, Apple Silicon only) | `pip install mlx_lm` |
+| espeak-ng (voice mode) | auto-installed by `start_services.sh`; `brew install espeak-ng` to do it manually |
 | Xcode (native app only) | App Store |
 
 ### Linux
@@ -53,12 +54,14 @@ Loca manages its own inference backend (MLX on Apple Silicon, llama.cpp everywhe
 |---|---|
 | Python 3.12+ | `sudo apt install python3.12 python3.12-venv` |
 | llama-server | [llama.cpp releases](https://github.com/ggerganov/llama.cpp/releases) |
+| espeak-ng (voice mode) | `sudo apt install espeak-ng` |
 
 ### Windows
 | Requirement | Install |
 |---|---|
 | Python 3.12 | [python.org](https://www.python.org/downloads) |
 | llama-server.exe | [llama.cpp releases](https://github.com/ggerganov/llama.cpp/releases) |
+| espeak-ng (voice mode) | [espeak-ng releases](https://github.com/espeak-ng/espeak-ng/releases) |
 
 ---
 

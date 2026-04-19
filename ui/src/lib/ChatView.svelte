@@ -27,7 +27,9 @@
   import { app } from './app-store.svelte';
   import MessageBubble, { type Role } from './MessageBubble.svelte';
   import StatsBar from './StatsBar.svelte';
-  import { tick } from 'svelte';
+  import { transcribeAudio, synthesizeSpeech } from './api.client';
+  import { VoiceRecorder, type VoiceState } from './voice-recorder';
+  import { tick, onDestroy } from 'svelte';
 
   interface Attachment {
     type: 'image' | 'text' | 'audio' | 'video' | 'binary';
@@ -80,6 +82,213 @@
   // doesn't lose state and the sidebar picks it up.
   let convId = $state<string | null>(null);
   let convTitle = $state<string>('');
+
+  // Voice mode — parity with Swift's AudioRecorder + ChatView integration.
+  // The recorder owns the mic; the store holds flags (isVoiceMode,
+  // isTranscribing, voiceAudioLevel) the rest of the UI listens to.
+  // Full loop: VAD utterance → transcribe → inject into input → send →
+  // stream response → synthesize response as WAV → play it → when audio
+  // ends, resumeListening() so hands-free conversation continues.
+  let voiceRecorder: VoiceRecorder | null = null;
+  let voiceState = $state<VoiceState>('idle');
+  let pendingVoiceResume = $state<boolean>(false);
+  let ttsAudio: HTMLAudioElement | null = null;
+  let isSpeaking = $state<boolean>(false);
+  // Bumped by stopVoice/stopSpeaking so any in-flight chunk pipeline for
+  // an older utterance aborts instead of playing over a new turn.
+  let ttsSessionId = 0;
+
+  async function toggleVoiceMode(): Promise<void> {
+    if (app.isVoiceMode) {
+      await stopVoice();
+      return;
+    }
+    // First-time: make sure models exist, otherwise open setup modal.
+    if (!app.voiceConfig) await app.refreshVoiceConfig();
+    if (!app.voiceReady()) {
+      app.setShowVoiceSetup(true);
+      return;
+    }
+    await startVoice();
+  }
+
+  async function startVoice(): Promise<void> {
+    app.setVoiceError(null);
+    app.setVoiceMode(true);
+    voiceRecorder = new VoiceRecorder({
+      onState: (s) => { voiceState = s; },
+      onLevel: (v) => app.setVoiceAudioLevel(v),
+      onError: (msg) => {
+        app.setVoiceError(msg);
+        void stopVoice();
+      },
+      onComplete: (wav) => { void handleUtterance(wav); },
+    });
+    await voiceRecorder.start();
+  }
+
+  async function stopVoice(): Promise<void> {
+    voiceRecorder?.stop();
+    voiceRecorder = null;
+    voiceState = 'idle';
+    pendingVoiceResume = false;
+    stopSpeaking();
+    app.setVoiceMode(false);
+    app.setVoiceAudioLevel(0);
+    app.setTranscribing(false);
+  }
+
+  function stopSpeaking(): void {
+    // Bump the session so any synth in-flight for the previous utterance
+    // resolves into a no-op instead of playing over the new turn.
+    ttsSessionId++;
+    if (ttsAudio) {
+      try { ttsAudio.pause(); } catch { /* no-op */ }
+      try { URL.revokeObjectURL(ttsAudio.src); } catch { /* no-op */ }
+      ttsAudio = null;
+    }
+    isSpeaking = false;
+  }
+
+  /** Split into roughly-sentence-sized chunks so we can synth+play in a
+   *  pipeline. Keeps each chunk under ~240 chars (Kokoro slows on long
+   *  inputs) and coalesces tiny fragments so playback isn't choppy. */
+  function splitIntoSpeechChunks(text: string): string[] {
+    const raw = text.trim();
+    if (!raw) return [];
+    // Split on sentence-ending punctuation followed by whitespace, keeping
+    // the terminator. Falls through to hard wraps for terminator-less runs.
+    const pieces = raw
+      .split(/(?<=[.!?])\s+/)
+      .flatMap((p) => (p.length > 240 ? p.match(/[\s\S]{1,240}/g) ?? [p] : [p]))
+      .map((p) => p.trim())
+      .filter(Boolean);
+    // Merge very short pieces (usually punctuation-only or dangling words)
+    // with the next chunk to avoid choppy 0.3s playback snippets.
+    const merged: string[] = [];
+    for (const p of pieces) {
+      if (merged.length && (merged[merged.length - 1].length < 40 || p.length < 20)) {
+        merged[merged.length - 1] = `${merged[merged.length - 1]} ${p}`.trim();
+      } else {
+        merged.push(p);
+      }
+    }
+    return merged;
+  }
+
+  async function speakAndResume(text: string): Promise<void> {
+    const chunks = splitIntoSpeechChunks(text);
+    if (!chunks.length || !app.isVoiceMode) {
+      voiceRecorder?.resumeListening();
+      return;
+    }
+    const session = ++ttsSessionId;
+    isSpeaking = true;
+
+    // Pipeline: synth chunk N+1 while chunk N plays. Each chunk is a
+    // separate POST /v1/audio/speech, so the first chunk's audio starts
+    // within its own synth latency (~200–500 ms) regardless of how long
+    // the full response is.
+    let nextSynth: Promise<Blob | null> = synthChunk(chunks[0], session);
+    for (let i = 0; i < chunks.length; i++) {
+      const blob = await nextSynth;
+      if (session !== ttsSessionId) return;        // aborted
+      // Kick off the next synth while we play this chunk.
+      nextSynth = i + 1 < chunks.length
+        ? synthChunk(chunks[i + 1], session)
+        : Promise.resolve(null);
+      if (!blob) continue;
+      await playBlob(blob, session);
+      if (session !== ttsSessionId) return;
+    }
+
+    if (session === ttsSessionId) {
+      isSpeaking = false;
+      if (app.isVoiceMode) voiceRecorder?.resumeListening();
+    }
+  }
+
+  async function synthChunk(text: string, session: number): Promise<Blob | null> {
+    try {
+      const blob = await synthesizeSpeech(text, {
+        voice: app.voiceConfig?.tts_voice,
+        speed: app.voiceConfig?.tts_speed,
+      });
+      if (session !== ttsSessionId) return null;
+      return blob;
+    } catch (e) {
+      // One bad chunk shouldn't torch the whole response — surface the
+      // error once and move on so the rest of the reply still plays.
+      app.setVoiceError(e instanceof Error ? e.message : String(e));
+      return null;
+    }
+  }
+
+  function playBlob(blob: Blob, session: number): Promise<void> {
+    return new Promise((resolve) => {
+      if (session !== ttsSessionId) { resolve(); return; }
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      ttsAudio = audio;
+      const cleanup = (): void => {
+        try { URL.revokeObjectURL(url); } catch { /* no-op */ }
+        if (ttsAudio === audio) ttsAudio = null;
+        resolve();
+      };
+      audio.addEventListener('ended', cleanup, { once: true });
+      audio.addEventListener('error', cleanup, { once: true });
+      audio.play().catch(cleanup);
+    });
+  }
+
+  async function handleUtterance(wav: Blob): Promise<void> {
+    if (streaming) return;                // ignore overlap; VAD may re-fire
+    app.setTranscribing(true);
+    try {
+      const text = (await transcribeAudio(wav)).trim();
+      app.setTranscribing(false);
+      if (!text) {
+        // Empty transcription (silence blip or noise) — just keep listening.
+        voiceRecorder?.resumeListening();
+        return;
+      }
+      input = text;
+      pendingVoiceResume = true;
+      await send();
+    } catch (e) {
+      app.setTranscribing(false);
+      app.setVoiceError(e instanceof Error ? e.message : String(e));
+      voiceRecorder?.resumeListening();
+    }
+  }
+
+  // After a streamed response finishes, speak it back through TTS, then
+  // re-open the mic for the next utterance. Guarded by
+  // `pendingVoiceResume` so manual text sends in voice mode still loop
+  // through the same play-then-listen path.
+  $effect(() => {
+    if (!streaming && pendingVoiceResume && app.isVoiceMode) {
+      pendingVoiceResume = false;
+      const lastAssistant = [...history].reverse().find((m) => m.role === 'assistant');
+      const replyText = lastAssistant?.content ?? '';
+      void speakAndResume(replyText);
+    }
+  });
+
+  onDestroy(() => { voiceRecorder?.stop(); stopSpeaking(); });
+
+  function voicePlaceholder(
+    s: VoiceState, transcribing: boolean, speaking: boolean,
+  ): string {
+    if (speaking)     return 'Speaking…';
+    if (transcribing) return 'Transcribing…';
+    switch (s) {
+      case 'listening':  return 'Listening… speak when ready';
+      case 'recording':  return 'Listening — pause to send';
+      case 'processing': return 'Processing…';
+      default:           return 'Voice mode active';
+    }
+  }
 
   // Sidebar clicks and the New Conversation button both route through
   // `app.activeConvId`. `convSelectNonce` bumps on every set (including
@@ -432,12 +641,32 @@
       }}
     />
     <textarea
-      placeholder="Message Loca…  (⌘↵ to send)"
+      placeholder={app.isVoiceMode ? voicePlaceholder(voiceState, app.isTranscribing, isSpeaking) : 'Message Loca…  (⌘↵ to send)'}
       bind:value={input}
       onkeydown={onKeydown}
       rows="3"
-      disabled={streaming}
+      disabled={streaming || app.isVoiceMode}
     ></textarea>
+    <button
+      class="mic"
+      class:active={app.isVoiceMode}
+      onclick={() => { void toggleVoiceMode(); }}
+      disabled={streaming}
+      title={app.isVoiceMode ? 'Stop voice mode' : 'Start voice mode — speak and auto-send'}
+      aria-label="Toggle voice mode"
+      aria-pressed={app.isVoiceMode}
+    >
+      {#if app.isVoiceMode}
+        <span class="mic-icon" aria-hidden="true">🎙️</span>
+        <span
+          class="mic-level"
+          style="transform: scaleY({0.25 + app.voiceAudioLevel * 0.75})"
+          aria-hidden="true"
+        ></span>
+      {:else}
+        <span class="mic-icon" aria-hidden="true">🎤</span>
+      {/if}
+    </button>
     <button
       class="send"
       onclick={send}
@@ -446,6 +675,10 @@
       {streaming ? 'Streaming…' : 'Send'}
     </button>
   </div>
+
+  {#if app.voiceError}
+    <div class="voice-error" role="alert">{app.voiceError}</div>
+  {/if}
 
   <!-- Session-only toggles, mirrored from SwiftUI's composer row. -->
   <div class="input-tools">
@@ -630,6 +863,50 @@
   }
   .send:hover:not(:disabled) { background: var(--loca-color-accent-hover); }
   .send:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  .mic {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 42px;
+    padding: 0 10px;
+    background: var(--loca-color-surface);
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-md);
+    color: var(--loca-color-text-muted);
+    font-size: 16px;
+    cursor: pointer;
+    overflow: hidden;
+  }
+  .mic:hover:not(:disabled) { color: var(--loca-color-text); }
+  .mic:disabled { opacity: 0.45; cursor: not-allowed; }
+  .mic.active {
+    color: #fff;
+    background: var(--loca-color-accent);
+    border-color: var(--loca-color-accent);
+  }
+  .mic-icon { position: relative; z-index: 1; }
+  /* RMS-driven bar that sits behind the icon and pulses with speech. */
+  .mic-level {
+    position: absolute;
+    left: 4px;
+    right: 4px;
+    bottom: 4px;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.7);
+    border-radius: 2px;
+    transform-origin: center bottom;
+    transition: transform 80ms linear;
+  }
+  .voice-error {
+    margin: 4px 40px 0;
+    padding: 6px 10px;
+    font-size: 11px;
+    color: var(--loca-color-danger);
+    background: color-mix(in srgb, var(--loca-color-danger) 10%, transparent);
+    border-radius: var(--loca-radius-sm);
+  }
 
   .conv-tools {
     display: flex;
