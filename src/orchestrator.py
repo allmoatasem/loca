@@ -29,7 +29,7 @@ from .store import get_memories_context
 from .tools.file_ops import file_read, file_write
 from .tools.shell import shell_exec
 from .tools.web_fetch import web_fetch
-from .tools.web_search import format_search_results, web_search
+from .tools.web_search import SearchResult, format_search_results, web_search
 from .voice_backend import VoiceBackend
 
 logger = logging.getLogger(__name__)
@@ -72,6 +72,8 @@ class Orchestrator:
         model_override: str | None = None,
         num_ctx: int | None = None,
         research_mode: bool = False,
+        autonomous_loop: bool = False,
+        conv_id: str | None = None,
         partner_mode: str | None = None,
         project_id: str | None = None,
         temperature: float | None = None,
@@ -90,9 +92,30 @@ class Orchestrator:
             + (f" | override={model_override}" if model_override else "")
             + (f" | partner={partner_mode}" if partner_mode else "")
             + (f" | project={project_id}" if project_id else "")
+            + (" | autonomous_loop" if autonomous_loop else "")
         )
 
         model_name, api_base = await self.mm.ensure_loaded(result.model, model_name_override=model_override)
+
+        # Autonomous research loop takes over the whole turn: Researcher
+        # plans + runs searches, Writer synthesises with citations,
+        # Verifier catches phantoms. We need the model loaded (above) but
+        # we skip routing/tool-loop/single-call paths — those happen
+        # inside the loop's Writer step via its own chat + search fns.
+        if autonomous_loop:
+            return self._stream_autonomous_loop(
+                messages=messages,
+                user_message=user_message,
+                model_name=model_name,
+                api_base=api_base,
+                conv_id=conv_id or "no-conv-id",
+                project_id=project_id,
+                num_ctx=num_ctx,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                chat_template_kwargs=chat_template_kwargs,
+                extra_body=extra_body,
+            )
         if system_prompt_override:
             system_prompt = system_prompt_override
         else:
@@ -474,6 +497,103 @@ class Orchestrator:
         chunk_size = 50
         for i in range(0, len(content), chunk_size):
             yield content[i: i + chunk_size]
+
+    async def _stream_autonomous_loop(
+        self,
+        *,
+        messages: list[dict],
+        user_message: str,
+        model_name: str,
+        api_base: str,
+        conv_id: str,
+        project_id: str | None,
+        num_ctx: int | None,
+        temperature: float | None,
+        max_tokens: int | None,
+        chat_template_kwargs: dict | None,
+        extra_body: dict | None,
+    ) -> AsyncIterator[str | dict[str, Any]]:
+        """Route a single turn through the multi-role research loop.
+
+        The loop module does the planning / searching / synthesis; this
+        wrapper adapts its yields into the same `{__meta__} → chunks`
+        shape `_stream_with_tools` emits, so the proxy's streaming code
+        doesn't need a special case.
+        """
+        from .research_loop import LoopSource, run_research_loop  # noqa: PLC0415
+
+        # Pull project-scoped memory recall so the loop's Writer has the
+        # same context the regular turn would. Intentionally lighter than
+        # the main `handle()` pipeline — no query expansion, no rerank —
+        # because the Researcher is also going to gather fresh web
+        # sources, and spending three extra LLM calls on recall shaping
+        # burns tokens for diminishing returns.
+        memory_sources: list[LoopSource] = []
+        if self._memory:
+            try:
+                pool = await self._memory.recall(user_message, limit=20)
+                if project_id:
+                    project_boost = _project_items_as_memories(project_id)
+                    pool = project_boost + pool
+                for i, m in enumerate(pool[:10], start=1):
+                    memory_sources.append(LoopSource(
+                        idx=i, origin="memory",
+                        title=(m.get("content") or "")[:60],
+                        snippet=str(m.get("content") or ""),
+                    ))
+            except Exception as exc:
+                logger.warning("loop: memory recall failed, continuing without: %s", exc)
+
+        # Closure around `_chat` + `web_search` with the per-turn params
+        # baked in. Keeps the loop module dependency-free for testing.
+        async def _chat_fn(*, messages: list[dict], **kwargs: Any) -> dict:
+            return await self._chat(
+                model=model_name,
+                api_base=api_base,
+                messages=messages,
+                num_ctx=num_ctx,
+                chat_template_kwargs=chat_template_kwargs,
+                extra_body=extra_body,
+                **kwargs,
+            )
+
+        async def _search_fn(*, query: str, max_results: int = 5) -> list[SearchResult]:
+            return await web_search(
+                query=query,
+                searxng_url=self._search_cfg.get("searxng_url", ""),
+                max_results=max_results,
+                max_tokens_per_result=self._search_cfg.get("max_tokens_per_result", 500),
+                research_mode=False,
+            )
+
+        # Metadata dict first — the proxy reads `__model__` etc. and the
+        # UI's stats bar needs it even on loop turns.
+        yield {
+            "__model__": model_name,
+            "__search__": True,  # loops always hit the web
+            "__memory__": bool(memory_sources),
+            "__provenance__": {
+                "conv_id": conv_id,
+                "autonomous_loop": True,
+                "memory_count": len(memory_sources),
+            },
+        }
+
+        # Stream through the loop. Each yield is a string; we chunk-
+        # forward it so the SSE renders in consistent 50-char pieces.
+        chunk_size = 50
+        async for piece in run_research_loop(
+            chat_fn=_chat_fn,
+            search_fn=_search_fn,
+            user_query=user_message,
+            history=messages,
+            memory_sources=memory_sources,
+            conv_id=conv_id,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        ):
+            for i in range(0, len(piece), chunk_size):
+                yield piece[i: i + chunk_size]
 
     async def _chat(
         self,

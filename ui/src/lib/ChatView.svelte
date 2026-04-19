@@ -69,13 +69,24 @@
   // disables all network tools and mutually excludes research.
   let researchMode = $state<boolean>(false);
   let lockdownMode = $state<boolean>(false);
+  // Autonomous research loop — when on, the backend splits each turn
+  // into Researcher → Writer → Verifier with its own web searches.
+  // Orthogonal to researchMode (which only flips web_search transport).
+  let autonomousLoop = $state<boolean>(false);
   function toggleResearch(): void {
     if (lockdownMode) return;
     researchMode = !researchMode;
   }
+  function toggleAutonomousLoop(): void {
+    if (lockdownMode) return;
+    autonomousLoop = !autonomousLoop;
+  }
   function toggleLockdown(): void {
     lockdownMode = !lockdownMode;
-    if (lockdownMode) researchMode = false;
+    if (lockdownMode) {
+      researchMode = false;
+      autonomousLoop = false;
+    }
   }
 
   // Round-trip the conversation to /api/conversations so a refresh
@@ -689,6 +700,13 @@
       onclick={toggleResearch}
       title="Deep Dive — render full pages (not just snippets) and pull richer web context into the turn"
     >🌊 Deep Dive</button>
+    <button
+      class="tool"
+      class:active={autonomousLoop}
+      disabled={lockdownMode}
+      onclick={toggleAutonomousLoop}
+      title="Research Agent — multi-step turn: plan sub-queries, search, synthesise with citations, verify"
+    >🤖 Agent</button>
     <button
       class="tool"
       class:active={lockdownMode}

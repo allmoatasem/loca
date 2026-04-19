@@ -3,4 +3,4 @@
  * sync with the legacy HTML (src/static/index.html) and Swift
  * AcknowledgementsView.swift via the per-PR version bump.
  */
-export const APP_VERSION = 'v0.19.4';
+export const APP_VERSION = 'v0.19.5';

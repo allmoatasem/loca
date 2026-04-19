@@ -75,6 +75,10 @@ final class AppState: ObservableObject {
 
     @Published var researchMode = false
     @Published var lockdownMode = false
+    /// Autonomous research loop — swap a direct model call for a
+    /// Researcher/Writer/Verifier pipeline server-side. Independent of
+    /// `researchMode` which is just a web-search transport flag.
+    @Published var autonomousLoop = false
 
     // MARK: - Research Partner (projects)
 

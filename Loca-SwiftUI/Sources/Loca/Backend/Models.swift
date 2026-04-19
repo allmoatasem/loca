@@ -10,6 +10,13 @@ struct ChatRequest: Encodable {
     let stream: Bool
     let num_ctx: Int
     let research_mode: Bool
+    // Autonomous research loop — Researcher/Writer/Verifier pipeline.
+    // Optional so older clients' payloads still decode server-side.
+    let autonomous_loop: Bool?
+    // Conversation id so the loop can write its plan checkpoint to the
+    // right file. Optional — a loop without a conv_id still runs, it
+    // just lands in `no-conv-id.md`.
+    let conv_id: String?
     // Research Partner — optional; omit to get default behaviour.
     let partner_mode: String?
     let project_id: String?
