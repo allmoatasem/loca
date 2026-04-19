@@ -131,7 +131,7 @@ struct ChatView: View {
             // it's ready — no waiting for the whole response to be
             // processed upfront.
             var nextData: Task<Data?, Never> = synthTask(
-                chunks[0], voice: voice, speed: speed, session: session,
+                chunks[0], voice: voice, speed: speed, session: session
             )
             for (i, _) in chunks.enumerated() {
                 let data = await nextData.value
@@ -152,12 +152,12 @@ struct ChatView: View {
     }
 
     private func synthTask(
-        _ text: String, voice: String?, speed: Double?, session: Int,
+        _ text: String, voice: String?, speed: Double?, session: Int
     ) -> Task<Data?, Never> {
         Task {
             do {
                 let data = try await BackendClient.shared.synthesizeSpeech(
-                    text: text, voice: voice, speed: speed,
+                    text: text, voice: voice, speed: speed
                 )
                 if session != ttsSessionId { return nil }
                 return data
