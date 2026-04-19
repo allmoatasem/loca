@@ -64,10 +64,13 @@ struct ResearchWorkspaceView: View {
     @State private var digBusy = false
     @State private var digStatus: String?
 
-    // Vault sync
+    // Vault sync — `detectedVaults` is fetched on appear so the Sync
+    // sub-panel can pre-fill vaultPath with the user's actual Obsidian
+    // vault (matches the Svelte behaviour).
     @State private var vaultPath = ""
     @State private var vaultBusy = false
     @State private var vaultStatus: String?
+    @State private var detectedVaults: [DetectedVault] = []
 
     // New watch
     @State private var watchScope = ""
@@ -88,6 +91,7 @@ struct ResearchWorkspaceView: View {
         }
         .onAppear {
             Task { await state.loadProjects() }
+            Task { await loadDetectedVaults() }
             if let id = state.activeProjectId { Task { await refreshDetail(id) } }
         }
         .onChange(of: state.activeProjectId) { _, id in
@@ -316,6 +320,22 @@ struct ResearchWorkspaceView: View {
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    if detectedVaults.count == 1, let v = detectedVaults.first {
+                        Text("Detected: **\(v.name)** — edit the path below to use a different one.")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    } else if detectedVaults.count > 1 {
+                        Picker("", selection: $vaultPath) {
+                            ForEach(detectedVaults) { v in
+                                Text(v.name).tag(v.path)
+                            }
+                        }
+                        .labelsHidden()
+                    } else {
+                        Text("No Obsidian vaults detected yet. Paste a vault path below or register one in the Vault panel.")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
                     HStack {
                         TextField("/path/to/Obsidian/vault", text: $vaultPath)
                             .textFieldStyle(.roundedBorder)
@@ -673,6 +693,24 @@ struct ResearchWorkspaceView: View {
         guard state.activeProjectId != nil else { return }
         quoteDraft = ""
         quoteSheetOpen = true
+    }
+
+    /// Fetches detected Obsidian vaults and pre-fills `vaultPath` with
+    /// the first match when the field is empty. Silent failure — if no
+    /// vault is found or the endpoint is unavailable, the user can still
+    /// type a path manually.
+    private func loadDetectedVaults() async {
+        do {
+            let vaults = try await BackendClient.shared.detectVaults()
+            await MainActor.run {
+                detectedVaults = vaults
+                if vaultPath.isEmpty, let first = vaults.first {
+                    vaultPath = first.path
+                }
+            }
+        } catch {
+            // No-op — manual entry still works.
+        }
     }
 
     private func saveQuote() async {
