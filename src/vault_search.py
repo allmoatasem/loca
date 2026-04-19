@@ -54,8 +54,15 @@ def build_tfidf_index(vault_path: str) -> "tuple[TfidfVectorizer, csr_matrix, li
     return vectorizer, matrix, notes
 
 
-def semantic_search(vault_path: str, query: str, limit: int = 20) -> list[dict]:
+def semantic_search(
+    vault_path: str, query: str, limit: int = 20, min_score: float = 0.0,
+) -> list[dict]:
     """Return top-K notes by TF-IDF cosine similarity to query.
+
+    `min_score` drops weak matches before they surface in Related Notes —
+    without it a query against a vault with zero topical overlap still
+    returns noise at score ~0.1 (stopword tail), which reads to users as
+    "the AI thinks my car notes are about neuroscience".
 
     Each result: {rel_path, title, score, snippet, tags, is_daily_note, tasks_count}
     """
@@ -82,11 +89,12 @@ def semantic_search(vault_path: str, query: str, limit: int = 20) -> list[dict]:
         logger.warning("TF-IDF transform failed: %s", exc)
         return []
 
+    floor = max(0.0, float(min_score))
     top_indices = sims.argsort()[::-1][:limit]
     results = []
     for idx in top_indices:
         score = float(sims[idx])
-        if score <= 0.0:
+        if score <= floor:
             break
         n = notes[idx]
         results.append({

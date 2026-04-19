@@ -66,6 +66,11 @@
 
   function openPanel(route: string): void { onOpenRoute?.(route); }
 
+  // Footer "More" popover — stacks secondary entries (Vault, Glossary,
+  // Preferences, Philosophy, Acknowledgements) so the sidebar bottom
+  // isn't a wrapping eye-chart of tiny links.
+  let moreOpen = $state<boolean>(false);
+
   async function onDelete(id: string, title: string, e: MouseEvent): Promise<void> {
     e.stopPropagation();
     if (!confirm(`Delete "${title || 'Untitled'}"? This cannot be undone.`)) return;
@@ -214,13 +219,38 @@
 
   <div class="divider"></div>
 
+  <!-- Footer: two pinned primaries (Research, Memory) + an expandable
+       "More" popover for the rest. The old seven-button flex-wrap row
+       was an eye-chart at the bottom of every screen. -->
   <nav class="footer">
-    <button onclick={() => openPanel('/ui/memory')}>Memory</button>
-    <button onclick={() => openPanel('/ui/vault')}>Vault</button>
-    <button onclick={() => openPanel('/ui/glossary')}>Glossary</button>
-    <button onclick={() => openPanel('/ui/preferences')}>Preferences</button>
-    <button onclick={() => openPanel('/ui/philosophy')}>Philosophy</button>
-    <button onclick={() => openPanel('/ui/acknowledgements')}>Acknowledgements</button>
+    <button class="primary" onclick={() => openPanel('/ui/research')}>Research</button>
+    <button class="primary" onclick={() => openPanel('/ui/memory')}>Memory</button>
+    <div class="more-wrap">
+      <button
+        class="more-btn"
+        aria-haspopup="menu"
+        aria-expanded={moreOpen}
+        onclick={() => (moreOpen = !moreOpen)}
+        title="More"
+      >
+        ⋯
+      </button>
+      {#if moreOpen}
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          class="more-backdrop"
+          onclick={() => (moreOpen = false)}
+        ></div>
+        <div class="more-menu" role="menu">
+          <button role="menuitem" onclick={() => { moreOpen = false; openPanel('/ui/vault'); }}>Vault</button>
+          <button role="menuitem" onclick={() => { moreOpen = false; openPanel('/ui/glossary'); }}>Glossary</button>
+          <button role="menuitem" onclick={() => { moreOpen = false; openPanel('/ui/preferences'); }}>Preferences</button>
+          <button role="menuitem" onclick={() => { moreOpen = false; openPanel('/ui/philosophy'); }}>Philosophy</button>
+          <button role="menuitem" onclick={() => { moreOpen = false; openPanel('/ui/acknowledgements'); }}>Acknowledgements</button>
+        </div>
+      {/if}
+    </div>
   </nav>
 </aside>
 
@@ -386,7 +416,75 @@
   .conv-act:hover { color: var(--loca-color-text); }
   .conv-act.danger:hover { color: var(--loca-color-danger); }
 
-  .footer { display: flex; gap: 6px; padding: 8px 12px; flex-wrap: wrap; }
-  .footer button { background: none; border: none; color: var(--loca-color-text-muted); font-size: 11px; padding: 2px 4px; cursor: pointer; }
-  .footer button:hover { color: var(--loca-color-text); }
+  .footer {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 12px;
+  }
+  .footer .primary {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--loca-radius-sm);
+    color: var(--loca-color-text-muted);
+    font-size: 11px;
+    font-weight: 500;
+    padding: 4px 8px;
+    cursor: pointer;
+  }
+  .footer .primary:hover {
+    color: var(--loca-color-text);
+    background: var(--loca-color-border);
+  }
+  .more-wrap { position: relative; margin-left: auto; }
+  .more-btn {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--loca-radius-sm);
+    color: var(--loca-color-text-muted);
+    font-size: 14px;
+    line-height: 1;
+    padding: 2px 8px;
+    cursor: pointer;
+  }
+  .more-btn:hover,
+  .more-btn[aria-expanded="true"] {
+    color: var(--loca-color-text);
+    background: var(--loca-color-border);
+  }
+  .more-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: transparent;
+    cursor: default;
+  }
+  .more-menu {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    right: 0;
+    z-index: 50;
+    min-width: 160px;
+    padding: 4px;
+    background: var(--loca-color-surface);
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-sm);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .more-menu button {
+    background: none;
+    border: none;
+    text-align: left;
+    color: var(--loca-color-text);
+    font-size: 12px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .more-menu button:hover {
+    background: var(--loca-color-border);
+  }
 </style>

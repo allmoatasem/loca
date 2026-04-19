@@ -24,6 +24,7 @@ import pytest
 
 from src.orchestrator import (
     Orchestrator,
+    _build_system_prompt,
     _expand_query,
     _extract_content,
     _extract_tool_call,
@@ -31,8 +32,10 @@ from src.orchestrator import (
     _is_broad_query,
     _is_meta_query,
     _last_user_content,
+    _load_partner_mode_prompt,
     _merge_recall_results,
     _prepend_system,
+    _project_items_as_memories,
     _rerank_memories,
 )
 from src.router import Model
@@ -873,3 +876,65 @@ class TestMemoryExtraction:
         saved = await orch.extract_and_save_memories(messages)
         mock_plugin.store.assert_not_awaited()
         assert saved == []
+
+
+# ---------------------------------------------------------------------------
+# Research Partner plumbing — prompt overlays + project-scoped boost
+# ---------------------------------------------------------------------------
+
+class TestPartnerModePrompt:
+    def test_critique_prompt_loads(self):
+        text = _load_partner_mode_prompt("critique")
+        assert "Critique" in text or "devil" in text.lower()
+
+    def test_teach_prompt_loads(self):
+        text = _load_partner_mode_prompt("teach")
+        assert "Teach" in text or "pedagog" in text.lower()
+
+    def test_unknown_mode_returns_empty(self):
+        assert _load_partner_mode_prompt("unknown") == ""
+
+
+class TestBuildSystemPromptWithPartner:
+    def test_no_partner_mode_matches_default(self):
+        hw = MagicMock()
+        hw.has_apple_silicon = True
+        hw.cpu_name = "Apple M3"
+        hw.total_ram_gb = 64
+        hw.has_nvidia_gpu = False
+        default = _build_system_prompt(Model.GENERAL, "qwen", hw)
+        same = _build_system_prompt(Model.GENERAL, "qwen", hw, partner_mode=None, project_id=None)
+        assert default == same
+
+    def test_critique_mode_adds_instructions(self):
+        hw = MagicMock()
+        hw.has_apple_silicon = True
+        hw.cpu_name = "Apple M3"
+        hw.total_ram_gb = 64
+        hw.has_nvidia_gpu = False
+        base = _build_system_prompt(Model.GENERAL, "qwen", hw)
+        with_critique = _build_system_prompt(Model.GENERAL, "qwen", hw, partner_mode="critique")
+        assert len(with_critique) > len(base)
+        assert "devil" in with_critique.lower() or "critique" in with_critique.lower()
+
+
+class TestProjectItemsAsMemories:
+    def test_returns_memory_shaped_rows(self, tmp_path):
+        import src.store as store_module
+        with patch.object(store_module, "_DB_PATH", tmp_path / "loca.db"):
+            pid = store_module.create_project("P", "scope")
+            store_module.add_project_item(
+                pid, kind="quote", title="AIAYN",
+                body="Attention is all you need.", content_hash="h1",
+            )
+            store_module.add_project_item(
+                pid, kind="web_url", title="Paper",
+                url="https://arxiv.org/abs/1706.03762", content_hash="h2",
+            )
+            mems = _project_items_as_memories(pid)
+        assert len(mems) == 2
+        ids = {m["id"] for m in mems}
+        assert all(i.startswith("project_item:") for i in ids)
+        contents = [m["content"] for m in mems]
+        assert any("Attention is all you need" in c for c in contents)
+        assert any("arxiv.org" in c for c in contents)

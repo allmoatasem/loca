@@ -1094,10 +1094,10 @@ struct InputBar: View {
 
             HStack(spacing: 8) {
                 InputToolButton(
-                    icon: "magnifyingglass", label: "Research",
+                    icon: "drop", label: "Deep Dive",
                     isActive: state.researchMode, isDisabled: state.lockdownMode
                 ) { if !state.lockdownMode { state.researchMode.toggle() } }
-                .help("Deep Research — SearXNG + Playwright browser")
+                .help("Deep Dive — render full pages (not just snippets) and pull richer web context into the turn")
 
                 InputToolButton(
                     icon: "lock", label: "Lockdown",
@@ -1107,6 +1107,38 @@ struct InputBar: View {
                     if state.lockdownMode { state.researchMode = false }
                 }
                 .help("Lockdown — disable all network tools")
+
+                if let activeProject = state.activeProject {
+                    Divider().frame(height: 14)
+                    // Clickable pill — tapping it exits research mode
+                    // for this chat session. Replaces the Research-modal
+                    // "Unset active project" dropdown row.
+                    Button {
+                        state.setActiveProject(nil)
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text("📚 \(activeProject.title)")
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                            Text("×").opacity(0.6)
+                        }
+                        .font(.system(size: 10))
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 999)
+                                .stroke(Color.secondary.opacity(0.35))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .help("\(activeProject.title) — click to exit research mode")
+                    ForEach(PartnerMode.allCases) { mode in
+                        InputToolButton(
+                            icon: mode.icon, label: mode.label,
+                            isActive: state.partnerMode == mode, isDisabled: false
+                        ) { state.partnerMode = mode }
+                        .help(partnerHelp(mode))
+                    }
+                }
 
                 Button(action: pickFile) {
                     HStack(spacing: 4) {
@@ -1207,6 +1239,14 @@ struct InputBar: View {
         !state.isStreaming &&
         !state.isLoadingModel &&
         (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
+    }
+
+    private func partnerHelp(_ mode: PartnerMode) -> String {
+        switch mode {
+        case .default_: return "Default partner — biased to project sources, normal chat"
+        case .critique: return "Critique — plays devil's advocate; surfaces weak claims + counter-arguments"
+        case .teach:    return "Teach — step-by-step pedagogy; intuition first, formalism second"
+        }
     }
 
     private func pickFile() {
@@ -1325,7 +1365,10 @@ struct MemoryPanel: View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                Text("Memories (\(state.memories.count))")
+                // Show the total — `memories.count` is just the current
+                // page (50), which made users think they'd lost facts
+                // after opening a large store.
+                Text("Memories (\(state.memoriesTotal))")
                     .font(.headline)
                 Spacer()
                 Button {

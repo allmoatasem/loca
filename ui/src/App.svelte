@@ -15,6 +15,7 @@
   import MemoryView from './lib/MemoryView.svelte';
   import PhilosophyView from './lib/PhilosophyView.svelte';
   import AcknowledgementsView from './lib/AcknowledgementsView.svelte';
+  import ResearchWorkspaceView from './lib/ResearchWorkspaceView.svelte';
   import ChatView from './lib/ChatView.svelte';
 
   let path = $state(location.pathname);
@@ -25,7 +26,7 @@
     path = to;
   }
 
-  type OverlayKind = 'glossary' | 'preferences' | 'manage-models' | 'vault' | 'memory' | 'philosophy' | 'acknowledgements';
+  type OverlayKind = 'glossary' | 'preferences' | 'manage-models' | 'vault' | 'memory' | 'philosophy' | 'acknowledgements' | 'research';
   const openOverlay = $derived.by<null | OverlayKind>(() => {
     if (path.endsWith('/glossary'))         return 'glossary';
     if (path.endsWith('/preferences'))      return 'preferences';
@@ -34,6 +35,7 @@
     if (path.endsWith('/memory'))           return 'memory';
     if (path.endsWith('/philosophy'))       return 'philosophy';
     if (path.endsWith('/acknowledgements')) return 'acknowledgements';
+    if (path.endsWith('/research'))         return 'research';
     return null;
   });
 
@@ -70,6 +72,8 @@
         <PhilosophyView onClose={() => navigate('/ui')} />
       {:else if openOverlay === 'acknowledgements'}
         <AcknowledgementsView onClose={() => navigate('/ui')} />
+      {:else if openOverlay === 'research'}
+        <ResearchWorkspaceView onClose={() => navigate('/ui')} />
       {/if}
     </div>
   {/if}

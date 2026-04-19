@@ -504,6 +504,15 @@ struct SidebarFooter: View {
             .buttonStyle(.plain)
             .nativeTooltip("Vault Analyser — analyse your Obsidian vault. Read-only.")
 
+            Button { state.isResearchOpen.toggle() } label: {
+                Image(systemName: "lightbulb.min")
+                    .font(.system(size: 16))
+                    .foregroundColor(state.activeProjectId == nil ? .secondary : .accentColor)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .nativeTooltip("Research Partner — scoped projects, bookmarked sources, Critique/Teach modes, scheduled watches.")
+
             if let dl = state.activeDownload, !dl.done, dl.error == nil {
                 Button { state.isSettingsOpen = true } label: {
                     ZStack(alignment: .bottomTrailing) {

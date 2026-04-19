@@ -207,6 +207,22 @@ struct MainLayout: View {
                 .animation(.easeInOut(duration: 0.18), value: state.isPhilosophyOpen)
             }
         }
+        .overlay {
+            if state.isResearchOpen {
+                ZStack {
+                    Color.black.opacity(0.3)
+                        .ignoresSafeArea()
+                        .onTapGesture { state.isResearchOpen = false }
+                    ResearchWorkspaceView()
+                        .environmentObject(state)
+                        .background(.ultraThickMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .shadow(radius: 20)
+                }
+                .transition(.opacity)
+                .animation(.easeInOut(duration: 0.18), value: state.isResearchOpen)
+            }
+        }
     }
 }
 

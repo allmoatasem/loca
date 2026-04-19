@@ -216,6 +216,12 @@
         num_ctx: app.contextWindow,
         research_mode: researchMode && !lockdownMode,
       };
+      // Research Partner — project scope + partner-mode overlay. Both
+      // optional; backend ignores default/empty values.
+      if (app.activeProjectId) body.project_id = app.activeProjectId;
+      if (app.partnerMode && app.partnerMode !== 'default') {
+        body.partner_mode = app.partnerMode;
+      }
       if (chatTemplateKwargs) body.chat_template_kwargs = chatTemplateKwargs;
       if (extraBody)          body.extra_body            = extraBody;
       const resp = await fetch('/v1/chat/completions', {
@@ -448,14 +454,41 @@
       class:active={researchMode}
       disabled={lockdownMode}
       onclick={toggleResearch}
-      title="Deep Research — SearXNG + web fetching"
-    >🔍 Research</button>
+      title="Deep Dive — render full pages (not just snippets) and pull richer web context into the turn"
+    >🌊 Deep Dive</button>
     <button
       class="tool"
       class:active={lockdownMode}
       onclick={toggleLockdown}
       title="Lockdown — disable all network tools"
     >🔒 Lockdown</button>
+    {#if app.activeProject}
+      <div class="partner-segment" role="group" aria-label="Partner mode">
+        <button
+          class="partner-label"
+          title={`${app.activeProject.title} — click to exit research mode`}
+          onclick={() => app.setActiveProject(null)}
+        >📚 {app.activeProject.title} <span class="partner-x" aria-hidden="true">×</span></button>
+        <button
+          class="tool segment"
+          class:active={app.partnerMode === 'default'}
+          onclick={() => app.setPartnerMode('default')}
+          title="Default partner — normal chat, biased to project sources"
+        >Default</button>
+        <button
+          class="tool segment"
+          class:active={app.partnerMode === 'critique'}
+          onclick={() => app.setPartnerMode('critique')}
+          title="Critique — devil's advocate, surfaces weak claims"
+        >🥊 Critique</button>
+        <button
+          class="tool segment"
+          class:active={app.partnerMode === 'teach'}
+          onclick={() => app.setPartnerMode('teach')}
+          title="Teach — step-by-step pedagogy"
+        >🎓 Teach</button>
+      </div>
+    {/if}
   </div>
 
   {#if history.length > 0}
@@ -649,4 +682,38 @@
     opacity: 0.4;
     cursor: not-allowed;
   }
+  .partner-segment {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 10px;
+    padding-left: 10px;
+    border-left: 1px solid var(--loca-color-border);
+  }
+  .partner-label {
+    background: none;
+    border: 1px solid var(--loca-color-border);
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 10px;
+    color: var(--loca-color-text);
+    margin-right: 4px;
+    white-space: nowrap;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .partner-label:hover {
+    border-color: var(--loca-color-danger);
+    color: var(--loca-color-danger);
+  }
+  .partner-x {
+    font-size: 11px;
+    opacity: 0.6;
+  }
+  .partner-label:hover .partner-x { opacity: 1; }
 </style>

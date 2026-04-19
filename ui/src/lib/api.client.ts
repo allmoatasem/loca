@@ -107,6 +107,210 @@ export async function deleteModel(name: string): Promise<void> {
   if (!r.ok) throw new Error(`delete model ${name} → HTTP ${r.status}`);
 }
 
+// ── Research Projects ────────────────────────────────────────────────────────
+
+export type ProjectItemKind =
+  | 'conv' | 'memory' | 'vault_chunk' | 'web_url' | 'quote' | 'vault_sync';
+
+export interface Project {
+  id: string;
+  title: string;
+  scope: string;
+  notes: string;
+  created: number;
+  updated: number;
+  item_count?: number;
+  conv_count?: number;
+}
+
+export interface ProjectItem {
+  id: string;
+  project_id: string;
+  kind: ProjectItemKind;
+  ref_id: string | null;
+  title: string;
+  body: string;
+  url: string | null;
+  content_hash: string;
+  created: number;
+}
+
+export interface ProjectWatch {
+  id: string;
+  project_id: string;
+  sub_scope: string;
+  schedule_minutes: number;
+  last_run: number | null;
+  last_snapshot_hash: string | null;
+  created: number;
+}
+
+export interface ProjectDetail extends Project {
+  items_count: number;
+  conversations: ConversationMeta[];
+  watches: ProjectWatch[];
+}
+
+export interface RelatedItem {
+  kind: 'vault_chunk' | 'memory';
+  title: string;
+  snippet: string;
+  score: number;
+  vault_path?: string;
+  rel_path?: string;
+  memory_id?: string;
+}
+
+export async function fetchProjects(): Promise<Project[]> {
+  const data = await jsonGet<{ projects: Project[] }>('/api/projects');
+  return data.projects ?? [];
+}
+
+export async function fetchProject(id: string): Promise<ProjectDetail> {
+  return jsonGet<ProjectDetail>(`/api/projects/${encodeURIComponent(id)}`);
+}
+
+export async function createProject(title: string, scope: string): Promise<Project> {
+  const r = await fetch('/api/projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, scope }),
+  });
+  if (!r.ok) throw new Error(`create project → HTTP ${r.status}`);
+  const data = await r.json();
+  return data.project;
+}
+
+export async function patchProject(
+  id: string,
+  patch: { title?: string; scope?: string; notes?: string },
+): Promise<void> {
+  const r = await fetch(`/api/projects/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  if (!r.ok) throw new Error(`patch project ${id} → HTTP ${r.status}`);
+}
+
+export async function deleteProject(id: string): Promise<void> {
+  const r = await fetch(`/api/projects/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!r.ok) throw new Error(`delete project ${id} → HTTP ${r.status}`);
+}
+
+export async function listProjectItems(
+  id: string, kind?: ProjectItemKind,
+): Promise<{ items: ProjectItem[]; total: number }> {
+  const url = kind
+    ? `/api/projects/${encodeURIComponent(id)}/items?kind=${kind}`
+    : `/api/projects/${encodeURIComponent(id)}/items`;
+  return jsonGet(url);
+}
+
+export async function addProjectItem(
+  id: string,
+  item: {
+    kind: ProjectItemKind;
+    title?: string; body?: string; url?: string; ref_id?: string;
+  },
+): Promise<{ id?: string; duplicate?: boolean }> {
+  const r = await fetch(`/api/projects/${encodeURIComponent(id)}/items`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(item),
+  });
+  if (!r.ok) throw new Error(`add project item → HTTP ${r.status}`);
+  return r.json();
+}
+
+export async function deleteProjectItem(projectId: string, itemId: string): Promise<void> {
+  const r = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/items/${encodeURIComponent(itemId)}`,
+    { method: 'DELETE' },
+  );
+  if (!r.ok) throw new Error(`delete project item → HTTP ${r.status}`);
+}
+
+export async function attachConversationToProject(
+  projectId: string, convId: string,
+): Promise<void> {
+  const r = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/attach-conversation`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conv_id: convId }),
+    },
+  );
+  if (!r.ok) throw new Error(`attach conversation → HTTP ${r.status}`);
+}
+
+export async function detachConversationFromProject(
+  projectId: string, convId: string,
+): Promise<void> {
+  const r = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/detach-conversation`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conv_id: convId }),
+    },
+  );
+  if (!r.ok) throw new Error(`detach conversation → HTTP ${r.status}`);
+}
+
+export async function fetchRelated(
+  projectId: string, limit = 10,
+): Promise<RelatedItem[]> {
+  const data = await jsonGet<{ items: RelatedItem[] }>(
+    `/api/projects/${encodeURIComponent(projectId)}/related?limit=${limit}`,
+  );
+  return data.items ?? [];
+}
+
+export async function digDeeper(
+  projectId: string, subScope: string, maxResults = 5,
+): Promise<{ bookmarks: Array<{ id?: string; url: string; title: string; duplicate: boolean }>; total: number }> {
+  const r = await fetch(`/api/projects/${encodeURIComponent(projectId)}/dig-deeper`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sub_scope: subScope, max_results: maxResults }),
+  });
+  if (!r.ok) throw new Error(`dig deeper → HTTP ${r.status}`);
+  return r.json();
+}
+
+export async function syncVault(
+  projectId: string, path: string,
+): Promise<{ stored: number; skipped: number; total: number; synced_at: string }> {
+  const r = await fetch(`/api/projects/${encodeURIComponent(projectId)}/sync-vault`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (!r.ok) throw new Error(`sync vault → HTTP ${r.status}`);
+  return r.json();
+}
+
+export async function createWatch(
+  projectId: string, subScope: string, scheduleMinutes: number,
+): Promise<void> {
+  const r = await fetch(`/api/projects/${encodeURIComponent(projectId)}/watches`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sub_scope: subScope, schedule_minutes: scheduleMinutes }),
+  });
+  if (!r.ok) throw new Error(`create watch → HTTP ${r.status}`);
+}
+
+export async function deleteWatch(projectId: string, watchId: string): Promise<void> {
+  const r = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/watches/${encodeURIComponent(watchId)}`,
+    { method: 'DELETE' },
+  );
+  if (!r.ok) throw new Error(`delete watch → HTTP ${r.status}`);
+}
+
 // Discover — HF search, repo files, downloads
 export interface HFSearchHit { repo_id: string; downloads: number; likes: number }
 export interface RepoFile    { name: string; size_gb: number }

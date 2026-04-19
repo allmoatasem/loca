@@ -26,12 +26,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Window chrome
 
     private func configureWindow() {
+        // Loca is single-window; disable tab auto-creation globally so the
+        // View menu stops showing "Show Tab Bar / Merge All Windows /
+        // Show Previous Tab" entries that have no meaning here.
+        NSWindow.allowsAutomaticWindowTabbing = false
+
         guard let window = NSApp.windows.first else { return }
         window.titlebarAppearsTransparent = true
         window.titleVisibility            = .hidden
         window.styleMask.insert(.fullSizeContentView)
         window.isMovableByWindowBackground = false
         window.setFrameAutosaveName("LocaMain")
+        window.tabbingMode = .disallowed
     }
 
     // MARK: - Backend

@@ -18,6 +18,7 @@ extension AppState {
                     _loadModels()
                     await _loadConversationList()
                     await _loadMemories()
+                    await loadProjects()
                     _scheduleStatsPoll()
                     if lmStudioMode {
                         await _checkServerStatus()
@@ -409,6 +410,8 @@ extension AppState {
             stream:         true,
             num_ctx:        contextWindow,
             research_mode:  researchMode && !lockdownMode,
+            partner_mode:   partnerMode == .default_ ? nil : partnerMode.rawValue,
+            project_id:     activeProjectId,
             temperature:    temperature,
             top_p:          topP,
             top_k:          topK,
@@ -473,6 +476,21 @@ extension AppState {
             memories = page.items
             memoriesTotal = page.total
         } catch {}
+    }
+
+    // MARK: - Research Partner
+
+    func loadProjects() async {
+        do {
+            projects = try await BackendClient.shared.listProjects()
+        } catch {
+            projects = []
+        }
+    }
+
+    func setActiveProject(_ id: String?) {
+        activeProjectId = id
+        if id == nil { partnerMode = .default_ }
     }
 
     func _loadMoreMemories() async {
