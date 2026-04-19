@@ -28,6 +28,7 @@
     fetchRelated,
     listProjectItems,
     patchProject,
+    runWatch,
     syncVault,
     type Project,
     type ProjectDetail,
@@ -67,6 +68,11 @@
   let watchScope = $state('');
   let watchMinutes = $state(1440);
   let watchStatus = $state<string | null>(null);
+  // Per-watch run-now state. `runningId` pins the button that's active
+  // so the user can't double-fire; `runStatus` shows "+3 new" or
+  // "unchanged" under the row for ~2s after completion.
+  let runningId = $state<string | null>(null);
+  let runStatus = $state<Record<string, string>>({});
 
   // Notes save indicator — maps to a small label next to the Notes
   // header. Feedback >> silent autosave that leaves the user wondering.
@@ -240,6 +246,35 @@
     if (!app.activeProjectId) return;
     await deleteWatch(app.activeProjectId, wid);
     await refreshDetail(app.activeProjectId);
+  }
+
+  async function handleRunWatch(wid: string): Promise<void> {
+    if (!app.activeProjectId || runningId) return;
+    runningId = wid;
+    runStatus = { ...runStatus, [wid]: 'running…' };
+    try {
+      const r = await runWatch(app.activeProjectId, wid);
+      runStatus = {
+        ...runStatus,
+        [wid]: r.result.unchanged
+          ? `no change (${r.result.total_hits} hits)`
+          : `+${r.result.new_count} new source${r.result.new_count === 1 ? '' : 's'}`,
+      };
+      // Fade the status after a moment so it doesn't linger forever.
+      setTimeout(() => {
+        const next = { ...runStatus };
+        delete next[wid];
+        runStatus = next;
+      }, 4000);
+      await refreshDetail(app.activeProjectId);
+    } catch (e) {
+      runStatus = {
+        ...runStatus,
+        [wid]: `failed: ${e instanceof Error ? e.message : String(e)}`,
+      };
+    } finally {
+      runningId = null;
+    }
   }
 
   /** Persist the project's adapter binding and immediately apply it so
@@ -670,7 +705,15 @@
                       : `${Math.round(w.schedule_minutes / 1440)}d`}
                     {w.last_run ? ` · last run ${fmtDate(w.last_run)}` : ' · never run'}
                   </div>
+                  {#if runStatus[w.id]}<div class="meta run-status">{runStatus[w.id]}</div>{/if}
                 </div>
+                <button
+                  class="watch-run"
+                  aria-label="Run watch now"
+                  title="Run this watch immediately — bypasses the schedule"
+                  disabled={runningId === w.id}
+                  onclick={() => handleRunWatch(w.id)}
+                >{runningId === w.id ? '…' : '▶'}</button>
                 <button class="item-del" aria-label="Remove watch" onclick={() => handleDeleteWatch(w.id)}>×</button>
               </li>
             {/each}
@@ -806,6 +849,14 @@
     padding: 0;
   }
   .item-del:hover { color: var(--loca-color-danger); background: rgba(128, 128, 128, 0.12); }
+  .watch-run {
+    width: 22px; height: 22px; border: none; background: none;
+    color: var(--loca-color-text-muted); cursor: pointer;
+    font-size: 11px; line-height: 1; border-radius: 50%; padding: 0;
+  }
+  .watch-run:hover:not(:disabled) { color: var(--loca-color-accent); background: rgba(128, 128, 128, 0.12); }
+  .watch-run:disabled { opacity: 0.5; cursor: not-allowed; }
+  .run-status { color: var(--loca-color-accent); margin-top: 2px; }
 
   .md :global(p) { margin: 0 0 8px; font-size: 12px; }
   .md :global(h1), .md :global(h2), .md :global(h3) { margin: 10px 0 4px; font-size: 13px; }

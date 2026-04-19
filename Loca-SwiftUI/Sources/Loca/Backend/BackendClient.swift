@@ -490,6 +490,27 @@ actor BackendClient {
         _ = try await delete("/api/projects/\(projectId)/watches/\(watchId)")
     }
 
+    /// Manually trigger a watch run (bypasses the schedule). Returns the
+    /// same summary shape the background tick uses internally, so the
+    /// UI can show "+3 new" / "unchanged".
+    func runWatch(projectId: String, watchId: String) async throws -> WatchRunSummary {
+        let (data, resp) = try await postRaw(
+            "/api/projects/\(projectId)/watches/\(watchId)/run", body: [:]
+        )
+        if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
+            var message = "run watch → HTTP \(http.statusCode)"
+            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let err = obj["error"] as? String {
+                message = err
+            }
+            throw BackendError.decode(NSError(
+                domain: "Loca", code: http.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: message]
+            ))
+        }
+        return try JSONDecoder().decode(WatchRunResponse.self, from: data).result
+    }
+
     // MARK: - Voice
 
     func transcribeAudio(_ audioData: Data, mimeType: String = "audio/wav") async throws -> String {

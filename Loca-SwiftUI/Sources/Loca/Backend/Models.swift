@@ -776,6 +776,22 @@ struct ProjectWatch: Identifiable, Decodable, Equatable {
     let created: Double
 }
 
+/// One-off watch-run result returned by POST /api/projects/{id}/watches/{wid}/run.
+/// Mirrors `src/watches_runner.WatchRunResult.to_dict()`.
+struct WatchRunSummary: Decodable {
+    let watch_id: String
+    let project_id: String
+    let total_hits: Int
+    let new_count: Int
+    let unchanged: Bool
+    let snapshot_hash: String
+}
+
+struct WatchRunResponse: Decodable {
+    let ok: Bool
+    let result: WatchRunSummary
+}
+
 struct ProjectDetail: Decodable {
     let id: String
     let title: String

@@ -76,6 +76,11 @@ struct ResearchWorkspaceView: View {
     @State private var watchScope = ""
     @State private var watchMinutes: Int = 1440
     @State private var watchStatus: String?
+    // Per-watch manual-run state. `runningWatchId` gates the buttons so
+    // the user can't double-fire; `runStatus` shows a short "+3 new"
+    // confirmation under the row for a few seconds.
+    @State private var runningWatchId: String?
+    @State private var runStatus: [String: String] = [:]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -508,8 +513,22 @@ struct ResearchWorkspaceView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(w.sub_scope).font(.system(size: 12, weight: .medium))
                             Text(watchLabel(w)).font(.system(size: 10)).foregroundColor(.secondary)
+                            if let status = runStatus[w.id] {
+                                Text(status).font(.system(size: 10)).foregroundColor(.accentColor)
+                            }
                         }
                         Spacer()
+                        Button { Task { await runWatch(w.id) } } label: {
+                            if runningWatchId == w.id {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Image(systemName: "play.circle")
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(runningWatchId != nil)
+                        .help("Run this watch immediately")
                         Button { Task { await deleteWatch(w.id) } } label: {
                             Image(systemName: "xmark.circle")
                                 .foregroundColor(.secondary)
@@ -842,6 +861,27 @@ struct ResearchWorkspaceView: View {
             try await BackendClient.shared.deleteWatch(projectId: pid, watchId: wid)
             await refreshDetail(pid)
         } catch {}
+    }
+
+    private func runWatch(_ wid: String) async {
+        guard let pid = state.activeProjectId, runningWatchId == nil else { return }
+        runningWatchId = wid
+        runStatus[wid] = "running…"
+        do {
+            let result = try await BackendClient.shared.runWatch(projectId: pid, watchId: wid)
+            runStatus[wid] = result.unchanged
+                ? "no change (\(result.total_hits) hits)"
+                : "+\(result.new_count) new source\(result.new_count == 1 ? "" : "s")"
+            // Clear the status after a moment so it doesn't linger.
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                runStatus.removeValue(forKey: wid)
+            }
+            await refreshDetail(pid)
+        } catch {
+            runStatus[wid] = "failed: \(error.localizedDescription)"
+        }
+        runningWatchId = nil
     }
 
     private func deleteItem(_ iid: String) async {

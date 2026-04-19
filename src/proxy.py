@@ -128,7 +128,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     logger.info("Loca proxy started")
     asyncio.create_task(_build_recs_cache())
-    watches_task = asyncio.create_task(_watches_loop())
+    # Extracted into src.watches_runner so the executor is unit-testable
+    # without a live FastAPI app. See that module for tick cadence, per-
+    # watch timeout, and the single-shot agent design.
+    from .watches_runner import watches_loop  # noqa: PLC0415
+    watches_task = asyncio.create_task(watches_loop())
     yield
     # Shutdown
     watches_task.cancel()
@@ -136,76 +140,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await _plugin_manager.stop()
     if _inference_backend:
         await _inference_backend.stop()
-
-
-async def _watches_loop() -> None:
-    """Background poller for Research Partner watches.
-
-    Every 5 minutes, queries `project_watches` for rows whose last_run
-    is older than their schedule, runs a web_search on the sub-scope,
-    diffs the top URL set against `last_snapshot_hash`, and appends
-    any new URLs as `web_url` project_items. Runs forever until the
-    FastAPI lifespan cancels it.
-    """
-    import hashlib as _hashlib  # noqa: PLC0415
-
-    from .store import (  # noqa: PLC0415
-        list_due_watches,
-        mark_watch_ran,
-    )
-    from .tools.web_search import web_search  # noqa: PLC0415
-    while True:
-        try:
-            await asyncio.sleep(300)  # 5 min tick; scheduling is coarse by design
-            due = list_due_watches()
-            for w in due:
-                sub_scope = w["sub_scope"]
-                try:
-                    hits = await web_search(
-                        query=sub_scope,
-                        searxng_url=os.environ.get("SEARXNG_URL", "http://localhost:8888"),
-                        max_results=5,
-                        research_mode=False,
-                    )
-                except Exception as exc:
-                    logger.warning("watch %s search failed: %s", w["id"], exc)
-                    continue
-                urls = [h.url for h in hits if h.url]
-                snapshot_hash = _hashlib.sha256("\n".join(urls).encode()).hexdigest()
-                if snapshot_hash == (w.get("last_snapshot_hash") or ""):
-                    mark_watch_ran(w["id"], snapshot_hash)
-                    continue
-                prev_urls: set[str] = set()
-                for existing in list_project_items(w["project_id"], kind="web_url", limit=500):
-                    if existing.get("url"):
-                        prev_urls.add(existing["url"])
-                new_count = 0
-                for hit in hits:
-                    u = hit.url
-                    if not u or u in prev_urls:
-                        continue
-                    title = (hit.title or u).strip()
-                    content_hash = _hashlib.sha256(f"url:{u}".encode()).hexdigest()
-                    iid = add_project_item(
-                        w["project_id"],
-                        kind="web_url",
-                        title=title,
-                        body=(hit.snippet or "")[:500],
-                        url=u,
-                        content_hash=content_hash,
-                    )
-                    if iid is not None:
-                        new_count += 1
-                mark_watch_ran(w["id"], snapshot_hash)
-                if new_count:
-                    logger.info(
-                        "watch %s appended %d new URLs to project %s",
-                        w["id"], new_count, w["project_id"],
-                    )
-        except asyncio.CancelledError:  # pragma: no cover
-            return
-        except Exception as exc:  # pragma: no cover
-            logger.warning("watches loop iteration failed: %s", exc)
 
 
 app = FastAPI(title="Local AI Orchestrator Proxy", lifespan=lifespan)
@@ -1388,6 +1322,31 @@ async def api_create_watch(project_id: str, request: Request) -> JSONResponse:
 async def api_delete_watch(project_id: str, watch_id: str) -> JSONResponse:
     delete_project_watch(watch_id)
     return JSONResponse({"ok": True})
+
+
+@app.post("/api/projects/{project_id}/watches/{watch_id}/run")
+async def api_run_watch(project_id: str, watch_id: str) -> JSONResponse:
+    """Manually trigger a watch run, bypassing its schedule. Used by the
+    "Run now" button in the Watches tab. Delegates to the same executor
+    the background tick uses, so behaviour is identical — one tick's
+    worth of search + diff + append + hash update."""
+    from .watches_runner import run_watch_once  # noqa: PLC0415
+    matches = [w for w in list_project_watches(project_id) if w["id"] == watch_id]
+    if not matches:
+        return JSONResponse({"error": "watch not found"}, status_code=404)
+    watch = matches[0]
+    try:
+        result = await run_watch_once(
+            watch,
+            searxng_url=os.environ.get("SEARXNG_URL", "http://localhost:8888"),
+        )
+    except asyncio.TimeoutError:
+        return JSONResponse(
+            {"error": "watch timed out while searching"}, status_code=504,
+        )
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    return JSONResponse({"ok": True, "result": result.to_dict()})
 
 
 @app.get("/api/projects/{project_id}/related")

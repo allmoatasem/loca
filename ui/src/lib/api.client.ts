@@ -386,6 +386,35 @@ export async function deleteWatch(projectId: string, watchId: string): Promise<v
   if (!r.ok) throw new Error(`delete watch → HTTP ${r.status}`);
 }
 
+/** One-off watch run — bypasses the schedule. Returns the run summary
+ *  so the UI can show "+N new" or "unchanged (K hits)". */
+export interface WatchRunSummary {
+  watch_id: string;
+  project_id: string;
+  total_hits: number;
+  new_count: number;
+  unchanged: boolean;
+  snapshot_hash: string;
+}
+
+export async function runWatch(
+  projectId: string, watchId: string,
+): Promise<{ ok: boolean; result: WatchRunSummary }> {
+  const r = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/watches/${encodeURIComponent(watchId)}/run`,
+    { method: 'POST' },
+  );
+  if (!r.ok) {
+    let msg = `run watch → HTTP ${r.status}`;
+    try {
+      const body = await r.json() as { error?: string };
+      if (body?.error) msg = body.error;
+    } catch { /* swallow */ }
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
 // Discover — HF search, repo files, downloads
 export interface HFSearchHit { repo_id: string; downloads: number; likes: number }
 export interface RepoFile    { name: string; size_gb: number }
