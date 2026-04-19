@@ -120,6 +120,14 @@
     void refreshDetail(id);
   });
 
+  // Fire the vault detect immediately on mount so the Sync panel has a
+  // default path ready the moment the user opens it. Without this, the
+  // detect runs on picker-open and the sub-panel renders before the
+  // fetch resolves → placeholder shows the generic fallback.
+  $effect(() => {
+    void pickDetectedVault();
+  });
+
   $effect(() => {
     void filterKind;
     const id = app.activeProjectId;
@@ -473,12 +481,16 @@
               Ingest markdown notes from an Obsidian vault. Loca ranks notes
               by relevance to this project's scope before storing them.
             </p>
-            {#if detectedVaults.length > 1}
+            {#if detectedVaults.length === 0}
+              <p class="hint">No Obsidian vaults detected yet. Paste a vault path below or open the Vault panel to register one.</p>
+            {:else if detectedVaults.length === 1}
+              <p class="hint">Detected: <strong>{detectedVaults[0].name}</strong> — edit the path below to use a different one.</p>
+            {:else}
               <label class="field">
                 <span>Detected vaults</span>
-                <select onchange={(e) => { vaultPath = (e.currentTarget as HTMLSelectElement).value; }}>
+                <select value={vaultPath} onchange={(e) => { vaultPath = (e.currentTarget as HTMLSelectElement).value; }}>
                   {#each detectedVaults as v}
-                    <option value={v.path}>{v.name} ({v.path})</option>
+                    <option value={v.path}>{v.name}</option>
                   {/each}
                 </select>
               </label>

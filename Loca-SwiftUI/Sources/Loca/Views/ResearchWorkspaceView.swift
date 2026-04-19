@@ -681,7 +681,7 @@ struct ResearchWorkspaceView: View {
         guard !text.isEmpty else { return }
         do {
             try await BackendClient.shared.addProjectItem(
-                pid, kind: "quote", body: text,
+                pid, kind: "quote", body: text
             )
             quoteSheetOpen = false
             quoteDraft = ""
