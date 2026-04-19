@@ -94,6 +94,9 @@
   let pendingVoiceResume = $state<boolean>(false);
   let ttsAudio: HTMLAudioElement | null = null;
   let isSpeaking = $state<boolean>(false);
+  // Bumped by stopVoice/stopSpeaking so any in-flight chunk pipeline for
+  // an older utterance aborts instead of playing over a new turn.
+  let ttsSessionId = 0;
 
   async function toggleVoiceMode(): Promise<void> {
     if (app.isVoiceMode) {
@@ -136,6 +139,9 @@
   }
 
   function stopSpeaking(): void {
+    // Bump the session so any synth in-flight for the previous utterance
+    // resolves into a no-op instead of playing over the new turn.
+    ttsSessionId++;
     if (ttsAudio) {
       try { ttsAudio.pause(); } catch { /* no-op */ }
       try { URL.revokeObjectURL(ttsAudio.src); } catch { /* no-op */ }
@@ -144,38 +150,95 @@
     isSpeaking = false;
   }
 
+  /** Split into roughly-sentence-sized chunks so we can synth+play in a
+   *  pipeline. Keeps each chunk under ~240 chars (Kokoro slows on long
+   *  inputs) and coalesces tiny fragments so playback isn't choppy. */
+  function splitIntoSpeechChunks(text: string): string[] {
+    const raw = text.trim();
+    if (!raw) return [];
+    // Split on sentence-ending punctuation followed by whitespace, keeping
+    // the terminator. Falls through to hard wraps for terminator-less runs.
+    const pieces = raw
+      .split(/(?<=[.!?])\s+/)
+      .flatMap((p) => (p.length > 240 ? p.match(/[\s\S]{1,240}/g) ?? [p] : [p]))
+      .map((p) => p.trim())
+      .filter(Boolean);
+    // Merge very short pieces (usually punctuation-only or dangling words)
+    // with the next chunk to avoid choppy 0.3s playback snippets.
+    const merged: string[] = [];
+    for (const p of pieces) {
+      if (merged.length && (merged[merged.length - 1].length < 40 || p.length < 20)) {
+        merged[merged.length - 1] = `${merged[merged.length - 1]} ${p}`.trim();
+      } else {
+        merged.push(p);
+      }
+    }
+    return merged;
+  }
+
   async function speakAndResume(text: string): Promise<void> {
-    const trimmed = text.trim();
-    if (!trimmed || !app.isVoiceMode) {
+    const chunks = splitIntoSpeechChunks(text);
+    if (!chunks.length || !app.isVoiceMode) {
       voiceRecorder?.resumeListening();
       return;
     }
+    const session = ++ttsSessionId;
     isSpeaking = true;
+
+    // Pipeline: synth chunk N+1 while chunk N plays. Each chunk is a
+    // separate POST /v1/audio/speech, so the first chunk's audio starts
+    // within its own synth latency (~200–500 ms) regardless of how long
+    // the full response is.
+    let nextSynth: Promise<Blob | null> = synthChunk(chunks[0], session);
+    for (let i = 0; i < chunks.length; i++) {
+      const blob = await nextSynth;
+      if (session !== ttsSessionId) return;        // aborted
+      // Kick off the next synth while we play this chunk.
+      nextSynth = i + 1 < chunks.length
+        ? synthChunk(chunks[i + 1], session)
+        : Promise.resolve(null);
+      if (!blob) continue;
+      await playBlob(blob, session);
+      if (session !== ttsSessionId) return;
+    }
+
+    if (session === ttsSessionId) {
+      isSpeaking = false;
+      if (app.isVoiceMode) voiceRecorder?.resumeListening();
+    }
+  }
+
+  async function synthChunk(text: string, session: number): Promise<Blob | null> {
     try {
-      const blob = await synthesizeSpeech(trimmed, {
+      const blob = await synthesizeSpeech(text, {
         voice: app.voiceConfig?.tts_voice,
         speed: app.voiceConfig?.tts_speed,
       });
-      if (!app.isVoiceMode) return;            // user toggled off mid-synth
-      stopSpeaking();
+      if (session !== ttsSessionId) return null;
+      return blob;
+    } catch (e) {
+      // One bad chunk shouldn't torch the whole response — surface the
+      // error once and move on so the rest of the reply still plays.
+      app.setVoiceError(e instanceof Error ? e.message : String(e));
+      return null;
+    }
+  }
+
+  function playBlob(blob: Blob, session: number): Promise<void> {
+    return new Promise((resolve) => {
+      if (session !== ttsSessionId) { resolve(); return; }
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       ttsAudio = audio;
-      isSpeaking = true;
-      audio.addEventListener('ended', () => {
-        stopSpeaking();
-        if (app.isVoiceMode) voiceRecorder?.resumeListening();
-      });
-      audio.addEventListener('error', () => {
-        stopSpeaking();
-        if (app.isVoiceMode) voiceRecorder?.resumeListening();
-      });
-      await audio.play();
-    } catch (e) {
-      app.setVoiceError(e instanceof Error ? e.message : String(e));
-      stopSpeaking();
-      if (app.isVoiceMode) voiceRecorder?.resumeListening();
-    }
+      const cleanup = (): void => {
+        try { URL.revokeObjectURL(url); } catch { /* no-op */ }
+        if (ttsAudio === audio) ttsAudio = null;
+        resolve();
+      };
+      audio.addEventListener('ended', cleanup, { once: true });
+      audio.addEventListener('error', cleanup, { once: true });
+      audio.play().catch(cleanup);
+    });
   }
 
   async function handleUtterance(wav: Blob): Promise<void> {

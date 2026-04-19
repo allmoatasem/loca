@@ -16,6 +16,9 @@ struct ChatView: View {
     @StateObject private var voicePlayer = AudioPlayer()
     @State private var wasStreaming = false
     @State private var isSpeakingResponse = false
+    // Bumped whenever voice is stopped or a new response starts so any
+    // in-flight chunk pipeline from a prior turn aborts cleanly.
+    @State private var ttsSessionId = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -88,6 +91,7 @@ struct ChatView: View {
             } else {
                 voiceRecorder.stop()
                 voicePlayer.stop()
+                ttsSessionId &+= 1
                 isSpeakingResponse = false
             }
         }
@@ -111,34 +115,119 @@ struct ChatView: View {
             .first(where: { $0.role == "assistant" })?
             .content.plainText
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !text.isEmpty else {
+        let chunks = Self.splitIntoSpeechChunks(text)
+        guard !chunks.isEmpty else {
             voiceRecorder.resumeListening()
             return
         }
         isSpeakingResponse = true
+        ttsSessionId &+= 1
+        let session = ttsSessionId
         let voice = state.voiceConfig?.tts_voice
         let speed = state.voiceConfig?.tts_speed
-        voicePlayer.onFinished = { @MainActor in
-            isSpeakingResponse = false
-            if state.isVoiceMode { voiceRecorder.resumeListening() }
+        Task {
+            // Pipeline: start synthesising chunk 0, and while it plays kick
+            // off chunk 1's synth. Playback of chunk 1 can begin the moment
+            // it's ready — no waiting for the whole response to be
+            // processed upfront.
+            var nextData: Task<Data?, Never> = synthTask(
+                chunks[0], voice: voice, speed: speed, session: session,
+            )
+            for (i, _) in chunks.enumerated() {
+                let data = await nextData.value
+                if session != ttsSessionId { return }
+                nextData = i + 1 < chunks.count
+                    ? synthTask(chunks[i + 1], voice: voice, speed: speed, session: session)
+                    : Task { nil }
+                guard let data else { continue }
+                await playChunk(data, session: session)
+                if session != ttsSessionId { return }
+            }
+            await MainActor.run {
+                guard session == ttsSessionId else { return }
+                isSpeakingResponse = false
+                if state.isVoiceMode { voiceRecorder.resumeListening() }
+            }
         }
+    }
+
+    private func synthTask(
+        _ text: String, voice: String?, speed: Double?, session: Int,
+    ) -> Task<Data?, Never> {
         Task {
             do {
                 let data = try await BackendClient.shared.synthesizeSpeech(
                     text: text, voice: voice, speed: speed,
                 )
-                await MainActor.run {
-                    guard state.isVoiceMode else { isSpeakingResponse = false; return }
-                    voicePlayer.play(data)
-                }
+                if session != ttsSessionId { return nil }
+                return data
             } catch {
-                await MainActor.run {
-                    state.voiceError = error.localizedDescription
-                    isSpeakingResponse = false
-                    if state.isVoiceMode { voiceRecorder.resumeListening() }
-                }
+                await MainActor.run { state.voiceError = error.localizedDescription }
+                return nil
             }
         }
+    }
+
+    @MainActor
+    private func playChunk(_ data: Data, session: Int) async {
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            guard session == ttsSessionId, state.isVoiceMode else {
+                cont.resume(); return
+            }
+            voicePlayer.onFinished = {
+                cont.resume()
+            }
+            voicePlayer.play(data)
+        }
+    }
+
+    /// Split into roughly-sentence-sized chunks (~240 chars) and merge
+    /// tiny fragments so playback isn't choppy. Mirrors the splitter in
+    /// ChatView.svelte so both clients chunk responses identically.
+    static func splitIntoSpeechChunks(_ text: String) -> [String] {
+        let raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return [] }
+        let pattern = #"(?<=[.!?])\s+"#
+        var pieces: [String]
+        if let regex = try? NSRegularExpression(pattern: pattern) {
+            let range = NSRange(raw.startIndex..., in: raw)
+            let matches = regex.matches(in: raw, range: range)
+            var last = raw.startIndex
+            pieces = []
+            for m in matches {
+                guard let r = Range(m.range, in: raw) else { continue }
+                pieces.append(String(raw[last..<r.lowerBound]))
+                last = r.upperBound
+            }
+            pieces.append(String(raw[last...]))
+        } else {
+            pieces = [raw]
+        }
+        // Hard-wrap any chunk over 240 chars.
+        let wrapped: [String] = pieces.flatMap { p -> [String] in
+            guard p.count > 240 else { return [p] }
+            var out: [String] = []
+            var i = p.startIndex
+            while i < p.endIndex {
+                let j = p.index(i, offsetBy: 240, limitedBy: p.endIndex) ?? p.endIndex
+                out.append(String(p[i..<j]))
+                i = j
+            }
+            return out
+        }
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+
+        // Coalesce very short pieces into their neighbours.
+        var merged: [String] = []
+        for p in wrapped {
+            if let last = merged.last, last.count < 40 || p.count < 20 {
+                merged[merged.count - 1] = "\(last) \(p)"
+            } else {
+                merged.append(p)
+            }
+        }
+        return merged
     }
 
     private func handleVoiceAudio(_ wavData: Data) {
