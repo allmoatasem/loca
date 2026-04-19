@@ -464,7 +464,11 @@
     >🔒 Lockdown</button>
     {#if app.activeProject}
       <div class="partner-segment" role="group" aria-label="Partner mode">
-        <span class="partner-label" title={`Project: ${app.activeProject.title}`}>📚 {app.activeProject.title}</span>
+        <button
+          class="partner-label"
+          title={`${app.activeProject.title} — click to exit research mode`}
+          onclick={() => app.setActiveProject(null)}
+        >📚 {app.activeProject.title} <span class="partner-x" aria-hidden="true">×</span></button>
         <button
           class="tool segment"
           class:active={app.partnerMode === 'default'}
@@ -687,12 +691,29 @@
     border-left: 1px solid var(--loca-color-border);
   }
   .partner-label {
+    background: none;
+    border: 1px solid var(--loca-color-border);
+    border-radius: 999px;
+    padding: 2px 8px;
     font-size: 10px;
-    color: var(--loca-color-text-muted);
+    color: var(--loca-color-text);
     margin-right: 4px;
     white-space: nowrap;
-    max-width: 140px;
+    max-width: 180px;
     overflow: hidden;
     text-overflow: ellipsis;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
   }
+  .partner-label:hover {
+    border-color: var(--loca-color-danger);
+    color: var(--loca-color-danger);
+  }
+  .partner-x {
+    font-size: 11px;
+    opacity: 0.6;
+  }
+  .partner-label:hover .partner-x { opacity: 1; }
 </style>

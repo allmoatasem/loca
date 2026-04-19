@@ -66,6 +66,26 @@
 
   let watchScope = $state('');
   let watchMinutes = $state(1440);
+  let watchStatus = $state<string | null>(null);
+
+  // Notes save indicator — maps to a small label next to the Notes
+  // header. Feedback >> silent autosave that leaves the user wondering.
+  type NotesSaveState = 'idle' | 'saving' | 'saved' | 'error';
+  let notesSaveState = $state<NotesSaveState>('idle');
+  let notesSavedTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Sources add-source picker. The previous UI exposed a vault-path
+  // input on every render, confusing users who came to Sources just to
+  // browse. Now the same inputs live behind an explicit "Add source"
+  // flyout scoped to the picked kind.
+  type AddSourceKind = 'quote' | 'vault' | '';
+  let addSourceKind = $state<AddSourceKind>('');
+  let detectedVaults = $state<Array<{ path: string; name: string }>>([]);
+
+  // Quote modal — replaces the old prompt() which silently no-ops on
+  // Mac's WKWebView when the app isn't focused.
+  let quoteModalOpen = $state(false);
+  let quoteDraft = $state('');
 
   async function refreshDetail(id: string): Promise<void> {
     detail = await fetchProject(id);
@@ -133,9 +153,18 @@
   function scheduleNotesSave(): void {
     if (!app.activeProjectId) return;
     if (notesTimer) clearTimeout(notesTimer);
+    notesSaveState = 'saving';
     notesTimer = setTimeout(async () => {
-      if (app.activeProjectId) {
+      if (!app.activeProjectId) return;
+      try {
         await patchProject(app.activeProjectId, { notes: notesDraft });
+        notesSaveState = 'saved';
+        if (notesSavedTimer) clearTimeout(notesSavedTimer);
+        // Fade the "Saved ✓" back to idle after a moment so the label
+        // doesn't linger and read like the current state forever.
+        notesSavedTimer = setTimeout(() => { notesSaveState = 'idle'; }, 1800);
+      } catch {
+        notesSaveState = 'error';
       }
     }, 700);
   }
@@ -188,9 +217,15 @@
     const s = watchScope.trim();
     if (!s) return;
     const minutes = Math.max(60, Math.min(watchMinutes, 60 * 24 * 14));
-    await createWatch(app.activeProjectId, s, minutes);
-    watchScope = '';
-    await refreshDetail(app.activeProjectId);
+    watchStatus = 'Creating…';
+    try {
+      await createWatch(app.activeProjectId, s, minutes);
+      watchScope = '';
+      await refreshDetail(app.activeProjectId);
+      watchStatus = 'Watch created ✓';
+    } catch (e) {
+      watchStatus = `Failed: ${e instanceof Error ? e.message : String(e)}`;
+    }
   }
 
   async function handleDeleteWatch(wid: string): Promise<void> {
@@ -213,14 +248,54 @@
     await refreshDetail(app.activeProjectId);
   }
 
-  async function quickAddQuote(): Promise<void> {
+  function openQuoteModal(): void {
+    quoteDraft = '';
+    quoteModalOpen = true;
+  }
+
+  async function saveQuote(): Promise<void> {
     if (!app.activeProjectId) return;
-    const q = prompt('Paste a quote or claim to pin to this project:');
-    if (!q || !q.trim()) return;
-    await addProjectItem(app.activeProjectId, { kind: 'quote', body: q.trim() });
+    const q = quoteDraft.trim();
+    if (!q) return;
+    await addProjectItem(app.activeProjectId, { kind: 'quote', body: q });
+    quoteModalOpen = false;
+    quoteDraft = '';
     await loadItems(app.activeProjectId);
     if (detail) detail.items_count = (detail.items_count ?? 0) + 1;
   }
+
+  async function pickDetectedVault(): Promise<void> {
+    // Populate vaultPath with the first detected vault so users don't
+    // have to type (or remember) the full path. Silent-fail is fine
+    // — the user can still paste a path manually.
+    if (detectedVaults.length > 0) return;
+    try {
+      const r = await fetch('/api/vault/detect');
+      if (!r.ok) return;
+      const data = await r.json() as { vaults?: Array<{ path: string; name: string }> };
+      detectedVaults = data.vaults ?? [];
+      if (!vaultPath && detectedVaults.length > 0) {
+        vaultPath = detectedVaults[0].path;
+      }
+    } catch { /* no-op */ }
+  }
+
+  function openAddSource(kind: AddSourceKind): void {
+    addSourceKind = kind;
+    if (kind === 'vault') void pickDetectedVault();
+  }
+
+  // Human-readable labels for the six project-item kinds. The raw
+  // names (vault_chunk, vault_sync, conv) leak implementation detail
+  // and confused first-time testers — "what's a vault chunk?".
+  const KIND_LABELS: Record<ProjectItemKind, string> = {
+    conv:        'Conversation',
+    quote:       'Pinned quote',
+    web_url:     'Web bookmark',
+    memory:      'Memory reference',
+    vault_chunk: 'Vault note',
+    vault_sync:  'Vault import',
+  };
 
   function kindIcon(k: ProjectItemKind): string {
     return {
@@ -246,9 +321,6 @@
         <option value="">
           {app.projects.length === 0 ? 'Create your first project' : 'Choose a project…'}
         </option>
-        {#if app.activeProjectId}
-          <option value="" disabled>— Unset active project —</option>
-        {/if}
         {#each app.projects as p (p.id)}
           <option value={p.id}>{p.title}</option>
         {/each}
@@ -317,10 +389,11 @@
       <section class="group">
         <h3>Quick actions</h3>
         <div class="row wrap">
-          <button disabled={!app.activeConvId} onclick={handleAttachCurrent}>
+          <button disabled={!app.activeConvId} onclick={handleAttachCurrent}
+            title={app.activeConvId ? '' : 'Open a chat first, then come back'}>
             Attach current conversation
           </button>
-          <button onclick={quickAddQuote}>Pin a quote</button>
+          <button onclick={openQuoteModal}>Pin a quote</button>
         </div>
       </section>
 
@@ -332,7 +405,7 @@
         </p>
         <div class="row tight">
           <input type="text" bind:value={digDraft}
-            placeholder="e.g. 'WaveNet baselines' or 'recent audio transformer papers'"
+            placeholder={scopeDraft ? `e.g. a specific aspect of "${scopeDraft.slice(0, 60)}"` : "e.g. 'Nasrid architectural motifs' or 'Cordoba caliphate decline'"}
             onkeydown={(e) => { if (e.key === 'Enter' && !digBusy) handleDigDeeper(); }} />
           <button class="primary" disabled={digBusy || !digDraft.trim()} onclick={handleDigDeeper}>
             {digBusy ? 'Working…' : 'Dig'}
@@ -367,30 +440,69 @@
       <section class="group">
         <div class="row spaced">
           <h3>Sources ({items.length})</h3>
-          <select aria-label="Filter by kind" bind:value={filterKind}>
-            <option value="">All</option>
-            <option value="conv">Conversations</option>
-            <option value="quote">Quotes</option>
-            <option value="web_url">Web URLs</option>
-            <option value="memory">Memories</option>
-            <option value="vault_chunk">Vault chunks</option>
-            <option value="vault_sync">Vault syncs</option>
-          </select>
+          <div class="row tight">
+            <select aria-label="Filter by kind" bind:value={filterKind}>
+              <option value="">All</option>
+              <option value="conv">Conversations</option>
+              <option value="quote">Pinned quotes</option>
+              <option value="web_url">Web bookmarks</option>
+              <option value="memory">Memory references</option>
+              <option value="vault_chunk">Vault notes</option>
+              <option value="vault_sync">Vault imports</option>
+            </select>
+            <div class="add-source">
+              <select
+                aria-label="Add source"
+                value={addSourceKind}
+                onchange={(e) => openAddSource((e.currentTarget as HTMLSelectElement).value as AddSourceKind)}
+              >
+                <option value="">+ Add source…</option>
+                <option value="quote">Pin a quote</option>
+                <option value="vault">Sync Obsidian vault</option>
+              </select>
+            </div>
+          </div>
         </div>
-        <div class="row tight">
-          <input type="text" bind:value={vaultPath}
-            placeholder="Obsidian vault path to sync" />
-          <button disabled={vaultBusy || !vaultPath.trim()} onclick={handleSyncVault}>
-            {vaultBusy ? 'Syncing…' : 'Sync vault'}
-          </button>
-        </div>
-        {#if vaultStatus}<p class="status">{vaultStatus}</p>{/if}
+
+        <!-- Vault sync sub-panel: only visible when user picks it from
+             the Add source dropdown, pre-fills with the detected default
+             path. Clears itself once synced. -->
+        {#if addSourceKind === 'vault'}
+          <div class="add-panel">
+            <p class="hint">
+              Ingest markdown notes from an Obsidian vault. Loca ranks notes
+              by relevance to this project's scope before storing them.
+            </p>
+            {#if detectedVaults.length > 1}
+              <label class="field">
+                <span>Detected vaults</span>
+                <select onchange={(e) => { vaultPath = (e.currentTarget as HTMLSelectElement).value; }}>
+                  {#each detectedVaults as v}
+                    <option value={v.path}>{v.name} ({v.path})</option>
+                  {/each}
+                </select>
+              </label>
+            {/if}
+            <label class="field">
+              <span>Vault path</span>
+              <input type="text" bind:value={vaultPath}
+                placeholder={detectedVaults[0]?.path ?? "/path/to/Obsidian/vault"} />
+            </label>
+            <div class="row tight">
+              <button class="primary" disabled={vaultBusy || !vaultPath.trim()} onclick={handleSyncVault}>
+                {vaultBusy ? 'Syncing…' : 'Sync vault'}
+              </button>
+              <button onclick={() => { addSourceKind = ''; vaultStatus = null; }}>Cancel</button>
+            </div>
+            {#if vaultStatus}<p class="status">{vaultStatus}</p>{/if}
+          </div>
+        {/if}
       </section>
 
       {#if items.length === 0}
         <p class="hint">
-          No sources pinned yet. Use the Overview tab to attach a
-          conversation, pin a quote, dig deeper, or sync a vault.
+          No sources pinned yet. Use <strong>Add source</strong> above, or
+          attach a conversation / dig deeper from the Overview tab.
         </p>
       {:else}
         <ul class="item-list">
@@ -404,7 +516,7 @@
                   <div class="title">{it.title || '(untitled)'}</div>
                 {/if}
                 {#if it.body}<div class="snippet">{it.body.slice(0, 240)}</div>{/if}
-                <div class="meta">{it.kind} · {fmtDate(it.created)}</div>
+                <div class="meta">{KIND_LABELS[it.kind] ?? it.kind} · {fmtDate(it.created)}</div>
               </div>
               <button class="item-del" aria-label="Remove" onclick={() => handleDeleteItem(it.id)}>×</button>
             </li>
@@ -414,7 +526,17 @@
 
     {:else if activeTab === 'notes'}
       <section class="group">
-        <h3>Notes</h3>
+        <div class="row spaced">
+          <h3>Notes</h3>
+          <span class="save-indicator" class:saving={notesSaveState === 'saving'}
+                class:saved={notesSaveState === 'saved'}
+                class:error={notesSaveState === 'error'}>
+            {#if notesSaveState === 'saving'}Saving…
+            {:else if notesSaveState === 'saved'}Saved ✓
+            {:else if notesSaveState === 'error'}Save failed — retry
+            {/if}
+          </span>
+        </div>
         <p class="hint">Freeform markdown scratchpad. Autosaves ~700ms after you stop typing.</p>
         <textarea
           rows="14"
@@ -442,7 +564,7 @@
         <label class="field">
           <span>Sub-scope</span>
           <input type="text" bind:value={watchScope}
-            placeholder="new audio transformer papers on arXiv" />
+            placeholder={scopeDraft ? `e.g. new papers about ${scopeDraft.split(' ').slice(0, 4).join(' ')}…` : "e.g. 'new arXiv papers on the Umayyad caliphate'"} />
         </label>
         <label class="field">
           <span>Every</span>
@@ -456,6 +578,7 @@
         <button class="primary" disabled={!watchScope.trim()} onclick={handleCreateWatch}>
           Create watch
         </button>
+        {#if watchStatus}<p class="status">{watchStatus}</p>{/if}
       </section>
 
       <section class="group">
@@ -484,10 +607,29 @@
       </section>
     {/if}
   </div>
+
+  {#if quoteModalOpen}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="quote-backdrop" onclick={() => (quoteModalOpen = false)} role="presentation">
+      <div class="quote-panel" onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Pin a quote" tabindex="-1">
+        <h3>Pin a quote</h3>
+        <p class="hint">Paste a passage — a sentence, paragraph, claim — to bookmark against this project. It becomes a retrievable source.</p>
+        <textarea rows="5" bind:value={quoteDraft}
+          placeholder="Paste the quote here…"
+          onkeydown={(e) => { if (e.key === 'Escape') quoteModalOpen = false; }}></textarea>
+        <div class="row tight">
+          <button class="primary" disabled={!quoteDraft.trim()} onclick={saveQuote}>Pin quote</button>
+          <button onclick={() => (quoteModalOpen = false)}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  {/if}
 </section>
 
 <style>
   .panel {
+    position: relative;
     width: 620px;
     max-height: 720px;
     display: flex;
@@ -599,4 +741,70 @@
 
   details { padding: 8px; background: var(--loca-color-surface); border: 1px solid var(--loca-color-border); border-radius: var(--loca-radius-sm); }
   summary { cursor: pointer; font-size: 11px; color: var(--loca-color-text-muted); }
+
+  /* Notes save indicator — subtle text next to the heading. */
+  .save-indicator {
+    font-size: 10px;
+    color: var(--loca-color-text-muted);
+    min-height: 14px;
+    transition: opacity 200ms;
+  }
+  .save-indicator.saving { color: var(--loca-color-text-muted); }
+  .save-indicator.saved { color: var(--loca-color-accent); }
+  .save-indicator.error { color: var(--loca-color-danger); }
+
+  /* Add-source dropdown — same visual as the filter next to it, but
+     the "+ Add source…" title doubles as its default value so it reads
+     like a button. */
+  .add-source select {
+    background: var(--loca-color-surface);
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-sm);
+    padding: 6px 10px;
+    font-size: 12px;
+    color: var(--loca-color-text);
+    cursor: pointer;
+  }
+  .add-panel {
+    background: var(--loca-color-surface);
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-sm);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  /* Quote modal — overlay within the panel so the workspace backdrop
+     stays visible behind it. */
+  .quote-backdrop {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.35);
+    z-index: 10;
+  }
+  .quote-panel {
+    width: 440px;
+    max-width: calc(100% - 40px);
+    background: var(--loca-color-bg);
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-md);
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .quote-panel textarea {
+    background: var(--loca-color-surface);
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-sm);
+    padding: 8px 10px;
+    font-size: 12px;
+    color: var(--loca-color-text);
+    font-family: inherit;
+    resize: vertical;
+  }
 </style>

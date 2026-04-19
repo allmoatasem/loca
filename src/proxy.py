@@ -1261,7 +1261,25 @@ async def api_attach_conversation(project_id: str, request: Request) -> JSONResp
     conv_id = body.get("conv_id")
     if not conv_id:
         return JSONResponse({"error": "conv_id is required"}, status_code=400)
+    # Set the FK so the orchestrator treats this conv as scoped to the
+    # project during retrieval…
     set_conversation_project(conv_id, project_id)
+    # …and mirror it into project_items so the Sources list shows the
+    # attachment. Without this row, Sources (which reads project_items)
+    # silently hides attached conversations even though they're scoped —
+    # users reported "Attach current conversation didn't do anything".
+    import hashlib as _hashlib  # noqa: PLC0415
+    conv = get_conversation(conv_id)
+    title = (conv or {}).get("title") or conv_id
+    content_hash = _hashlib.sha256(f"conv:{conv_id}".encode()).hexdigest()
+    add_project_item(
+        project_id,
+        kind="conv",
+        title=str(title),
+        body="",
+        ref_id=conv_id,
+        content_hash=content_hash,
+    )
     return JSONResponse({"ok": True})
 
 

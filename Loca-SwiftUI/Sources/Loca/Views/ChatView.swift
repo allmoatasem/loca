@@ -1110,10 +1110,27 @@ struct InputBar: View {
 
                 if let activeProject = state.activeProject {
                     Divider().frame(height: 14)
-                    Text("📚 \(activeProject.title)")
+                    // Clickable pill — tapping it exits research mode
+                    // for this chat session. Replaces the Research-modal
+                    // "Unset active project" dropdown row.
+                    Button {
+                        state.setActiveProject(nil)
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text("📚 \(activeProject.title)")
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                            Text("×").opacity(0.6)
+                        }
                         .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 999)
+                                .stroke(Color.secondary.opacity(0.35))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .help("\(activeProject.title) — click to exit research mode")
                     ForEach(PartnerMode.allCases) { mode in
                         InputToolButton(
                             icon: mode.icon, label: mode.label,

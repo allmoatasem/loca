@@ -32,6 +32,26 @@ struct ResearchWorkspaceView: View {
     @State private var notesDraft: String = ""
     @State private var notesSaveTask: Task<Void, Never>?
 
+    // Notes save indicator states — mirrors Svelte so users get visible
+    // feedback that autosave actually happened.
+    enum NotesSaveState { case idle, saving, saved, error }
+    @State private var notesSaveState: NotesSaveState = .idle
+
+    // Sources add-source picker — replaces the always-visible vault
+    // field with a deliberate "+ Add source" dropdown.
+    enum AddSourceKind: String, CaseIterable, Identifiable {
+        case none = ""
+        case quote
+        case vault
+        var id: String { rawValue }
+    }
+    @State private var addSourceKind: AddSourceKind = .none
+
+    // Pin-a-quote sheet state — replaces the broken
+    // "use the browser UI" placeholder with an actual input.
+    @State private var quoteSheetOpen = false
+    @State private var quoteDraft = ""
+
     // New-project form
     @State private var newTitle = ""
     @State private var newScope = ""
@@ -52,6 +72,7 @@ struct ResearchWorkspaceView: View {
     // New watch
     @State private var watchScope = ""
     @State private var watchMinutes: Int = 1440
+    @State private var watchStatus: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -62,6 +83,9 @@ struct ResearchWorkspaceView: View {
             content
         }
         .frame(width: 620, height: 720)
+        .sheet(isPresented: $quoteSheetOpen) {
+            quoteSheet
+        }
         .onAppear {
             Task { await state.loadProjects() }
             if let id = state.activeProjectId { Task { await refreshDetail(id) } }
@@ -89,9 +113,6 @@ struct ResearchWorkspaceView: View {
                      ? "Create your first project"
                      : "Choose a project…"
                 ).tag("")
-                if state.activeProjectId != nil {
-                    Text("— Unset active project —").tag("")
-                }
                 ForEach(state.projects) { p in
                     Text(p.title).tag(p.id)
                 }
@@ -238,7 +259,7 @@ struct ResearchWorkspaceView: View {
             Text("Bounded web research on a sub-scope. Top hits are imported into memory and bookmarked here.")
                 .font(.system(size: 11)).foregroundColor(.secondary)
             HStack {
-                TextField("e.g. WaveNet baselines", text: $digDraft)
+                TextField(digPlaceholder, text: $digDraft)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit { Task { await digDeeper() } }
                 Button(digBusy ? "Working…" : "Dig") { Task { await digDeeper() } }
@@ -259,30 +280,61 @@ struct ResearchWorkspaceView: View {
                 Picker("", selection: $filterKind) {
                     Text("All").tag("")
                     Text("Conversations").tag("conv")
-                    Text("Quotes").tag("quote")
-                    Text("Web URLs").tag("web_url")
-                    Text("Memories").tag("memory")
-                    Text("Vault chunks").tag("vault_chunk")
-                    Text("Vault syncs").tag("vault_sync")
+                    Text("Pinned quotes").tag("quote")
+                    Text("Web bookmarks").tag("web_url")
+                    Text("Memory references").tag("memory")
+                    Text("Vault notes").tag("vault_chunk")
+                    Text("Vault imports").tag("vault_sync")
                 }
                 .labelsHidden()
-                .frame(maxWidth: 160)
+                .frame(maxWidth: 170)
                 .onChange(of: filterKind) { _, _ in
                     if let id = state.activeProjectId {
                         Task { await reloadItems(id) }
                     }
                 }
+                Picker("", selection: $addSourceKind) {
+                    Text("+ Add source…").tag(AddSourceKind.none)
+                    Text("Pin a quote").tag(AddSourceKind.quote)
+                    Text("Sync Obsidian vault").tag(AddSourceKind.vault)
+                }
+                .labelsHidden()
+                .frame(maxWidth: 160)
+                .onChange(of: addSourceKind) { _, kind in
+                    if kind == .quote {
+                        quoteDraft = ""
+                        quoteSheetOpen = true
+                        addSourceKind = .none
+                    }
+                }
             }
-            HStack {
-                TextField("Obsidian vault path", text: $vaultPath)
-                    .textFieldStyle(.roundedBorder)
-                Button(vaultBusy ? "Syncing…" : "Sync vault") { Task { await syncVault() } }
-                    .disabled(vaultBusy || vaultPath.trimmingCharacters(in: .whitespaces).isEmpty)
+
+            // Vault sync sub-panel only appears when the user picks it.
+            if addSourceKind == .vault {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Sync an Obsidian vault. Loca ranks notes by relevance to this project's scope before storing them.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        TextField("/path/to/Obsidian/vault", text: $vaultPath)
+                            .textFieldStyle(.roundedBorder)
+                        Button(vaultBusy ? "Syncing…" : "Sync vault") { Task { await syncVault() } }
+                            .disabled(vaultBusy || vaultPath.trimmingCharacters(in: .whitespaces).isEmpty)
+                        Button("Cancel") {
+                            addSourceKind = .none
+                            vaultStatus = nil
+                        }
+                    }
+                    if let s = vaultStatus { Text(s).font(.system(size: 11)).foregroundColor(.secondary) }
+                }
+                .padding(10)
+                .background(Color.secondary.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
             }
-            if let s = vaultStatus { Text(s).font(.system(size: 11)).foregroundColor(.secondary) }
         }
         if items.isEmpty {
-            Text("No sources pinned yet. Attach a conversation, pin a quote, dig deeper, or sync a vault.")
+            Text("No sources pinned yet. Use Add source above, or attach a conversation / dig deeper from the Overview tab.")
                 .font(.system(size: 11)).foregroundColor(.secondary)
         } else {
             VStack(spacing: 6) {
@@ -296,9 +348,13 @@ struct ResearchWorkspaceView: View {
     @ViewBuilder
     private func notesTab(_ d: ProjectDetail) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("NOTES")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.secondary)
+            HStack {
+                Text("NOTES")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.secondary)
+                Spacer()
+                notesSaveLabel
+            }
             Text("Freeform markdown scratchpad. Autosaves ~700ms after you stop typing.")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
@@ -319,13 +375,55 @@ struct ResearchWorkspaceView: View {
     }
 
     @ViewBuilder
+    private var quoteSheet: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Pin a quote")
+                .font(.system(size: 14, weight: .semibold))
+            Text("Paste a passage — a sentence, paragraph, claim — to bookmark against this project. It becomes a retrievable source.")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            TextEditor(text: $quoteDraft)
+                .font(.system(size: 12))
+                .frame(minHeight: 140)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5)
+                        .stroke(Color.secondary.opacity(0.3))
+                )
+            HStack {
+                Button("Cancel") { quoteSheetOpen = false }
+                Spacer()
+                Button("Pin quote") { Task { await saveQuote() } }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(quoteDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
+    }
+
+    @ViewBuilder
+    private var notesSaveLabel: some View {
+        switch notesSaveState {
+        case .idle:
+            EmptyView()
+        case .saving:
+            Text("Saving…").font(.system(size: 10)).foregroundColor(.secondary)
+        case .saved:
+            Text("Saved ✓").font(.system(size: 10)).foregroundColor(.accentColor)
+        case .error:
+            Text("Save failed — retry").font(.system(size: 10)).foregroundColor(.red)
+        }
+    }
+
+    @ViewBuilder
     private func watchesTab(_ d: ProjectDetail) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("NEW WATCH").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
             Text("Background search every N minutes; new URLs get appended to Sources. Minimum 60 min, max 2 weeks.")
                 .font(.system(size: 11)).foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            TextField("Sub-scope (e.g. new audio transformer papers on arXiv)", text: $watchScope)
+            TextField(watchPlaceholder, text: $watchScope)
                 .textFieldStyle(.roundedBorder)
             Picker("Every", selection: $watchMinutes) {
                 Text("1 hour").tag(60)
@@ -337,6 +435,9 @@ struct ResearchWorkspaceView: View {
             Button("Create watch") { Task { await createWatch() } }
                 .buttonStyle(.borderless)
                 .disabled(watchScope.trimmingCharacters(in: .whitespaces).isEmpty)
+            if let s = watchStatus {
+                Text(s).font(.system(size: 11)).foregroundColor(.secondary)
+            }
         }
 
         VStack(alignment: .leading, spacing: 6) {
@@ -400,7 +501,7 @@ struct ResearchWorkspaceView: View {
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Text("\(it.kind) · \(Self.fmt(it.created))")
+                Text("\(kindLabel(it.kind)) · \(Self.fmt(it.created))")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
             }
@@ -429,10 +530,40 @@ struct ResearchWorkspaceView: View {
         }
     }
 
+    /// Human-readable source labels — raw kind strings (vault_chunk,
+    /// vault_sync, conv) leaked implementation detail and confused
+    /// first-time testers.
+    private func kindLabel(_ k: String) -> String {
+        switch k {
+        case "conv":        return "Conversation"
+        case "memory":      return "Memory reference"
+        case "vault_chunk": return "Vault note"
+        case "web_url":     return "Web bookmark"
+        case "quote":       return "Pinned quote"
+        case "vault_sync":  return "Vault import"
+        default:            return k
+        }
+    }
+
     private func statChip(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 11))
             .foregroundColor(.secondary)
+    }
+
+    /// Scope-aware placeholders so the example matches the user's topic
+    /// instead of always suggesting audio/ML phrases.
+    private var digPlaceholder: String {
+        let s = scopeDraft.trimmingCharacters(in: .whitespaces)
+        return s.isEmpty
+            ? "e.g. 'Nasrid architectural motifs' or a narrower slice"
+            : "e.g. a specific aspect of \"\(s.prefix(60))\""
+    }
+    private var watchPlaceholder: String {
+        let s = scopeDraft.trimmingCharacters(in: .whitespaces)
+        return s.isEmpty
+            ? "e.g. 'new arXiv papers on the Umayyad caliphate'"
+            : "e.g. new papers about \(s.split(separator: " ").prefix(4).joined(separator: " "))…"
     }
 
     // MARK: - Actions
@@ -459,6 +590,7 @@ struct ResearchWorkspaceView: View {
 
     private func scheduleNotesSave() {
         notesSaveTask?.cancel()
+        notesSaveState = .saving
         let snapshot = notesDraft
         notesSaveTask = Task {
             try? await Task.sleep(nanoseconds: 700_000_000)
@@ -471,7 +603,17 @@ struct ResearchWorkspaceView: View {
         guard let id = state.activeProjectId else { return }
         do {
             try await BackendClient.shared.patchProject(id, notes: text)
-        } catch {}
+            await MainActor.run { notesSaveState = .saved }
+            // Fade back to idle after a moment so the label doesn't
+            // linger indefinitely and read like the current state.
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            if Task.isCancelled { return }
+            await MainActor.run {
+                if notesSaveState == .saved { notesSaveState = .idle }
+            }
+        } catch {
+            await MainActor.run { notesSaveState = .error }
+        }
     }
 
     private func reloadItems(_ id: String) async {
@@ -525,12 +667,27 @@ struct ResearchWorkspaceView: View {
     }
 
     private func pinQuote() async {
+        // Opens the inline quote sheet. The sheet's Save button does the
+        // actual POST; keeping this async signature preserves existing
+        // Task{} call sites.
+        guard state.activeProjectId != nil else { return }
+        quoteDraft = ""
+        quoteSheetOpen = true
+    }
+
+    private func saveQuote() async {
         guard let pid = state.activeProjectId else { return }
-        // Simple inline-prompt replacement — a modal would be nicer but
-        // keeps scope tight. Reuses the New-project title field area
-        // would be worse UX than just piping through a dialog on Svelte.
-        // For Mac, we wire up a minimal input sheet in v1.1.
-        digStatus = "Use the browser UI to paste a quote for now."
+        let text = quoteDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        do {
+            try await BackendClient.shared.addProjectItem(
+                pid, kind: "quote", body: text,
+            )
+            quoteSheetOpen = false
+            quoteDraft = ""
+            await reloadItems(pid)
+            await refreshDetail(pid)
+        } catch {}
     }
 
     private func digDeeper() async {
@@ -572,11 +729,15 @@ struct ResearchWorkspaceView: View {
         let s = watchScope.trimmingCharacters(in: .whitespaces)
         guard !s.isEmpty else { return }
         let minutes = max(60, min(watchMinutes, 60 * 24 * 14))
+        watchStatus = "Creating…"
         do {
             try await BackendClient.shared.createWatch(projectId: pid, subScope: s, scheduleMinutes: minutes)
             watchScope = ""
             await refreshDetail(pid)
-        } catch {}
+            watchStatus = "Watch created ✓"
+        } catch {
+            watchStatus = "Create failed — \(error.localizedDescription)"
+        }
     }
 
     private func deleteWatch(_ wid: String) async {
