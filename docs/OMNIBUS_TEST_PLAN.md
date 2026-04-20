@@ -27,9 +27,11 @@
 
 - [ ] **B1.** Settings → Preferences → typewriter-stream toggle. Flip on, send a message. **Expected:** response renders word-by-word at a readable pace.
 - [ ] **B2.** With typewriter on, Preferences has a reading-speed slider. Drag to slowest. **Expected:** display rate drops noticeably.
-- [ ] **B3.** Hover over a link in an assistant reply. **Expected:** cursor becomes a pointer (🖱️).
+- [ ] **B3.** Hover over a link or `[memory: N]` pill in an assistant reply. **Expected:** cursor becomes a pointer (🖱️). Swift: paragraph-level (any paragraph containing a link gets the pointer on hover). Svelte: browser-default per link range.
 - [ ] **B4.** Ask a question that triggers tool use (via an agentic client). **Expected:** no raw JSON `{"name": "web_search", ...}` in the bubble; either hidden or collapsed into a "called web_search" indicator.
-- [ ] **B5.** Click any `[memory: N]` citation. **Expected:** Memory panel opens scrolled to that memory with a highlight.
+- [ ] **B5.** Click any `[memory: N]` citation. **Expected:** an inline **popover** appears showing the cited source's kind badge (MEMORY / VAULT / WEB / PROJECT), title, and snippet. Web sources also offer an **"Open link ↗"** button. Missing-metadata or phantom indices render a "MISSING" placeholder explaining the turn didn't ship source data. *(Deep-linking the popover into the Memory panel is explicitly out — removed in this PR; follow-up ticket tracks it.)*
+- [ ] **B6.** After a reply that used memories but didn't cite inline, the bubble shows a **"📓 N sources used"** expandable footer. **Expected:** clicking expands a list of every retrieved source with kind badge, title, and snippet. Works even when the model skips `[memory: N]` markers entirely.
+- [ ] **B7.** Copy-button parity: assistant AND user bubbles both show a `doc.on.doc` icon button. Click it → flips to a checkmark for ~1s, clipboard contains the message text.
 
 ## C. Deep Dive consolidation
 
@@ -74,11 +76,14 @@ For each feature below, open it on Svelte, then Swift, and confirm behaviour mat
 - [ ] **F5.** Memory viewer → pagination, manual add, extract
 - [ ] **F6.** Glossary / Philosophy / Acknowledgements
 - [ ] **F7.** Preferences → every tab loads and saves
+- [ ] **F8.** Chat bubbles stretch responsively (cap ≈ `100% - 80px`), copy icon on both sides, citation popover stays on-screen (no offscreen clipping when clicking pills near the top edge).
+- [ ] **F9.** ⌘F opens an inline chat search bar that highlights matches inside visible bubbles with a yellow `<mark>` background. Escape closes.
+- [ ] **F10.** Bottom stats bar shows `model · TTFT · tok/s · total · P+C · context %` with 🔍/🧠 badges when search/memory fired. Matches Swift's `GenerationStatsBar` placement (below messages, above composer).
 
 ## G. Autonomous loop (inside Deep Dive)
 
 - [ ] **G1.** Enable Deep Dive, ask a factual question. Think-block shows Researcher + Reviewer + Writer + Verifier phases.
-- [ ] **G2.** Citations resolve. Click one → opens the right memory (per item B5).
+- [ ] **G2.** Citations resolve. Click one → popover shows the actual cited source content (per item B5). In Deep Dive, kinds include MEMORY / VAULT / WEB / PROJECT as appropriate for the pool.
 - [ ] **G3.** Invoke phantom: stub a question that's likely to trigger a `[memory: 99]` hallucination. **Expected:** verifier footer flags it.
 - [ ] **G4.** Plan checkpoint at `~/Library/Application Support/Loca/data/plans/<conv_id>.md` is written with Phase: done.
 
