@@ -267,6 +267,13 @@ final class AppState: ObservableObject {
     @Published var isVaultSearching     = false
     @Published var vaultSearchError: String?
 
+    // Obsidian Watcher — app-level background vault index. Mirror of
+    // the `/api/obsidian/*` state. The watcher loop keeps these in
+    // sync on its own tick; the UI polls periodically.
+    @Published var watchedVaults: [WatchedVault] = []
+    @Published var isRegisteringVault   = false
+    @Published var watcherError: String?
+
     // MARK: - Voice mode
 
     @Published var isVoiceMode       = false
@@ -345,6 +352,10 @@ final class AppState: ObservableObject {
     func analyseVault()   { Task { await _analyseVault() } }
     func selectVaultPath(_ path: String) { selectedVaultPath = path; analyseVault() }
     func vaultSearch(_ query: String) { Task { await _vaultSearch(query) } }
+    func refreshWatchedVaults() { Task { await _refreshWatchedVaults() } }
+    func registerWatchedVault(path: String) { Task { await _registerWatchedVault(path) } }
+    func unregisterWatchedVault(path: String) { Task { await _unregisterWatchedVault(path) } }
+    func scanWatchedVaultNow(path: String) { Task { await _scanWatchedVaultNow(path) } }
     func fetchVoiceConfig() { Task { do { voiceConfig = try await BackendClient.shared.fetchVoiceConfig() } catch {} } }
     func checkServerStatus()   { Task { await _checkServerStatus() } }
     func startExternalServer() { Task { await _startExternalServer() } }

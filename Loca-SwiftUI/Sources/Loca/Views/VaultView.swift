@@ -4,11 +4,17 @@ struct VaultView: View {
     @EnvironmentObject var state: AppState
     @State private var selectedTab = "overview"
     @State private var searchQuery = ""
+    @State private var pendingRegisterPath = ""
+
+    // Timer used to refresh the watched-vault list while the view is
+    // open so last-scan and busy flags stay fresh without a reload.
+    @State private var refreshTimer: Timer?
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
+            watchedList
             if state.selectedVaultPath.isEmpty {
                 emptyState
             } else if let analysis = state.vaultAnalysis {
@@ -23,8 +29,125 @@ struct VaultView: View {
                 scanPrompt
             }
         }
-        .frame(width: 700, height: 520)
-        .onAppear { state.detectVaults() }
+        .frame(width: 720, height: 600)
+        .onAppear {
+            state.detectVaults()
+            state.refreshWatchedVaults()
+            refreshTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
+                Task { @MainActor in state.refreshWatchedVaults() }
+            }
+        }
+        .onDisappear {
+            refreshTimer?.invalidate()
+            refreshTimer = nil
+        }
+    }
+
+    // MARK: - Watched list
+
+    private var watchedList: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Watched vaults").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
+                Spacer()
+            }
+            if state.watchedVaults.isEmpty {
+                HStack(spacing: 8) {
+                    if !state.detectedVaults.isEmpty {
+                        Picker("", selection: $pendingRegisterPath) {
+                            Text("Pick a vault…").tag("")
+                            ForEach(state.detectedVaults) { v in
+                                Text(v.name).tag(v.path)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: 220)
+                    } else {
+                        TextField("/path/to/Obsidian/vault", text: $pendingRegisterPath)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    Button(state.isRegisteringVault ? "Registering…" : "Watch this vault") {
+                        state.registerWatchedVault(path: pendingRegisterPath)
+                        pendingRegisterPath = ""
+                    }
+                    .disabled(state.isRegisteringVault || pendingRegisterPath.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .controlSize(.small)
+                }
+            } else {
+                ForEach(state.watchedVaults) { v in
+                    watchedRow(v)
+                }
+                HStack(spacing: 8) {
+                    let undetected = state.detectedVaults.filter { dv in
+                        !state.watchedVaults.contains(where: { $0.path == dv.path })
+                    }
+                    if !undetected.isEmpty {
+                        Picker("", selection: $pendingRegisterPath) {
+                            Text("Add another…").tag("")
+                            ForEach(undetected) { v in
+                                Text(v.name).tag(v.path)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: 220)
+                    } else {
+                        TextField("/path/to/another/vault", text: $pendingRegisterPath)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    Button(state.isRegisteringVault ? "Adding…" : "Watch") {
+                        state.registerWatchedVault(path: pendingRegisterPath)
+                        pendingRegisterPath = ""
+                    }
+                    .disabled(state.isRegisteringVault || pendingRegisterPath.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .controlSize(.small)
+                }
+            }
+            if let err = state.watcherError {
+                Text(err).font(.system(size: 11)).foregroundColor(.red)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color.secondary.opacity(0.04))
+    }
+
+    private func watchedRow(_ v: WatchedVault) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                state.selectVaultPath(v.path)
+            } label: {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(v.name).font(.system(size: 12, weight: .medium))
+                    Text(relativeScanTime(v))
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            Button("Scan now") { state.scanWatchedVaultNow(path: v.path) }
+                .disabled(v.busy)
+                .controlSize(.mini)
+            Button("Remove") { state.unregisterWatchedVault(path: v.path) }
+                .controlSize(.mini)
+                .tint(.red)
+        }
+        .padding(6)
+        .background(v.path == state.selectedVaultPath ? Color.accentColor.opacity(0.12) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+    }
+
+    private func relativeScanTime(_ v: WatchedVault) -> String {
+        if v.busy { return "syncing…" }
+        guard let ts = v.last_scan_at else { return "never scanned" }
+        let secs = max(1, Int(Date().timeIntervalSince1970 - ts))
+        let base: String
+        if secs < 60 { base = "\(secs)s ago" }
+        else if secs < 3600 { base = "\(secs / 60)m ago" }
+        else if secs < 86_400 { base = "\(secs / 3600)h ago" }
+        else { base = "\(secs / 86_400)d ago" }
+        if let total = v.last_stats.total { return "\(base) · \(total) notes" }
+        return base
     }
 
     // MARK: - Header
@@ -34,7 +157,7 @@ struct VaultView: View {
             Image(systemName: "books.vertical")
                 .font(.system(size: 20))
                 .foregroundColor(.accentColor)
-            Text("Vault Analyser")
+            Text("Obsidian Watcher")
                 .font(.system(size: 16, weight: .semibold))
             Spacer()
             vaultPicker

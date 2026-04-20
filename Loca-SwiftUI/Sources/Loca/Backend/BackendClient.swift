@@ -372,7 +372,8 @@ actor BackendClient {
         title: String? = nil,
         scope: String? = nil,
         notes: String? = nil,
-        adapter: String?? = nil
+        adapter: String?? = nil,
+        obsidianSource: Bool? = nil
     ) async throws {
         var body: [String: Any] = [:]
         if let title { body["title"] = title }
@@ -382,6 +383,9 @@ actor BackendClient {
         // touch it" (nil) from "clear the binding" (.some(nil)).
         if let adapterValue = adapter {
             body["adapter"] = adapterValue ?? NSNull()
+        }
+        if let obsidianSource {
+            body["obsidian_source"] = obsidianSource
         }
         guard !body.isEmpty else { return }
         _ = try await patchRaw("/api/projects/\(id)", body: body)
@@ -641,6 +645,51 @@ actor BackendClient {
         ]
         let (data, _) = try await session.data(from: comps.url!)
         return try JSONDecoder().decode(VaultSearchResponse.self, from: data).results
+    }
+
+    // MARK: - Obsidian Watcher
+
+    func listWatchedVaults() async throws -> [WatchedVault] {
+        let (data, _) = try await get("/api/obsidian/watched")
+        return try JSONDecoder().decode(WatchedVaultsResponse.self, from: data).vaults
+    }
+
+    func registerWatchedVault(
+        path: String, scanIntervalS: Int = 300,
+    ) async throws -> WatchedVault {
+        let (data, resp) = try await postRaw(
+            "/api/obsidian/register",
+            body: ["path": path, "scan_interval_s": scanIntervalS]
+        )
+        if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
+            var message = "register vault → HTTP \(http.statusCode)"
+            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let err = obj["error"] as? String { message = err }
+            throw BackendError.decode(NSError(
+                domain: "Loca", code: http.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: message]
+            ))
+        }
+        return try JSONDecoder().decode(RegisterWatchResponse.self, from: data).vault
+    }
+
+    func unregisterWatchedVault(path: String) async throws {
+        _ = try await postRaw("/api/obsidian/unregister", body: ["path": path])
+    }
+
+    func scanWatchedVaultNow(path: String) async throws {
+        let (data, resp) = try await postRaw(
+            "/api/obsidian/scan-now", body: ["path": path]
+        )
+        if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
+            var message = "scan-now → HTTP \(http.statusCode)"
+            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let err = obj["error"] as? String { message = err }
+            throw BackendError.decode(NSError(
+                domain: "Loca", code: http.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: message]
+            ))
+        }
     }
 
     // MARK: - System stats

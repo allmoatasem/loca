@@ -607,6 +607,36 @@ struct DetectedVault: Decodable, Identifiable {
 
 struct DetectedVaultsResponse: Decodable { let vaults: [DetectedVault] }
 
+// MARK: - Obsidian Watcher
+
+struct WatchedVaultStats: Decodable {
+    let total: Int?
+    let added: Int?
+    let updated: Int?
+    let skipped: Int?
+    let removed: Int?
+    let errors: Int?
+}
+
+struct WatchedVault: Decodable, Identifiable {
+    let path: String
+    let name: String
+    let enabled: Bool
+    let scan_interval_s: Int
+    let last_scan_at: Double?
+    let last_stats: WatchedVaultStats
+    let created: Double
+    let busy: Bool
+    var id: String { path }
+}
+
+struct WatchedVaultsResponse: Decodable { let vaults: [WatchedVault] }
+
+struct RegisterWatchResponse: Decodable {
+    let ok: Bool
+    let vault: WatchedVault
+}
+
 struct VaultScanResult: Decodable {
     let ok: Bool?; let total: Int?; let added: Int?; let updated: Int?
     let removed: Int?; let skipped: Int?; let errors: Int?; let error: String?
@@ -759,6 +789,9 @@ struct Project: Identifiable, Decodable, Equatable {
     let conv_count: Int?
     /// Preferred LoRA adapter to activate when the project becomes active.
     let adapter_name: String?
+    /// When true, recall draws live from the Obsidian Watcher index —
+    /// no per-project sync required.
+    let obsidian_source: Bool?
 }
 
 struct ProjectItem: Identifiable, Decodable, Equatable {
@@ -810,6 +843,7 @@ struct ProjectDetail: Decodable {
     let conversations: [ConversationMeta]
     let watches: [ProjectWatch]
     let adapter_name: String?
+    let obsidian_source: Bool?
 }
 
 struct CreateProjectResponse: Decodable {

@@ -641,6 +641,48 @@ extension AppState {
         isVaultSearching = false
     }
 
+    // MARK: - Obsidian Watcher
+
+    func _refreshWatchedVaults() async {
+        do {
+            watchedVaults = try await BackendClient.shared.listWatchedVaults()
+        } catch {
+            // Silent — polling will retry and transient failures
+            // shouldn't wipe the last-known-good list from the UI.
+        }
+    }
+
+    func _registerWatchedVault(_ path: String) async {
+        isRegisteringVault = true
+        watcherError = nil
+        do {
+            _ = try await BackendClient.shared.registerWatchedVault(path: path)
+            await _refreshWatchedVaults()
+        } catch {
+            watcherError = error.localizedDescription
+        }
+        isRegisteringVault = false
+    }
+
+    func _unregisterWatchedVault(_ path: String) async {
+        do {
+            try await BackendClient.shared.unregisterWatchedVault(path: path)
+            await _refreshWatchedVaults()
+        } catch {
+            watcherError = error.localizedDescription
+        }
+    }
+
+    func _scanWatchedVaultNow(_ path: String) async {
+        watcherError = nil
+        do {
+            try await BackendClient.shared.scanWatchedVaultNow(path: path)
+            await _refreshWatchedVaults()
+        } catch {
+            watcherError = error.localizedDescription
+        }
+    }
+
     // MARK: - System stats
 
     private func _scheduleStatsPoll() {
