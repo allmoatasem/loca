@@ -1105,15 +1105,6 @@ private struct CitationPopover: View {
             }
             HStack {
                 Spacer()
-                if citation.kind == "memory", let mid = citation.memory_id {
-                    Button("Open in Memory") {
-                        state.memoryHighlightId = mid
-                        state.isMemoryPanelOpen = true
-                        onClose()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                }
                 if let urlString = citation.url,
                    let url = URL(string: urlString) {
                     Link(destination: url) {

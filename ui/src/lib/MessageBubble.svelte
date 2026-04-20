@@ -5,7 +5,6 @@
 <script lang="ts">
   import { linkMemoryCitations, renderMarkdown, splitThinkBlocks, stripToolCallJson } from './markdown';
   import ThinkBlock from './ThinkBlock.svelte';
-  import { app } from './app-store.svelte';
 
   export type Role = 'user' | 'assistant';
 
@@ -145,15 +144,6 @@
 
   function closePopover(): void { popover = null; }
 
-  function openInMemoryPanel(memoryId: string): void {
-    // Flip the nav flag — App.svelte's click handler is bypassed by
-    // `onBubbleClick`'s preventDefault, so do it directly here.
-    app.memoryHighlightId = memoryId;
-    history.pushState(null, '', '/ui/memory');
-    dispatchEvent(new PopStateEvent('popstate'));
-    popover = null;
-  }
-
   function openUrl(url: string): void {
     window.open(url, '_blank', 'noopener,noreferrer');
     popover = null;
@@ -231,14 +221,11 @@
               </header>
               {#if c.title}<p class="cit-title">{c.title}</p>{/if}
               {#if c.snippet}<p class="cit-snippet">{c.snippet}</p>{/if}
-              <div class="cit-actions">
-                {#if c.kind === 'memory' && c.memory_id}
-                  <button class="primary" onclick={() => openInMemoryPanel(c.memory_id!)}>Open in Memory</button>
-                {/if}
-                {#if c.url}
+              {#if c.url}
+                <div class="cit-actions">
                   <button class="primary" onclick={() => openUrl(c.url!)}>Open link ↗</button>
-                {/if}
-              </div>
+                </div>
+              {/if}
             </li>
           {/each}
         </ul>
@@ -282,11 +269,6 @@
       <p class="cit-snippet">{popover.cit.snippet}</p>
     {/if}
     <footer>
-      {#if popover.cit.kind === 'memory' && popover.cit.memory_id}
-        <button class="primary" onclick={() => openInMemoryPanel(popover!.cit.memory_id!)}>
-          Open in Memory
-        </button>
-      {/if}
       {#if popover.cit.url}
         <button class="primary" onclick={() => openUrl(popover!.cit.url!)}>
           Open link ↗
