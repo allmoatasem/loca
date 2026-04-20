@@ -22,18 +22,23 @@ Loca manages its own inference backend (MLX on Apple Silicon, llama.cpp everywhe
 
 ### Intelligence
 - **Persistent memory** — three types (user facts, verified knowledge, corrections) injected into every conversation
-- **Research Partner** — scoped projects bundling sources, notes, background watches, and scope-aware vault ingestion; Overview / Sources / Notes / Watches tabs mirrored in Svelte and SwiftUI
-- **Obsidian vault** — read-only vault analyser: stats, orphan notes, link graph, tags, folder structure
+- **Research Partner** — scoped projects bundling sources, notes, background watches, and a one-click "Use Obsidian Watcher" toggle that draws live from the watched-vault index without re-ingestion
+- **Autonomous research loop** — Researcher → Reviewer → Writer → Verifier pipeline with `[memory: N]` citations and a phantom-citation safety net (Deep Dive mode)
+- **Obsidian Watcher** — app-level background sync of registered vaults: incremental re-index, per-vault scan-now / remove, always-live analyser with stats, orphans, broken links, and semantic search
 - **Web search** — SearXNG + trafilatura; optional Playwright deep research mode for dynamic sites
 - **Tool use** — `web_search`, `web_fetch`, `file_read`, `file_write`, `shell_exec`, `image_describe`
+- **Per-conversation adapter override** — pin a LoRA to a single conversation; siblings in the same project still use the project default
 - **Typo and intent handling** — system prompt understands informal/shorthand input
 
 ### App
 - **Conversation history** — SQLite-backed, searchable, with folders and starring
-- **App preferences** — theme, context window, inference recipes, system prompt override
+- **App preferences** — theme, context window, inference recipes, system prompt override, typewriter stream + reading-speed slider
+- **Clickable `[memory: N]` citations** — pills in the chat bubble open the Memory panel
+- **System RAM indicator** — live sidebar footer chip matches Activity Monitor's "Memory Used" figure
 - **Lockdown mode** — disable web search and Playwright with one toggle
 - **Remote server** — connect to a Loca backend on a remote machine (e.g. via Tailscale); configurable from Preferences → Server
 - **Native macOS app** — SwiftUI shell with WKWebView; also runs in any browser on Linux and Windows
+- **DMG packaging** — `./build_app.sh --dmg` outputs a ready-to-distribute disk image
 - **Glossary + Philosophy** — in-app reference pages for AI/ML terms and Loca's design principles
 
 ---
