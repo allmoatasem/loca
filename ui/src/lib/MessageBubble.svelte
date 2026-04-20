@@ -3,7 +3,7 @@
   bubbleContent split between user / assistant / typing-indicator.
 -->
 <script lang="ts">
-  import { renderMarkdown, splitThinkBlocks } from './markdown';
+  import { renderMarkdown, splitThinkBlocks, stripToolCallJson } from './markdown';
   import ThinkBlock from './ThinkBlock.svelte';
 
   export type Role = 'user' | 'assistant';
@@ -18,7 +18,7 @@
   const split = $derived(role === 'assistant' ? splitThinkBlocks(content) : null);
   const answerHtml = $derived.by(() => {
     if (!split) return '';
-    return renderMarkdown(split.answer);
+    return renderMarkdown(stripToolCallJson(split.answer));
   });
 
   let copied = $state(false);

@@ -121,6 +121,44 @@ export function renderMarkdown(raw: string): string {
 }
 
 /**
+ * Replace raw tool-call JSON / `<tool_call>` tags with a discreet
+ * `> 🔧 called <tool>` blockquote. Some models (and most agentic
+ * clients) leak the structured payload back into the assistant
+ * bubble — without filtering, the user sees a wall of JSON that
+ * means nothing to them. We never strip arguments without a marker:
+ * if we can't extract the tool name, we leave the original text
+ * alone so a curious user can still inspect it.
+ */
+export function stripToolCallJson(raw: string): string {
+  if (!raw) return raw;
+  let text = raw;
+  // <tool_call>{...}</tool_call> wrappers (Qwen / many agentic clients)
+  text = text.replace(/<tool_call>([\s\S]*?)<\/tool_call>/gi, (_match, inner: string) => {
+    const name = extractToolName(inner);
+    return name ? `\n\n> 🔧 called \`${name}\`\n\n` : '\n\n> 🔧 (tool call)\n\n';
+  });
+  // ```json fences whose body is a tool-call object
+  text = text.replace(/```json\s*([\s\S]*?)```/gi, (match, inner: string) => {
+    const name = extractToolName(inner);
+    return name ? `\n\n> 🔧 called \`${name}\`\n\n` : match;
+  });
+  // Bare `{"name": "...", "arguments": {...}}` JSON blocks at the start
+  // of a paragraph (most common shape from llama-style emit).
+  text = text.replace(
+    /(^|\n)\s*(\{[\s\S]*?"(?:name|function|tool_name)"\s*:\s*"([^"]+)"[\s\S]*?\})\s*(?=\n|$)/g,
+    (_match, lead: string, _block: string, name: string) => {
+      return `${lead}\n> 🔧 called \`${name}\`\n`;
+    },
+  );
+  return text;
+}
+
+function extractToolName(jsonish: string): string | null {
+  const m = jsonish.match(/"(?:name|function|tool_name)"\s*:\s*"([^"]+)"/);
+  return m ? m[1] : null;
+}
+
+/**
  * Splits assistant text into a reasoning trace (between `<think>…</think>`
  * tags, if any) and the final answer, matching the HTML UI's
  * splitThinkBlocks and SwiftUI's corresponding helper.
