@@ -441,7 +441,14 @@ private struct DiscoverTab: View {
                     ScrollView {
                         LazyVStack(spacing: 6) {
                             ForEach(filtered.prefix(displayLimit)) { rec in
-                                RecommendationRow(rec: rec)
+                                RecommendationRow(rec: rec) {
+                                    // Jump to the Search HF tab with the
+                                    // recommendation's name pre-populated so
+                                    // the user can preview file variants
+                                    // before committing to the download.
+                                    discoverMode = .search
+                                    hfQuery = rec.name
+                                }
                             }
                             if displayLimit < filtered.count {
                                 ProgressView()
@@ -650,6 +657,11 @@ private struct HFSearchRow: View {
 private struct RecommendationRow: View {
     @EnvironmentObject var state: AppState
     let rec: ModelRecommendation
+    /// Optional jump-to-Search-HF callback. When set, the Get button
+    /// pivots into Search HF with the model name pre-populated rather
+    /// than starting the download directly — gives the user a chance
+    /// to pick a specific GGUF quant file or eyeball other variants.
+    var onJumpToSearch: (() -> Void)? = nil
     @State private var showGGUFPicker = false
     @State private var showNotesPopover = false
 
@@ -758,7 +770,9 @@ private struct RecommendationRow: View {
                 ProgressView().scaleEffect(0.65)
             } else {
                 Button {
-                    if rec.format == "gguf" && rec.filename == nil {
+                    if let onJumpToSearch {
+                        onJumpToSearch()
+                    } else if rec.format == "gguf" && rec.filename == nil {
                         showGGUFPicker = true
                     } else {
                         state.startModelDownload(
@@ -774,7 +788,7 @@ private struct RecommendationRow: View {
                 .buttonStyle(.bordered)
                 .controlSize(.mini)
                 .disabled(isAnyDownloading)
-                .help("Download \(rec.name)")
+                .help(onJumpToSearch != nil ? "Open in Search HF" : "Download \(rec.name)")
             }
         }
         .padding(.horizontal, 12)

@@ -787,12 +787,18 @@ async def start_download(request: Request) -> JSONResponse:
     _download_jobs[download_id] = queue
     _download_meta[download_id] = {"repo_id": repo_id, "filename": filename, "format": fmt}
 
+    # Prime the SSE stream with an immediate indeterminate event so the
+    # client's progress bar appears within ~one render frame instead of
+    # waiting 1–3 s for HF API resolution + first chunk. Without this
+    # the user clicks Get and stares at nothing, then assumes it hung.
+    from .model_manager import DownloadProgress as _DP  # noqa: PLC0415
+    await queue.put(_DP(percent=-1))
+
     async def _run_download() -> None:
         try:
             async for progress in _model_manager.download(repo_id, filename, fmt):
                 await queue.put(progress)
         except asyncio.CancelledError:
-            from .model_manager import DownloadProgress as _DP
             await queue.put(_DP(0, error="cancelled"))
         finally:
             _download_tasks.pop(download_id, None)

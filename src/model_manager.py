@@ -332,6 +332,15 @@ class ModelManager:
                         downloaded = resume_from
                         t0 = time.monotonic()
                         mode = "ab" if resume_from > 0 else "wb"
+                        # Surface the resume offset BEFORE the first
+                        # chunk arrives so the UI's progress bar snaps
+                        # to where it left off, not 0%. Without this
+                        # the bar zeros for ~1 s on every resume.
+                        if resume_from > 0 and total > 0:
+                            yield DownloadProgress(
+                                percent=min(resume_from / total * 100, 99.0),
+                                total_bytes=total,
+                            )
                         try:
                             with open(dest, mode) as f:
                                 async for chunk in resp.aiter_bytes(1024 * 1024):
@@ -461,6 +470,16 @@ class ModelManager:
                                     if mode == "wb":
                                         file_dest.unlink(missing_ok=True)
                                     raise
+
+                # Surface the resume offset BEFORE the workers fire so
+                # the UI's bar snaps to the partial-download percent
+                # rather than 0% while HTTP connections are dialled.
+                already_done = sum(downloaded_bytes.values())
+                if already_done > 0 and total_size > 0:
+                    yield DownloadProgress(
+                        percent=min(already_done / total_size * 100, 99.0),
+                        total_bytes=total_size,
+                    )
 
                 download_task = asyncio.gather(*[_download_file(s) for s in pending])
                 try:
