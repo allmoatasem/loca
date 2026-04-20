@@ -79,9 +79,15 @@ def _migrate(c: sqlite3.Connection) -> None:
     # Idempotent column additions for existing databases
     conv_cols = {r[1] for r in c.execute("PRAGMA table_info(conversations)")}
     for col, defn in [
-        ("starred",    "INTEGER NOT NULL DEFAULT 0"),
-        ("folder",     "TEXT"),
-        ("project_id", "TEXT"),
+        ("starred",      "INTEGER NOT NULL DEFAULT 0"),
+        ("folder",       "TEXT"),
+        ("project_id",   "TEXT"),
+        # Per-conversation LoRA override. NULL = use project (or base);
+        # a value pins this conversation to a specific adapter so the
+        # user can keep, e.g., a code-style adapter active in one
+        # session while a writing-style sibling stays on the project's
+        # default. Activated when the conversation is loaded.
+        ("adapter_name", "TEXT"),
     ]:
         if col not in conv_cols:
             c.execute(f"ALTER TABLE conversations ADD COLUMN {col} {defn}")
@@ -228,13 +234,20 @@ _MISSING = object()
 def list_conversations(limit: int = 200) -> list[dict]:
     with _conn() as c:
         return [dict(r) for r in c.execute(
-            "SELECT id, title, created, updated, model, starred, folder, project_id "
+            "SELECT id, title, created, updated, model, starred, folder, "
+            "project_id, adapter_name "
             "FROM conversations ORDER BY starred DESC, updated DESC LIMIT ?", (limit,)
         )]
 
 
-def patch_conversation(conv_id: str, *, starred=_MISSING, folder=_MISSING) -> None:
-    """Update starred/folder. Use _MISSING (default) to skip a field, None to clear folder."""
+def patch_conversation(
+    conv_id: str, *,
+    starred=_MISSING, folder=_MISSING, adapter_name=_MISSING,
+) -> None:
+    """Update starred/folder/adapter. Use _MISSING (default) to skip a
+    field, None to clear (folder/adapter). Adapter override on a
+    conversation pins it to a specific LoRA regardless of the
+    project's binding."""
     parts: list[str] = []
     vals: list[object] = []
     if starred is not _MISSING:
@@ -243,6 +256,9 @@ def patch_conversation(conv_id: str, *, starred=_MISSING, folder=_MISSING) -> No
     if folder is not _MISSING:
         parts.append("folder = ?")
         vals.append(folder)
+    if adapter_name is not _MISSING:
+        parts.append("adapter_name = ?")
+        vals.append(adapter_name)
     if not parts:
         return
     vals.append(conv_id)
@@ -257,7 +273,8 @@ def search_conversations(query: str, limit: int = 50) -> list[dict]:
     like = f"%{query}%"
     with _conn() as c:
         return [dict(r) for r in c.execute(
-            "SELECT id, title, created, updated, model, starred, folder, project_id "
+            "SELECT id, title, created, updated, model, starred, folder, "
+            "project_id, adapter_name "
             "FROM conversations WHERE title LIKE ? OR messages LIKE ? "
             "ORDER BY starred DESC, updated DESC LIMIT ?",
             (like, like, limit),

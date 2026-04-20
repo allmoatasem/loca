@@ -267,14 +267,42 @@ actor BackendClient {
         _ = try await delete("/api/conversations/\(id)")
     }
 
-    func patchConversation(_ id: String, starred: Bool? = nil, folder: String?? = nil) async throws {
+    func patchConversation(
+        _ id: String,
+        starred: Bool? = nil,
+        folder: String?? = nil,
+        adapter: String?? = nil
+    ) async throws {
         var body: [String: Any] = [:]
         if let s = starred { body["starred"] = s }
         if let f = folder {
             if let name = f { body["folder"] = name } else { body["folder"] = NSNull() }
         }
+        if let a = adapter {
+            // Double-optional: `.some(nil)` clears the override; nil
+            // (omitted) leaves the existing binding untouched.
+            body["adapter"] = a ?? NSNull()
+        }
         guard !body.isEmpty else { return }
         _ = try await patchRaw("/api/conversations/\(id)", body: body)
+    }
+
+    /// Activate the conversation's adapter (or its project's adapter,
+    /// or base) on the currently loaded model. Server resolves the
+    /// layered fallback so both clients share the same policy.
+    func activateConversationAdapter(_ convId: String) async throws {
+        let (data, resp) = try await postRaw(
+            "/api/conversations/\(convId)/activate-adapter", body: [:]
+        )
+        if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
+            var message = "activate conv adapter → HTTP \(http.statusCode)"
+            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let err = obj["error"] as? String { message = err }
+            throw BackendError.decode(NSError(
+                domain: "Loca", code: http.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: message]
+            ))
+        }
     }
 
     func searchConversations(_ query: String) async throws -> [ConversationMeta] {

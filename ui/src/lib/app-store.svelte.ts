@@ -4,6 +4,7 @@
  */
 import {
   activateAdapter as apiActivateAdapter,
+  activateConversationAdapter as apiActivateConvAdapter,
   activateProjectAdapter as apiActivateProjectAdapter,
   deleteConversation as apiDelete,
   fetchActiveModelDetail,
@@ -235,6 +236,18 @@ function appStore() {
   function selectConversation(id: string): void {
     activeConvId = id;
     convSelectNonce++;
+    // Apply the conversation's per-conv adapter override (or fall
+    // through to its project's binding) so siblings can carry
+    // different adapters in the same session. Fire-and-forget; the
+    // server handles the "no model loaded" case.
+    void apiActivateConvAdapter(id)
+      .then(async () => {
+        const detail = await fetchActiveModelDetail();
+        if (detail) activeAdapter = detail.adapter;
+      })
+      .catch((e: unknown) => {
+        errorMsg = e instanceof Error ? e.message : String(e);
+      });
   }
 
   /**

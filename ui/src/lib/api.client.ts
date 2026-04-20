@@ -29,6 +29,8 @@ export interface ConversationMeta {
   model?: string;
   folder?: string | null;
   starred?: boolean;
+  /** Per-conversation LoRA override. NULL = inherit from project / base. */
+  adapter_name?: string | null;
 }
 
 export interface ConversationDetail extends ConversationMeta {
@@ -151,7 +153,7 @@ export async function deleteConversation(id: string): Promise<void> {
 
 export async function patchConversation(
   id: string,
-  patch: { folder?: string | null; starred?: boolean },
+  patch: { folder?: string | null; starred?: boolean; adapter?: string | null },
 ): Promise<void> {
   const r = await fetch(`/api/conversations/${encodeURIComponent(id)}`, {
     method: 'PATCH',
@@ -159,6 +161,17 @@ export async function patchConversation(
     body: JSON.stringify(patch),
   });
   if (!r.ok) throw new Error(`patch ${id} → HTTP ${r.status}`);
+}
+
+/** Activate the conversation's adapter (or its project's adapter, or
+ *  base) on the currently loaded model. Server resolves the layered
+ *  fallback so both clients share the same policy. */
+export async function activateConversationAdapter(convId: string): Promise<void> {
+  const r = await fetch(
+    `/api/conversations/${encodeURIComponent(convId)}/activate-adapter`,
+    { method: 'POST' },
+  );
+  if (!r.ok) throw new Error(`activate-adapter ${convId} → HTTP ${r.status}`);
 }
 
 export async function unloadModel(): Promise<void> {

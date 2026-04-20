@@ -327,6 +327,16 @@ extension AppState {
             let detail = try await BackendClient.shared.getConversation(id)
             messages = detail.messages
             activeConversationId = id
+            // Apply the conversation's per-conv adapter override (or its
+            // project's default, or base). Server resolves the layered
+            // fallback so siblings can carry different adapters in the
+            // same session. Fire-and-forget; "no model loaded" is a no-op.
+            do {
+                try await BackendClient.shared.activateConversationAdapter(id)
+            } catch {
+                // Ignore — sidebar's adapter chip will refresh on the
+                // next /api/models/active poll.
+            }
         } catch {}
     }
 

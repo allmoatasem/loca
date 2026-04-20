@@ -462,10 +462,14 @@ struct ConversationMeta: Decodable, Identifiable {
     let updated: Double   // Unix timestamp (matches store column name)
     let starred: Bool
     let folder: String?
+    /// Per-conversation LoRA override. Nil = inherit from project (or base).
+    let adapter_name: String?
 
     var updatedDate: Date { Date(timeIntervalSince1970: updated) }
 
-    private enum CodingKeys: String, CodingKey { case id, title, model, updated, starred, folder }
+    private enum CodingKeys: String, CodingKey {
+        case id, title, model, updated, starred, folder, adapter_name
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -476,6 +480,7 @@ struct ConversationMeta: Decodable, Identifiable {
         // SQLite returns INTEGER 0/1 for booleans
         starred = ((try? c.decode(Int.self, forKey: .starred)) ?? 0) != 0
         folder  = try? c.decode(String.self, forKey: .folder)
+        adapter_name = try? c.decode(String.self, forKey: .adapter_name)
     }
 }
 

@@ -79,6 +79,36 @@
     if (lockdownMode) researchMode = false;
   }
 
+  // Per-conversation adapter override. The store doesn't carry the
+  // conv-level binding (it'd need a per-conv detail fetch), so we
+  // resolve it from the cached conversation list which the API now
+  // returns with `adapter_name`.
+  const activeConvAdapter = $derived.by<string | null>(() => {
+    if (!app.activeConvId) return null;
+    const conv = app.conversations.find((c) => c.id === app.activeConvId)
+      ?? app.searchResults.find((c) => c.id === app.activeConvId);
+    return conv?.adapter_name ?? null;
+  });
+  const inheritedAdapterLabel = $derived.by<string>(() => {
+    if (app.activeProject?.adapter_name) return `project: ${app.activeProject.adapter_name}`;
+    return 'base';
+  });
+
+  async function setConvAdapter(adapter: string | null): Promise<void> {
+    if (!app.activeConvId) return;
+    try {
+      const { patchConversation, activateConversationAdapter } = await import('./api.client');
+      await patchConversation(app.activeConvId, { adapter });
+      // Refresh the cached conv list so the derived getter picks up
+      // the new value, then activate the resolved adapter on the
+      // running model.
+      await app.refresh();
+      await activateConversationAdapter(app.activeConvId);
+    } catch (e) {
+      errorMsg = e instanceof Error ? e.message : String(e);
+    }
+  }
+
   // Round-trip the conversation to /api/conversations so a refresh
   // doesn't lose state and the sidebar picks it up.
   let convId = $state<string | null>(null);
@@ -751,6 +781,19 @@
 
   <!-- Session-only toggles, mirrored from SwiftUI's composer row. -->
   <div class="input-tools">
+    {#if app.activeConvId && app.activeModelName && app.adapters.length > 0}
+      <select
+        class="adapter-pick"
+        title="Override the adapter just for this conversation. Inherits the project (or base) when unset."
+        value={activeConvAdapter ?? ''}
+        onchange={(e) => void setConvAdapter((e.currentTarget as HTMLSelectElement).value || null)}
+      >
+        <option value="">⊘ Inherit ({inheritedAdapterLabel})</option>
+        {#each app.adapters as a (a.name)}
+          <option value={a.name}>{a.name}</option>
+        {/each}
+      </select>
+    {/if}
     <button
       class="tool"
       class:active={researchMode}
@@ -1039,6 +1082,15 @@
   .input-tools .tool:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+  }
+  .input-tools .adapter-pick {
+    background: var(--loca-color-surface);
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-sm);
+    color: var(--loca-color-text);
+    padding: 2px 6px;
+    font-size: 11px;
+    max-width: 200px;
   }
   .partner-segment {
     display: inline-flex;

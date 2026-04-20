@@ -1153,6 +1153,12 @@ async def api_patch_conversation(conv_id: str, request: Request) -> JSONResponse
         kwargs["starred"] = bool(body["starred"])
     if "folder" in body:
         kwargs["folder"] = body.get("folder")  # None clears folder
+    # `adapter` (nullable) pins this conversation to a specific LoRA
+    # adapter — overrides the project's binding so siblings can use
+    # different adapters in the same session. Sending `null` clears
+    # the override; omit the key to leave it alone.
+    if "adapter" in body:
+        kwargs["adapter_name"] = body.get("adapter")
     patch_conversation(conv_id, **kwargs)
     return JSONResponse({"ok": True})
 
@@ -1216,6 +1222,36 @@ async def api_patch_project(project_id: str, request: Request) -> JSONResponse:
         kwargs["obsidian_source"] = bool(body["obsidian_source"])
     patch_project(project_id, **kwargs)
     return JSONResponse({"ok": True, "project": get_project(project_id)})
+
+
+@app.post("/api/conversations/{conv_id}/activate-adapter")
+async def api_conv_activate_adapter(conv_id: str) -> JSONResponse:
+    """Activate the conversation's adapter (or its project's adapter,
+    or base) on the currently loaded model. Layered fallback so the
+    per-conv override always wins, with the project's binding as a
+    sensible default when no override is set."""
+    assert _model_manager is not None
+    conv = get_conversation(conv_id)
+    if not conv:
+        return JSONResponse({"error": "conversation not found"}, status_code=404)
+    adapter = conv.get("adapter_name")
+    if adapter is None:
+        # Fall back to the project's binding if any.
+        pid = conv.get("project_id")
+        if pid:
+            proj = get_project(pid)
+            if proj:
+                adapter = proj.get("adapter_name")
+    active_model = _inference_backend.current_model() if _inference_backend else None
+    if not active_model:
+        return JSONResponse({"ok": True, "model": None, "adapter": None})
+    try:
+        name, api_base = await _model_manager.load(active_model, adapter=adapter)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse({
+        "ok": True, "model": name, "adapter": adapter, "api_base": api_base,
+    })
 
 
 @app.post("/api/projects/{project_id}/activate-adapter")
