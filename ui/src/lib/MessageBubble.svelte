@@ -12,13 +12,19 @@
     content: string;
     isStreaming?: boolean;
     imageUrls?: string[];       // rendered above the bubble for user messages
+    /** Per-turn memory ids, ordered by citation index. Used to deep-link
+     *  `[memory: N]` clicks to the specific memory row instead of just
+     *  opening the panel at the top. */
+    citationIds?: string[];
   }
-  let { role, content, isStreaming = false, imageUrls = [] }: Props = $props();
+  let {
+    role, content, isStreaming = false, imageUrls = [], citationIds = [],
+  }: Props = $props();
 
   const split = $derived(role === 'assistant' ? splitThinkBlocks(content) : null);
   const answerHtml = $derived.by(() => {
     if (!split) return '';
-    return renderMarkdown(linkMemoryCitations(stripToolCallJson(split.answer)));
+    return renderMarkdown(linkMemoryCitations(stripToolCallJson(split.answer), citationIds));
   });
 
   let copied = $state(false);

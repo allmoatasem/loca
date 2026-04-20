@@ -41,6 +41,10 @@
     role: Role;
     content: string;
     imageUrls?: string[];
+    /** Per-turn memory ids, ordered by citation index. `citationIds[N-1]`
+     *  resolves `[memory: N]` to its actual memory record so clicking the
+     *  pill deep-links to the specific row in the Memory panel. */
+    citationIds?: string[];
   }
 
   interface TurnStats {
@@ -497,6 +501,7 @@
       let modelName = app.activeModelName ?? 'local';
       let searchTriggered = false;
       let memoryInjected  = false;
+      let citationIds: string[] = [];
 
       // Typewriter mode replays incoming deltas at a controlled
       // chars/sec so the user reads alongside the model. The drain
@@ -509,7 +514,11 @@
       let drainTimer: ReturnType<typeof setInterval> | null = null;
       const pumpHistory = (): void => {
         const updated = [...history];
-        updated[assistantIdx] = { role: 'assistant', content: assembled };
+        updated[assistantIdx] = {
+          role: 'assistant',
+          content: assembled,
+          citationIds: citationIds.length ? citationIds : undefined,
+        };
         history = updated;
       };
       if (typewriterOn) {
@@ -554,6 +563,10 @@
               usageCompletionTokens = Number(usage.completion_tokens) || usageCompletionTokens;
               if (typeof usage.search_triggered === 'boolean') searchTriggered = usage.search_triggered;
               if (typeof usage.memory_injected  === 'boolean') memoryInjected  = usage.memory_injected;
+              if (Array.isArray(usage.citation_ids)) {
+                citationIds = usage.citation_ids.map((x: unknown) => String(x ?? ''));
+                pumpHistory();
+              }
             }
           } catch { /* ignore malformed SSE lines */ }
         }
@@ -687,6 +700,7 @@
             role={msg.role}
             content={msg.content}
             imageUrls={msg.imageUrls ?? []}
+            citationIds={msg.citationIds}
             isStreaming={streaming && i === history.length - 1 && msg.role === 'assistant'}
           />
         {/each}

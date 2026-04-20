@@ -153,6 +153,10 @@ struct UsageStats: Decodable {
     let total_tokens: Int
     let search_triggered: Bool?
     let memory_injected: Bool?
+    /// Per-turn memory ids ordered by citation index — `citation_ids[0]`
+    /// is the record `[memory: 1]` points at. Used by MessageBubble to
+    /// deep-link citation clicks to the matching row in the Memory panel.
+    let citation_ids: [String]?
 }
 
 // MARK: - Model capability

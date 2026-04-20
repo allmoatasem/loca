@@ -408,6 +408,16 @@ async def _openai_stream_response(
     # Emit usage summary before DONE so the UI can show token stats + actual model name
     completion_tokens = max(1, output_chars // 4)
     prompt_tokens = sum(len(m.get("content", "") if isinstance(m.get("content"), str) else "") for m in messages) // 4
+    # Per-turn citation map so the client can deep-link [memory: N]
+    # clicks to the actual memory record. List is ordered by index —
+    # position 0 → [memory: 1]. Empty when no memory was injected so
+    # the client knows this turn has no resolvable citations.
+    citation_ids: list[str] = []
+    if memory_injected:
+        for m in provenance_seed.get("retrieved", []):
+            mid = str(m.get("id") or "")
+            if mid:
+                citation_ids.append(mid)
     usage_payload = json.dumps({
         "id": "chatcmpl-local",
         "object": "chat.completion.chunk",
@@ -419,6 +429,7 @@ async def _openai_stream_response(
             "total_tokens": prompt_tokens + completion_tokens,
             "search_triggered": search_triggered,
             "memory_injected": memory_injected,
+            "citation_ids": citation_ids,
         },
     })
     # Verifier pass: parse [memory: N] from the completed answer, flag any

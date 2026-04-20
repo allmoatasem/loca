@@ -5,12 +5,18 @@
   per-item delete.
 -->
 <script lang="ts">
+  import { tick } from 'svelte';
   import { app } from './app-store.svelte';
 
   interface Props {
     onClose?: () => void;
+    /** Deep-link target from a `[memory: N]` citation click. `id:<uuid>`
+     *  scrolls to that specific memory; `idx:<n>` scrolls to the Nth
+     *  row in the most-recent list. `null` (default) just opens the
+     *  panel at the top. */
+    highlight?: { kind: 'id' | 'idx'; value: string } | null;
   }
-  let { onClose }: Props = $props();
+  let { onClose, highlight = null }: Props = $props();
 
   interface MemoryItem {
     id: string;
@@ -27,6 +33,9 @@
   let manualInput = $state('');
   let extractLabel = $state('✦ Extract memories from current conversation');
   let extractBusy = $state(false);
+  /** Memory id that just got highlighted — drives a ring flash. */
+  let flashId = $state<string | null>(null);
+  let itemEls = $state<Record<string, HTMLElement>>({});
 
   async function loadFirstPage(): Promise<void> {
     loading = true;
@@ -127,6 +136,43 @@
   // Eagerly load on mount.
   loadFirstPage();
 
+  // Deep-link target from `[memory: N]` click. Resolves as soon as
+  // the referenced row is in `memories` (may require load-more calls
+  // when the citation points deep into a long history).
+  async function focusHighlight(): Promise<void> {
+    if (!highlight || loading) return;
+    let targetId: string | null = null;
+    if (highlight.kind === 'id') {
+      targetId = highlight.value;
+    } else {
+      // idx is 1-based from the orchestrator's retrieval pool. The
+      // memory list here is in descending-created order which won't
+      // match the pool ordering, so idx-based fallback just picks
+      // the Nth most-recent memory as an approximation.
+      const n = Number(highlight.value);
+      if (Number.isFinite(n) && n >= 1 && memories[n - 1]) {
+        targetId = memories[n - 1].id;
+      }
+    }
+    if (!targetId) return;
+    // Page in more rows until the id appears or we run out.
+    while (!memories.some((m) => m.id === targetId) && offset < total) {
+      await loadMore();
+    }
+    if (!memories.some((m) => m.id === targetId)) return;
+    await tick();
+    const el = itemEls[targetId];
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      flashId = targetId;
+      setTimeout(() => { if (flashId === targetId) flashId = null; }, 1800);
+    }
+  }
+
+  $effect(() => {
+    if (!loading && highlight) void focusHighlight();
+  });
+
   const remaining = $derived(Math.max(0, total - offset));
   const pageLoadSize = $derived(Math.min(PAGE_SIZE, remaining));
   const canExtract = $derived(!!app.activeConvId && !extractBusy);
@@ -183,7 +229,11 @@
         </div>
       {:else}
         {#each memories as m (m.id)}
-          <article class="item">
+          <article
+            class="item"
+            class:flash={flashId === m.id}
+            bind:this={itemEls[m.id]}
+          >
             <div class="item-body">
               <p class="content">{m.content}</p>
               <p class="date">{formatDate(m.created)}</p>
@@ -311,6 +361,13 @@
     border: 1px solid var(--loca-color-border);
     border-radius: var(--loca-radius-sm);
     background: var(--loca-color-surface);
+    transition: background 0.3s ease, border-color 0.3s ease,
+                box-shadow 0.3s ease;
+  }
+  .item.flash {
+    background: color-mix(in srgb, var(--loca-color-accent) 12%, var(--loca-color-surface));
+    border-color: var(--loca-color-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--loca-color-accent) 25%, transparent);
   }
   .item-body { flex: 1; }
   .content {

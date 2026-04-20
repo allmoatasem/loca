@@ -619,11 +619,21 @@ struct MessageBubble: View {
         }
         .onHover { isHovered = $0 }
         // Intercept `loca-memory:N` URLs produced by the memory-citation
-        // link pass in ProseView. The N currently opens the Memory panel
-        // without scrolling to a specific row — index-level deep-link
-        // plumbing lands with per-turn provenance in a follow-up.
+        // link pass in ProseView. The resource part of the URL is the
+        // 1-based index into this turn's citation pool — resolve it to
+        // the actual memory id via the per-turn map so the panel can
+        // scroll to and flash that row.
         .environment(\.openURL, OpenURLAction { url in
             if url.scheme == "loca-memory" {
+                let idxString = url.absoluteString
+                    .replacingOccurrences(of: "loca-memory:", with: "")
+                if let idx = Int(idxString),
+                   let ids = state.citationIdsByMessageId[message.id],
+                   idx >= 1, idx <= ids.count {
+                    state.memoryHighlightId = ids[idx - 1]
+                } else {
+                    state.memoryHighlightId = nil
+                }
                 state.isMemoryPanelOpen = true
                 return .handled
             }
@@ -1606,18 +1616,19 @@ struct MemoryPanel: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding()
             } else {
+                ScrollViewReader { proxy in
                 List {
                     if !searchText.isEmpty && !recallResults.isEmpty {
                         Section(header: Text("Semantic matches for \"\(searchText)\"")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundColor(.secondary)) {
                             ForEach(displayedMemories) { memory in
-                                MemoryRow(memory: memory)
+                                MemoryRow(memory: memory).id(memory.id)
                             }
                         }
                     } else {
                         ForEach(displayedMemories) { memory in
-                            MemoryRow(memory: memory)
+                            MemoryRow(memory: memory).id(memory.id)
                         }
                         .onDelete { offsets in
                             let ids = offsets.map { displayedMemories[$0].id }
@@ -1646,6 +1657,42 @@ struct MemoryPanel: View {
                             .disabled(state.isLoadingMoreMemories)
                         }
                     }
+                }
+                .onChange(of: state.memoryHighlightId) { _, new in
+                    guard let id = new else { return }
+                    Task {
+                        // Best-effort page-in until the row appears; cap
+                        // to avoid runaway loops when citations point
+                        // at an id no longer in the store.
+                        var attempts = 0
+                        while !state.memories.contains(where: { $0.id == id }),
+                              state.memories.count < state.memoriesTotal,
+                              attempts < 20 {
+                            await state.loadMoreMemories()
+                            attempts += 1
+                        }
+                        try? await Task.sleep(nanoseconds: 50_000_000)
+                        withAnimation(.easeInOut(duration: 0.35)) {
+                            proxy.scrollTo(id, anchor: .center)
+                        }
+                        // Clear after the flash so re-opening the panel
+                        // doesn't re-trigger the same highlight.
+                        try? await Task.sleep(nanoseconds: 1_800_000_000)
+                        if state.memoryHighlightId == id { state.memoryHighlightId = nil }
+                    }
+                }
+                .onAppear {
+                    // Run the same effect on first appear in case the
+                    // panel was opened with a pending highlight.
+                    if let id = state.memoryHighlightId {
+                        Task {
+                            try? await Task.sleep(nanoseconds: 120_000_000)
+                            withAnimation(.easeInOut(duration: 0.35)) {
+                                proxy.scrollTo(id, anchor: .center)
+                            }
+                        }
+                    }
+                }
                 }
             }
         }
@@ -1679,6 +1726,8 @@ private struct MemoryRow: View {
     @EnvironmentObject var state: AppState
     let memory: Memory
 
+    private var isFlashed: Bool { state.memoryHighlightId == memory.id }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
@@ -1701,6 +1750,16 @@ private struct MemoryRow: View {
                 .textSelection(.enabled)
         }
         .padding(.vertical, 3)
+        .padding(.horizontal, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isFlashed ? Color.accentColor.opacity(0.12) : Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(isFlashed ? Color.accentColor : .clear, lineWidth: 1.5)
+        )
+        .animation(.easeInOut(duration: 0.3), value: isFlashed)
     }
 
     private var typeColor: Color {
