@@ -217,6 +217,21 @@ class ModelManager:
                     f"Adapter '{adapter}' not found under {model.path}/adapters/",
                 )
             adapter_path = str(resolved)
+        # Skip the restart if the requested combination already matches
+        # what's running. Without this, `/api/projects/{id}/activate-adapter`
+        # on a project with no adapter binding unloads + reloads the model
+        # for no reason — the UI briefly sees `active=None` during the
+        # restart window and drops the model chip.
+        current_model = self.backend.current_model() or ""
+        current_adapter = self.current_adapter_name()
+        if (
+            self.backend.is_running()
+            and current_model == model.name
+            and (current_adapter or None) == (adapter or None)
+            and ctx_size is None and n_gpu_layers is None
+            and batch_size is None and num_threads is None
+        ):
+            return model.name, self.backend.api_base()
         await self.backend.restart(
             model.path, ctx_size, n_gpu_layers, batch_size, num_threads,
             adapter_path=adapter_path,

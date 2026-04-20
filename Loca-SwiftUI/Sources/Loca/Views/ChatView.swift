@@ -761,12 +761,18 @@ struct MessageBubble: View {
                 .padding(.vertical, 12)
         } else {
             let split = splitThinkBlocks(plain)
+            let cits = state.citationsByMessageId[message.id] ?? []
             VStack(alignment: .leading, spacing: 8) {
                 if !split.thinking.isEmpty {
                     ThinkBlockView(text: split.thinking)
                 }
                 if !split.answer.isEmpty {
                     MarkdownView(text: split.answer, highlight: highlight)
+                }
+                if !cits.isEmpty && !showTypingIndicator {
+                    SourcesChip(citations: cits) { cit in
+                        pendingCitation = cit
+                    }
                 }
             }
             .padding(.horizontal, 12)
@@ -961,6 +967,90 @@ struct MarkdownView: View {
             remaining = String(remaining[afterIdx...])
         }
         return result.isEmpty ? [.prose(input)] : result
+    }
+}
+
+// MARK: - Sources-used footer chip
+
+/// Compact expandable footer on assistant bubbles that lists every
+/// source retrieved for the turn. Makes memory use visible even when
+/// the model skips `[memory: N]` citation markers — common on smaller
+/// models that prefer prose references like "as we discussed earlier".
+private struct SourcesChip: View {
+    let citations: [Citation]
+    let onSelect: (Citation) -> Void
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                    Text("📓 \(citations.count) source\(citations.count == 1 ? "" : "s") used")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(Color.accentColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.accentColor.opacity(0.22), lineWidth: 1)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .foregroundColor(.accentColor)
+            }
+            .buttonStyle(.plain)
+            if expanded {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(citations) { cit in
+                        Button { onSelect(cit) } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(kindLabel(cit.kind))
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundColor(.accentColor)
+                                    Text("[memory: \(cit.idx)]")
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                }
+                                if !cit.title.isEmpty {
+                                    Text(cit.title)
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .lineLimit(1)
+                                }
+                                if !cit.snippet.isEmpty {
+                                    Text(cit.snippet)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(3)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                            .background(Color(nsColor: .textBackgroundColor))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    private func kindLabel(_ k: String) -> String {
+        switch k {
+        case "memory":       return "MEMORY"
+        case "project_item": return "PROJECT"
+        case "obsidian", "vault": return "VAULT"
+        case "web":          return "WEB"
+        default:             return k.uppercased()
+        }
     }
 }
 

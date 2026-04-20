@@ -145,6 +145,35 @@
     {/if}
     <!-- eslint-disable-next-line svelte/no-at-html-tags -->
     <div class="md">{@html answerHtml}</div>
+    {#if !isStreaming && citations.length > 0}
+      <!-- Footer chip: makes sources visible even when the model
+           forgot to cite inline with `[memory: N]`. Clicking expands
+           the full list; individual rows open in Memory / URL just
+           like the inline popover. -->
+      <details class="sources-chip">
+        <summary>📓 {citations.length} source{citations.length === 1 ? '' : 's'} used</summary>
+        <ul class="sources-list">
+          {#each citations as c (c.idx)}
+            <li>
+              <header>
+                <span class="cit-kind">{kindLabel(c.kind)}</span>
+                <span class="cit-idx">[memory: {c.idx}]</span>
+              </header>
+              {#if c.title}<p class="cit-title">{c.title}</p>{/if}
+              {#if c.snippet}<p class="cit-snippet">{c.snippet}</p>{/if}
+              <div class="cit-actions">
+                {#if c.kind === 'memory' && c.memory_id}
+                  <button class="primary" onclick={() => openInMemoryPanel(c.memory_id!)}>Open in Memory</button>
+                {/if}
+                {#if c.url}
+                  <button class="primary" onclick={() => openUrl(c.url!)}>Open link ↗</button>
+                {/if}
+              </div>
+            </li>
+          {/each}
+        </ul>
+      </details>
+    {/if}
     {#if !isStreaming && split.answer.trim()}
       <button class="copy" onclick={copyToClipboard} aria-label="Copy reply">
         {copied ? '✓ Copied' : 'Copy'}
@@ -321,6 +350,77 @@
   .md :global(ol ul), .md :global(ol ol) { margin: 4px 0; }
   .md :global(.katex-display) { margin: 8px 0; overflow-x: auto; overflow-y: hidden; }
   .md :global(.katex) { font-size: 1em; }
+
+  /* Sources-used expandable footer */
+  .sources-chip {
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--loca-color-text-muted);
+  }
+  .sources-chip summary {
+    cursor: pointer;
+    padding: 3px 8px;
+    background: color-mix(in srgb, var(--loca-color-accent) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--loca-color-accent) 20%, transparent);
+    border-radius: 999px;
+    width: fit-content;
+    list-style: none;
+    user-select: none;
+  }
+  .sources-chip summary::-webkit-details-marker { display: none; }
+  .sources-chip summary:hover {
+    background: color-mix(in srgb, var(--loca-color-accent) 14%, transparent);
+  }
+  .sources-list {
+    list-style: none;
+    padding: 10px 0 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .sources-list li {
+    padding: 8px 10px;
+    background: var(--loca-color-bg);
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-sm);
+  }
+  .sources-list header {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 4px;
+  }
+  .sources-list .cit-title {
+    margin: 0 0 3px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--loca-color-text);
+  }
+  .sources-list .cit-snippet {
+    margin: 0;
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--loca-color-text-muted);
+    max-height: 4.5em;
+    overflow: hidden;
+    white-space: pre-wrap;
+  }
+  .sources-list .cit-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .sources-list .primary {
+    background: color-mix(in srgb, var(--loca-color-accent) 14%, transparent);
+    color: var(--loca-color-accent);
+    border: 1px solid color-mix(in srgb, var(--loca-color-accent) 32%, transparent);
+    border-radius: var(--loca-radius-sm);
+    padding: 3px 8px;
+    font-size: 10px;
+    cursor: pointer;
+  }
+  .sources-list .primary:hover {
+    background: color-mix(in srgb, var(--loca-color-accent) 22%, transparent);
+  }
 
   /* Citation preview popover */
   .citation-pop {
