@@ -78,6 +78,57 @@ def _basename(model_id: str) -> str:
     return os.path.basename(model_id.rstrip("/")) if "/" in model_id else model_id
 
 
+def _build_citations(retrieved: list[dict]) -> list[dict]:
+    """Convert the orchestrator's per-turn retrieval pool into the
+    structured citations array the client renders in its popover.
+
+    Each entry covers one cited source; `kind` is the discriminator
+    the UI uses to pick the right affordance (memory row / URL / just
+    the snippet). The builder is defensive about missing fields: real
+    memories from MemPalace carry only `{index, id, score, content}`
+    — we derive `title` and `snippet` from `content` when they're
+    absent so the popover always has *something* to display, and the
+    user never sees a bare "MISSING" placeholder for a turn that
+    actually had retrieval.
+    """
+    out: list[dict] = []
+    for m in retrieved:
+        raw_id = str(m.get("id") or "")
+        if not raw_id:
+            continue
+        content = str(m.get("content") or "")
+        title = (str(m.get("title") or "").strip()) or content[:60].strip()
+        snippet = (str(m.get("snippet") or content))[:600]
+        url = m.get("url") or ""
+        kind = m.get("kind")
+        mem_id: str | None = None
+        if not kind:
+            # Infer from the id shape produced by orchestrator helpers.
+            if raw_id.startswith("project_item:"):
+                kind = "project_item"
+            elif raw_id.startswith("obsidian:"):
+                kind = "obsidian"
+            elif url:
+                kind = "web"
+            else:
+                kind = "memory"
+                mem_id = raw_id
+        elif kind == "memory" and not raw_id.startswith("loop:"):
+            # Loop-synthesised ids (`loop:memory:1`) aren't real memory
+            # rows, so we can't deep-link. Only bind `memory_id` when
+            # we're pointing at a true storage id.
+            mem_id = raw_id
+        out.append({
+            "idx": int(m.get("index") or (len(out) + 1)),
+            "kind": kind,
+            "title": title,
+            "snippet": snippet,
+            "url": url or None,
+            "memory_id": mem_id,
+        })
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Config loading
 # ---------------------------------------------------------------------------
@@ -416,44 +467,16 @@ async def _openai_stream_response(
     # Emit usage summary before DONE so the UI can show token stats + actual model name
     completion_tokens = max(1, output_chars // 4)
     prompt_tokens = sum(len(m.get("content", "") if isinstance(m.get("content"), str) else "") for m in messages) // 4
-    # Per-turn structured citations so clicking `[memory: N]` can show
-    # the actual cited content regardless of source type. The pool
-    # includes real memories, project items, obsidian notes, and (in
-    # Deep Dive) web hits — lumping them all as "memory ids" and deep-
-    # linking to the Memory panel sent users to unrelated rows when
-    # the citation was actually a web/vault source.
-    citations_out: list[dict] = []
-    for m in provenance_seed.get("retrieved", []) or []:
-        raw_id = str(m.get("id") or "")
-        if not raw_id:
-            continue
-        content = str(m.get("content") or "")
-        title = (m.get("title") or "").strip() or content[:60]
-        snippet = (m.get("snippet") or content)[:600]
-        url = m.get("url") or ""
-        kind = m.get("kind")
-        mem_id: str | None = None
-        if not kind:
-            # Infer from the id shape produced by orchestrator helpers.
-            if raw_id.startswith("project_item:"):
-                kind = "project_item"
-            elif raw_id.startswith("obsidian:"):
-                kind = "obsidian"
-            elif url:
-                kind = "web"
-            else:
-                kind = "memory"
-                mem_id = raw_id
-        elif kind == "memory":
-            mem_id = raw_id
-        citations_out.append({
-            "idx": int(m.get("index") or (len(citations_out) + 1)),
-            "kind": kind,
-            "title": title,
-            "snippet": snippet,
-            "url": url or None,
-            "memory_id": mem_id,
-        })
+    citations_out = _build_citations(provenance_seed.get("retrieved", []) or [])
+    # Diagnostic — makes "popover always says MISSING" debuggable from
+    # the server log without having to inspect the SSE stream.
+    logger.info(
+        "stream: emitting %d citation(s) "
+        "(memory_injected=%s, retrieved_count=%d)",
+        len(citations_out),
+        memory_injected,
+        len(provenance_seed.get("retrieved", []) or []),
+    )
     usage_payload = json.dumps({
         "id": "chatcmpl-local",
         "object": "chat.completion.chunk",
