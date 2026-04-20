@@ -76,6 +76,7 @@
 
   async function load(m: LocalModel): Promise<void> {
     busyModel = m.name;
+    app.loadingModel = m.name;
     errorMsg = null;
     try {
       await apiLoadModel(m.name, app.contextWindow);
@@ -85,6 +86,7 @@
       errorMsg = e instanceof Error ? e.message : String(e);
     } finally {
       busyModel = null;
+      app.loadingModel = null;
     }
   }
 

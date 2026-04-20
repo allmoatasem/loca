@@ -49,6 +49,10 @@ function appStore() {
   let activeAdapter      = $state<string | null>(null);
   let adapters           = $state<Adapter[]>([]);
   let activateBusy       = $state<boolean>(false);
+  // Name of the model currently being loaded (or null). Shared between
+  // ManageModelsView's load button and ChatView's composer so the
+  // composer can show a "loading…" banner instead of eating keystrokes.
+  let loadingModel       = $state<string | null>(null);
   let conversations      = $state<ConversationMeta[]>([]);
   let searchResults      = $state<ConversationMeta[]>([]);
   let searchQuery        = $state<string>('');
@@ -270,6 +274,8 @@ function appStore() {
     get activeAdapter() { return activeAdapter; },
     get adapters() { return adapters; },
     get activateBusy() { return activateBusy; },
+    get loadingModel() { return loadingModel; },
+    set loadingModel(v) { loadingModel = v; },
     get conversations() { return conversations; },
     get searchQuery() { return searchQuery; },
     get searchResults() { return searchResults; },

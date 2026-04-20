@@ -635,8 +635,18 @@
     </div>
   {/if}
 
+  {#if !app.activeModelName && !app.loadingModel}
+    <div class="composer-banner" role="status">
+      <span>No model loaded. Open Manage Models and load one before chatting.</span>
+    </div>
+  {:else if app.loadingModel}
+    <div class="composer-banner loading" role="status">
+      <span>Loading <strong>{app.loadingModel}</strong>… input will unlock once it's ready.</span>
+    </div>
+  {/if}
+
   <div class="composer">
-    <button class="attach" onclick={() => fileInput?.click()} disabled={streaming} title="Attach file">
+    <button class="attach" onclick={() => fileInput?.click()} disabled={streaming || !!app.loadingModel} title="Attach file">
       +
     </button>
     <input
@@ -650,11 +660,16 @@
       }}
     />
     <textarea
-      placeholder={app.isVoiceMode ? voicePlaceholder(voiceState, app.isTranscribing, isSpeaking) : 'Message Loca…  (⌘↵ to send)'}
+      placeholder={
+        app.isVoiceMode ? voicePlaceholder(voiceState, app.isTranscribing, isSpeaking)
+        : app.loadingModel ? `Loading ${app.loadingModel}…`
+        : !app.activeModelName ? 'Load a model to start chatting'
+        : 'Message Loca…  (⌘↵ to send)'
+      }
       bind:value={input}
       onkeydown={onKeydown}
       rows="3"
-      disabled={streaming || app.isVoiceMode}
+      disabled={streaming || app.isVoiceMode || !!app.loadingModel || !app.activeModelName}
     ></textarea>
     <button
       class="mic"
@@ -679,9 +694,9 @@
     <button
       class="send"
       onclick={send}
-      disabled={streaming || (!input.trim() && attachments.length === 0)}
+      disabled={streaming || !!app.loadingModel || !app.activeModelName || (!input.trim() && attachments.length === 0)}
     >
-      {streaming ? 'Streaming…' : 'Send'}
+      {streaming ? 'Streaming…' : app.loadingModel ? 'Loading…' : 'Send'}
     </button>
   </div>
 
@@ -824,6 +839,18 @@
     padding: 0 2px;
   }
 
+  .composer-banner {
+    margin: 0 40px;
+    padding: 8px 12px;
+    border-top: 1px solid var(--loca-color-border);
+    background: color-mix(in srgb, var(--loca-color-accent) 8%, transparent);
+    color: var(--loca-color-text);
+    font-size: 12px;
+    text-align: center;
+  }
+  .composer-banner.loading {
+    background: color-mix(in srgb, var(--loca-color-accent) 14%, transparent);
+  }
   .composer {
     display: flex;
     gap: 8px;
