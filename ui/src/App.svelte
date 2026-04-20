@@ -28,33 +28,10 @@
     path = to;
   }
 
-  // Per-citation deep-link target. `id:<uuid>` when the orchestrator
-  // shipped per-turn provenance; `idx:<N>` as a fallback. MemoryView
-  // reads this and scrolls/highlights the matching row.
-  let memoryHighlight = $state<{ kind: 'id' | 'idx'; value: string } | null>(null);
-
-  // Global click interceptor for `[memory: N]` citations rendered by
-  // MessageBubble. The marker is encoded as `#loca-memory-<target>` so
-  // DOMPurify keeps the anchor; here we catch the click before the
-  // browser scrolls to a nonexistent fragment and route to the Memory
-  // panel, passing the target so the view can highlight the row.
-  document.addEventListener('click', (e) => {
-    const target = (e.target as HTMLElement)?.closest('a');
-    if (!target) return;
-    const href = target.getAttribute('href') ?? '';
-    if (!href.startsWith('#loca-memory-')) return;
-    e.preventDefault();
-    const payload = href.slice('#loca-memory-'.length);
-    if (payload.startsWith('id:')) {
-      memoryHighlight = { kind: 'id', value: decodeURIComponent(payload.slice(3)) };
-    } else if (payload.startsWith('idx:')) {
-      memoryHighlight = { kind: 'idx', value: payload.slice(4) };
-    } else {
-      // Legacy numeric fallback — treat as an index.
-      memoryHighlight = { kind: 'idx', value: payload };
-    }
-    navigate('/ui/memory');
-  });
+  // MessageBubble handles `[memory: N]` clicks via an inline popover
+  // — no global interceptor needed here. The popover's "Open in
+  // Memory" button sets `app.memoryHighlightId` and pushes /ui/memory,
+  // which MemoryView consumes.
 
   type OverlayKind = 'glossary' | 'preferences' | 'manage-models' | 'vault' | 'memory' | 'philosophy' | 'acknowledgements' | 'research';
   const openOverlay = $derived.by<null | OverlayKind>(() => {
@@ -97,10 +74,7 @@
       {:else if openOverlay === 'vault'}
         <VaultView onClose={() => navigate('/ui')} />
       {:else if openOverlay === 'memory'}
-        <MemoryView
-          onClose={() => { memoryHighlight = null; navigate('/ui'); }}
-          highlight={memoryHighlight}
-        />
+        <MemoryView onClose={() => { app.memoryHighlightId = null; navigate('/ui'); }} />
       {:else if openOverlay === 'philosophy'}
         <PhilosophyView onClose={() => navigate('/ui')} />
       {:else if openOverlay === 'acknowledgements'}

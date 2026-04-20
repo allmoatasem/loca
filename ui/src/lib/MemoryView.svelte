@@ -10,13 +10,8 @@
 
   interface Props {
     onClose?: () => void;
-    /** Deep-link target from a `[memory: N]` citation click. `id:<uuid>`
-     *  scrolls to that specific memory; `idx:<n>` scrolls to the Nth
-     *  row in the most-recent list. `null` (default) just opens the
-     *  panel at the top. */
-    highlight?: { kind: 'id' | 'idx'; value: string } | null;
   }
-  let { onClose, highlight = null }: Props = $props();
+  let { onClose }: Props = $props();
 
   interface MemoryItem {
     id: string;
@@ -136,26 +131,11 @@
   // Eagerly load on mount.
   loadFirstPage();
 
-  // Deep-link target from `[memory: N]` click. Resolves as soon as
-  // the referenced row is in `memories` (may require load-more calls
-  // when the citation points deep into a long history).
-  async function focusHighlight(): Promise<void> {
-    if (!highlight || loading) return;
-    let targetId: string | null = null;
-    if (highlight.kind === 'id') {
-      targetId = highlight.value;
-    } else {
-      // idx is 1-based from the orchestrator's retrieval pool. The
-      // memory list here is in descending-created order which won't
-      // match the pool ordering, so idx-based fallback just picks
-      // the Nth most-recent memory as an approximation.
-      const n = Number(highlight.value);
-      if (Number.isFinite(n) && n >= 1 && memories[n - 1]) {
-        targetId = memories[n - 1].id;
-      }
-    }
-    if (!targetId) return;
-    // Page in more rows until the id appears or we run out.
+  // Deep-link target from a citation popover's "Open in Memory"
+  // button. The store holds the memory id; we page in rows until it
+  // appears, then scroll + flash.
+  async function focusHighlight(targetId: string): Promise<void> {
+    if (loading) return;
     while (!memories.some((m) => m.id === targetId) && offset < total) {
       await loadMore();
     }
@@ -165,12 +145,16 @@
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       flashId = targetId;
-      setTimeout(() => { if (flashId === targetId) flashId = null; }, 1800);
+      setTimeout(() => {
+        if (flashId === targetId) flashId = null;
+        if (app.memoryHighlightId === targetId) app.memoryHighlightId = null;
+      }, 1800);
     }
   }
 
   $effect(() => {
-    if (!loading && highlight) void focusHighlight();
+    const id = app.memoryHighlightId;
+    if (!loading && id) void focusHighlight(id);
   });
 
   const remaining = $derived(Math.max(0, total - offset));

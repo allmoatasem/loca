@@ -84,6 +84,11 @@ function appStore() {
   // glanceable parity with Activity Monitor's "Memory Used" figure.
   let ramUsedGb          = $state<number | null>(null);
   let ramTotalGb         = $state<number | null>(null);
+  // Memory id the panel should scroll to + flash the next time it
+  // opens. Set by a citation popover's "Open in Memory" button;
+  // cleared by MemoryView after the scroll lands so re-opening
+  // the panel doesn't re-trigger it.
+  let memoryHighlightId  = $state<string | null>(null);
 
   async function refresh(): Promise<void> {
     loading = true;
@@ -338,6 +343,8 @@ function appStore() {
     setPartnerMode,
     get ramUsedGb() { return ramUsedGb; },
     get ramTotalGb() { return ramTotalGb; },
+    get memoryHighlightId() { return memoryHighlightId; },
+    set memoryHighlightId(v) { memoryHighlightId = v; },
     refreshSystemStats,
     refreshVoiceConfig,
     voiceReady,

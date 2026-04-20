@@ -65,12 +65,11 @@ final class AppState: ObservableObject {
     @Published var memoriesTotal: Int = 0
     @Published var isLoadingMoreMemories: Bool = false
     @Published var isMemoryPanelOpen          = false
-    /// Per-turn citation map: `citationIdsByMessageId[msg.id][N-1]`
-    /// resolves a `[memory: N]` click on that assistant message to
-    /// the specific memory row. Populated from `UsageStats.citation_ids`
-    /// when the final SSE chunk arrives; queried by MessageBubble's
-    /// OpenURLAction to deep-link into the Memory panel.
-    @Published var citationIdsByMessageId: [UUID: [String]] = [:]
+    /// Per-turn structured citations keyed on the assistant message's
+    /// UUID. Populated from `UsageStats.citations` when the final SSE
+    /// chunk arrives; queried by MessageBubble to render a popover
+    /// with the actual cited content on `[memory: N]` clicks.
+    @Published var citationsByMessageId: [UUID: [Citation]] = [:]
     /// Memory row the panel should scroll to + flash the next time it
     /// opens. Set by a citation click; cleared by MemoryView after
     /// the scroll lands so re-opening the panel doesn't re-trigger it.

@@ -136,22 +136,16 @@ export function renderMarkdown(raw: string): string {
  * are good enough for v1: per-turn provenance plumbing (id ↔ index)
  * is the next step.
  */
-export function linkMemoryCitations(raw: string, citationIds: string[] = []): string {
+export function linkMemoryCitations(raw: string): string {
   if (!raw) return raw;
   // Encoded as a same-origin hash fragment so DOMPurify keeps the
-  // anchor intact — custom URL schemes are stripped by default.
-  // Chat container intercepts clicks on `a[href^="#loca-memory-"]`.
-  // When a per-turn citation map is available we encode the real
-  // memory id in the fragment so the click can deep-link directly
-  // to that row. Otherwise falls back to the index — the panel
-  // opens but can't highlight a specific memory.
+  // anchor intact — custom URL schemes are stripped. The index in the
+  // href is the per-turn citation index (1-based); the chat container
+  // resolves it against the per-message `citations` array at click
+  // time and renders a popover with the actual cited content.
   return raw.replace(
     /\[memory:\s*(\d+)\]/g,
-    (_match, idx: string) => {
-      const id = citationIds[Number(idx) - 1];
-      const target = id ? `id:${encodeURIComponent(id)}` : `idx:${idx}`;
-      return `[memory:${idx}](#loca-memory-${target})`;
-    },
+    (_match, idx: string) => `[memory:${idx}](#loca-citation-${idx})`,
   );
 }
 

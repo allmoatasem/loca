@@ -589,6 +589,11 @@ struct MessageBubble: View {
     let showTypingIndicator: Bool
     var highlight: String = ""
     @State private var isHovered = false
+    /// Citation currently shown in the preview popover. Clicking a
+    /// `[memory: N]` pill sets this; the `.popover` modifier anchored
+    /// below renders the content inline so the user sees the actual
+    /// source text regardless of its type (memory / vault / web / …).
+    @State private var pendingCitation: Citation?
 
     private var isUser: Bool { message.role == "user" }
 
@@ -618,27 +623,42 @@ struct MessageBubble: View {
             }
         }
         .onHover { isHovered = $0 }
-        // Intercept `loca-memory:N` URLs produced by the memory-citation
-        // link pass in ProseView. The resource part of the URL is the
-        // 1-based index into this turn's citation pool — resolve it to
-        // the actual memory id via the per-turn map so the panel can
-        // scroll to and flash that row.
+        // Intercept `loca-memory:N` URLs produced by the citation pass
+        // in ProseView. Resolve the index against this turn's
+        // structured citations and open a popover with the actual
+        // cited content — no speculative navigation so phantom /
+        // non-memory sources never land on unrelated rows.
         .environment(\.openURL, OpenURLAction { url in
             if url.scheme == "loca-memory" {
                 let idxString = url.absoluteString
                     .replacingOccurrences(of: "loca-memory:", with: "")
                 if let idx = Int(idxString),
-                   let ids = state.citationIdsByMessageId[message.id],
-                   idx >= 1, idx <= ids.count {
-                    state.memoryHighlightId = ids[idx - 1]
-                } else {
-                    state.memoryHighlightId = nil
+                   let cits = state.citationsByMessageId[message.id],
+                   let hit = cits.first(where: { $0.idx == idx }) {
+                    pendingCitation = hit
+                } else if let idx = Int(idxString) {
+                    // No structured payload — usually a phantom / old
+                    // turn. Show a placeholder so the click still
+                    // produces feedback.
+                    pendingCitation = Citation(
+                        idx: idx,
+                        kind: "missing",
+                        title: "Citation [memory: \(idx)]",
+                        snippet: "This turn did not ship source metadata for this citation. The model may have hallucinated the index (phantom citation) or the server is on an older version.",
+                        url: nil,
+                        memory_id: nil
+                    )
                 }
-                state.isMemoryPanelOpen = true
                 return .handled
             }
             return .systemAction
         })
+        .popover(item: $pendingCitation, arrowEdge: .top) { cit in
+            CitationPopover(citation: cit) {
+                pendingCitation = nil
+            }
+            .environmentObject(state)
+        }
     }
 
     @ViewBuilder
@@ -941,6 +961,93 @@ struct MarkdownView: View {
             remaining = String(remaining[afterIdx...])
         }
         return result.isEmpty ? [.prose(input)] : result
+    }
+}
+
+// MARK: - Citation preview popover
+
+/// Inline source preview for a `[memory: N]` click. Shows the cited
+/// title + snippet and, when applicable, a primary button — "Open in
+/// Memory" for memory sources, "Open link ↗" for web. Skips any
+/// guess-based navigation so non-memory citations never land on an
+/// unrelated Memory row.
+private struct CitationPopover: View {
+    @EnvironmentObject var state: AppState
+    let citation: Citation
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(kindLabel)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.accentColor)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Color.accentColor.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                Text("[memory: \(citation.idx)]")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button { onClose() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            if !citation.title.isEmpty {
+                Text(citation.title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+            if !citation.snippet.isEmpty {
+                ScrollView {
+                    Text(citation.snippet)
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 180)
+            }
+            HStack {
+                Spacer()
+                if citation.kind == "memory", let mid = citation.memory_id {
+                    Button("Open in Memory") {
+                        state.memoryHighlightId = mid
+                        state.isMemoryPanelOpen = true
+                        onClose()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
+                if let urlString = citation.url,
+                   let url = URL(string: urlString) {
+                    Link(destination: url) {
+                        Label("Open link", systemImage: "arrow.up.right.square")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 360)
+    }
+
+    private var kindLabel: String {
+        switch citation.kind {
+        case "memory":       return "MEMORY"
+        case "project_item": return "PROJECT SOURCE"
+        case "obsidian", "vault": return "VAULT NOTE"
+        case "web":          return "WEB"
+        case "missing":      return "MISSING"
+        default:             return citation.kind.uppercased()
+        }
     }
 }
 

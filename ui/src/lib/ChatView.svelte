@@ -25,7 +25,7 @@
 -->
 <script lang="ts">
   import { app } from './app-store.svelte';
-  import MessageBubble, { type Role } from './MessageBubble.svelte';
+  import MessageBubble, { type Role, type Citation } from './MessageBubble.svelte';
   import StatsBar from './StatsBar.svelte';
   import { transcribeAudio, synthesizeSpeech } from './api.client';
   import { VoiceRecorder, type VoiceState } from './voice-recorder';
@@ -41,10 +41,11 @@
     role: Role;
     content: string;
     imageUrls?: string[];
-    /** Per-turn memory ids, ordered by citation index. `citationIds[N-1]`
-     *  resolves `[memory: N]` to its actual memory record so clicking the
-     *  pill deep-links to the specific row in the Memory panel. */
-    citationIds?: string[];
+    /** Per-turn structured citations from the proxy's usage payload.
+     *  Each entry carries `{ idx, kind, title, snippet, url?, memory_id? }`
+     *  so clicking `[memory: N]` can show the actual cited content
+     *  regardless of source type (memory / vault / web / …). */
+    citations?: Citation[];
   }
 
   interface TurnStats {
@@ -501,7 +502,7 @@
       let modelName = app.activeModelName ?? 'local';
       let searchTriggered = false;
       let memoryInjected  = false;
-      let citationIds: string[] = [];
+      let turnCitations: Citation[] = [];
 
       // Typewriter mode replays incoming deltas at a controlled
       // chars/sec so the user reads alongside the model. The drain
@@ -517,7 +518,7 @@
         updated[assistantIdx] = {
           role: 'assistant',
           content: assembled,
-          citationIds: citationIds.length ? citationIds : undefined,
+          citations: turnCitations.length ? turnCitations : undefined,
         };
         history = updated;
       };
@@ -563,8 +564,8 @@
               usageCompletionTokens = Number(usage.completion_tokens) || usageCompletionTokens;
               if (typeof usage.search_triggered === 'boolean') searchTriggered = usage.search_triggered;
               if (typeof usage.memory_injected  === 'boolean') memoryInjected  = usage.memory_injected;
-              if (Array.isArray(usage.citation_ids)) {
-                citationIds = usage.citation_ids.map((x: unknown) => String(x ?? ''));
+              if (Array.isArray(usage.citations)) {
+                turnCitations = usage.citations as Citation[];
                 pumpHistory();
               }
             }
@@ -700,7 +701,7 @@
             role={msg.role}
             content={msg.content}
             imageUrls={msg.imageUrls ?? []}
-            citationIds={msg.citationIds}
+            citations={msg.citations}
             isStreaming={streaming && i === history.length - 1 && msg.role === 'assistant'}
           />
         {/each}

@@ -77,6 +77,27 @@ class LoopSource:
         body = self.snippet.strip()
         return f"{head}\n{body}"
 
+    def to_retrieved_dict(self) -> dict:
+        """Shape this source like a RetrievedMemory entry so the proxy's
+        structured-citations builder can consume it uniformly with the
+        normal-turn retrieval pool. `kind` is the crucial discriminator
+        the client uses to pick the right UX (open memory vs. open URL
+        vs. show vault path)."""
+        kind = {
+            "memory": "memory",
+            "web":    "web",
+            "vault":  "vault",
+        }.get(self.origin, self.origin)
+        return {
+            "index": self.idx,
+            "id": f"loop:{self.origin}:{self.idx}",
+            "kind": kind,
+            "title": self.title,
+            "snippet": self.snippet,
+            "content": self.snippet,
+            "url": self.url,
+        }
+
 
 @dataclass
 class LoopPlan:
@@ -452,6 +473,7 @@ async def run_research_loop(
     conv_id: str,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    on_sources: Callable[[list[LoopSource]], None] | None = None,
 ) -> AsyncIterator[str]:
     """The async generator the orchestrator delegates to on
     `autonomous_loop=True`. Yields one `<think>...</think>` progress
@@ -505,6 +527,15 @@ async def run_research_loop(
     except Exception as exc:  # pragma: no cover — defensive
         logger.warning("reviewer step failed, continuing with full pool: %s", exc)
         progress_lines.append(f"Reviewer: skipped ({exc})")
+
+    # Hand the finalised source pool to the caller so the proxy can
+    # stream structured citations to the client. Fire-and-forget — a
+    # raising callback must not break the loop.
+    if on_sources is not None:
+        try:
+            on_sources(sources)
+        except Exception:
+            pass
 
     # Emit the think block first so the UI renders "research trail" up
     # top and the answer below. A single yield keeps the markdown parser

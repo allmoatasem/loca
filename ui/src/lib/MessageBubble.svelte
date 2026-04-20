@@ -5,26 +5,38 @@
 <script lang="ts">
   import { linkMemoryCitations, renderMarkdown, splitThinkBlocks, stripToolCallJson } from './markdown';
   import ThinkBlock from './ThinkBlock.svelte';
+  import { app } from './app-store.svelte';
 
   export type Role = 'user' | 'assistant';
+
+  /** Structured citation shipped by the proxy's usage payload. Covers
+   *  memory, project_item, obsidian note, and web hits — so `[memory: N]`
+   *  can show the actual cited content regardless of source type. */
+  export interface Citation {
+    idx: number;
+    kind: 'memory' | 'project_item' | 'obsidian' | 'vault' | 'web' | string;
+    title: string;
+    snippet: string;
+    url?: string | null;
+    memory_id?: string | null;
+  }
+
   interface Props {
     role: Role;
     content: string;
     isStreaming?: boolean;
-    imageUrls?: string[];       // rendered above the bubble for user messages
-    /** Per-turn memory ids, ordered by citation index. Used to deep-link
-     *  `[memory: N]` clicks to the specific memory row instead of just
-     *  opening the panel at the top. */
-    citationIds?: string[];
+    imageUrls?: string[];
+    /** Per-turn structured citations from the proxy's usage payload. */
+    citations?: Citation[];
   }
   let {
-    role, content, isStreaming = false, imageUrls = [], citationIds = [],
+    role, content, isStreaming = false, imageUrls = [], citations = [],
   }: Props = $props();
 
   const split = $derived(role === 'assistant' ? splitThinkBlocks(content) : null);
   const answerHtml = $derived.by(() => {
     if (!split) return '';
-    return renderMarkdown(linkMemoryCitations(stripToolCallJson(split.answer), citationIds));
+    return renderMarkdown(linkMemoryCitations(stripToolCallJson(split.answer)));
   });
 
   let copied = $state(false);
@@ -34,13 +46,88 @@
       await navigator.clipboard.writeText(text);
       copied = true;
       setTimeout(() => (copied = false), 1200);
-    } catch {
-      // Older browsers / insecure contexts — silent fail is fine.
+    } catch { /* silent */ }
+  }
+
+  // Citation popover — opened on click, positioned above the clicked
+  // pill. Anchored to page coordinates so it survives bubble reflow.
+  let popover = $state<{ top: number; left: number; cit: Citation } | null>(null);
+
+  function onBubbleClick(e: MouseEvent): void {
+    const anchor = (e.target as HTMLElement)?.closest('a');
+    if (!anchor) return;
+    const href = anchor.getAttribute('href') ?? '';
+    if (!href.startsWith('#loca-citation-')) return;
+    e.preventDefault();
+    const n = Number(href.slice('#loca-citation-'.length));
+    if (!Number.isFinite(n)) return;
+    const cit = citations.find((c) => c.idx === n);
+    if (!cit) {
+      // No structured citation available — probably a legacy turn or a
+      // phantom index. Show a placeholder so the click still produces
+      // feedback instead of silently doing nothing.
+      popover = anchorPopover(anchor, {
+        idx: n, kind: 'missing',
+        title: `Citation [memory: ${n}]`,
+        snippet: 'This turn did not ship source metadata for this citation. The model may have hallucinated the index (phantom citation) or the server is on an older version.',
+      });
+      return;
+    }
+    popover = anchorPopover(anchor, cit);
+  }
+
+  function anchorPopover(el: HTMLElement, cit: Citation): { top: number; left: number; cit: Citation } {
+    const r = el.getBoundingClientRect();
+    return {
+      top: window.scrollY + r.top,
+      left: window.scrollX + r.left,
+      cit,
+    };
+  }
+
+  function closePopover(): void { popover = null; }
+
+  function openInMemoryPanel(memoryId: string): void {
+    // Flip the nav flag — App.svelte's click handler is bypassed by
+    // `onBubbleClick`'s preventDefault, so do it directly here.
+    app.memoryHighlightId = memoryId;
+    history.pushState(null, '', '/ui/memory');
+    dispatchEvent(new PopStateEvent('popstate'));
+    popover = null;
+  }
+
+  function openUrl(url: string): void {
+    window.open(url, '_blank', 'noopener,noreferrer');
+    popover = null;
+  }
+
+  function kindLabel(k: string): string {
+    switch (k) {
+      case 'memory':       return 'Memory';
+      case 'project_item': return 'Project source';
+      case 'obsidian':
+      case 'vault':        return 'Vault note';
+      case 'web':          return 'Web';
+      case 'missing':      return 'Missing';
+      default:             return k;
     }
   }
 </script>
 
-<article class="bubble" class:user={role === 'user'} class:assistant={role === 'assistant'}>
+<svelte:window onclick={(e) => {
+  // Close the popover on any click that isn't inside it.
+  if (!popover) return;
+  const inside = (e.target as HTMLElement)?.closest('.citation-pop, a[href^="#loca-citation-"]');
+  if (!inside) popover = null;
+}} />
+
+<article
+  class="bubble"
+  class:user={role === 'user'}
+  class:assistant={role === 'assistant'}
+  onclick={onBubbleClick}
+  role="presentation"
+>
   {#if role === 'user'}
     {#if imageUrls.length > 0}
       <div class="attach-images">
@@ -66,6 +153,40 @@
   {/if}
 </article>
 
+{#if popover}
+  <div
+    class="citation-pop"
+    style:top="{popover.top - 8}px"
+    style:left="{popover.left}px"
+    role="dialog"
+    aria-label="Citation preview"
+  >
+    <header>
+      <span class="cit-kind">{kindLabel(popover.cit.kind)}</span>
+      <span class="cit-idx">[memory: {popover.cit.idx}]</span>
+      <button class="close" onclick={closePopover} aria-label="Close">×</button>
+    </header>
+    {#if popover.cit.title}
+      <p class="cit-title">{popover.cit.title}</p>
+    {/if}
+    {#if popover.cit.snippet}
+      <p class="cit-snippet">{popover.cit.snippet}</p>
+    {/if}
+    <footer>
+      {#if popover.cit.kind === 'memory' && popover.cit.memory_id}
+        <button class="primary" onclick={() => openInMemoryPanel(popover!.cit.memory_id!)}>
+          Open in Memory
+        </button>
+      {/if}
+      {#if popover.cit.url}
+        <button class="primary" onclick={() => openUrl(popover!.cit.url!)}>
+          Open link ↗
+        </button>
+      {/if}
+    </footer>
+  </div>
+{/if}
+
 <style>
   .bubble {
     max-width: 720px;
@@ -87,15 +208,9 @@
   }
   .text { margin: 0; }
 
-  .attach-images {
-    display: flex;
-    gap: 6px;
-    margin: 0 0 8px;
-    flex-wrap: wrap;
-  }
+  .attach-images { display: flex; gap: 6px; margin: 0 0 8px; flex-wrap: wrap; }
   .attach-images img {
-    max-width: 200px;
-    max-height: 200px;
+    max-width: 200px; max-height: 200px;
     border-radius: var(--loca-radius-sm);
     object-fit: cover;
   }
@@ -113,11 +228,7 @@
   }
   .copy:hover { color: var(--loca-color-text); background: rgba(127, 127, 127, 0.08); }
 
-  .dots {
-    display: inline-flex;
-    gap: 4px;
-    padding: 4px 0;
-  }
+  .dots { display: inline-flex; gap: 4px; padding: 4px 0; }
   .dots span {
     width: 6px; height: 6px;
     background: var(--loca-color-text-muted);
@@ -172,9 +283,7 @@
     text-underline-offset: 2px;
   }
   .md :global(a:hover) { text-decoration-thickness: 2px; }
-  /* Memory citation pill — same visual language as the adapter chip
-     in the sidebar, distinct from external markdown links. */
-  .md :global(a[href^="#loca-memory-"]) {
+  .md :global(a[href^="#loca-citation-"]) {
     display: inline-flex;
     align-items: center;
     gap: 2px;
@@ -187,8 +296,9 @@
     border: 1px solid color-mix(in srgb, var(--loca-color-accent) 28%, transparent);
     border-radius: 999px;
     text-decoration: none;
+    cursor: pointer;
   }
-  .md :global(a[href^="#loca-memory-"]:hover) {
+  .md :global(a[href^="#loca-citation-"]:hover) {
     background: color-mix(in srgb, var(--loca-color-accent) 18%, transparent);
     text-decoration: none;
   }
@@ -207,18 +317,85 @@
     background: color-mix(in srgb, var(--loca-color-accent) 8%, transparent);
     font-weight: 600;
   }
-
   .md :global(ul ul), .md :global(ul ol),
-  .md :global(ol ul), .md :global(ol ol) {
-    margin: 4px 0;
-  }
+  .md :global(ol ul), .md :global(ol ol) { margin: 4px 0; }
+  .md :global(.katex-display) { margin: 8px 0; overflow-x: auto; overflow-y: hidden; }
+  .md :global(.katex) { font-size: 1em; }
 
-  .md :global(.katex-display) {
-    margin: 8px 0;
-    overflow-x: auto;
-    overflow-y: hidden;
+  /* Citation preview popover */
+  .citation-pop {
+    position: absolute;
+    transform: translateY(-100%);
+    width: 360px;
+    max-width: calc(100vw - 40px);
+    background: var(--loca-color-bg);
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-md);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22);
+    padding: 10px 12px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
   }
-  .md :global(.katex) {
-    font-size: 1em;
+  .citation-pop header {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .cit-kind {
+    font-size: 10px; font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--loca-color-accent);
+    background: color-mix(in srgb, var(--loca-color-accent) 12%, transparent);
+    padding: 2px 6px;
+    border-radius: 3px;
+  }
+  .cit-idx {
+    font-family: var(--loca-font-mono);
+    font-size: 11px;
+    color: var(--loca-color-text-muted);
+  }
+  .citation-pop .close {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--loca-color-text-muted);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 0 4px;
+  }
+  .citation-pop .close:hover { color: var(--loca-color-text); }
+  .cit-title {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--loca-color-text);
+  }
+  .cit-snippet {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--loca-color-text-muted);
+    max-height: 180px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+  }
+  .citation-pop footer {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+  }
+  .citation-pop .primary {
+    background: color-mix(in srgb, var(--loca-color-accent) 14%, transparent);
+    color: var(--loca-color-accent);
+    border: 1px solid color-mix(in srgb, var(--loca-color-accent) 35%, transparent);
+    border-radius: var(--loca-radius-sm);
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .citation-pop .primary:hover {
+    background: color-mix(in srgb, var(--loca-color-accent) 22%, transparent);
   }
 </style>

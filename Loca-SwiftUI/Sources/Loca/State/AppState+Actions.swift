@@ -493,13 +493,13 @@ extension AppState {
         streamingText = ""
         isStreaming   = false
 
-        // Attach the per-turn citation map to the assistant message
-        // we just finalised so bubble clicks on `[memory: N]` can
-        // resolve to the actual memory id.
-        if let ids = lastUsage?.citation_ids,
-           !ids.isEmpty,
+        // Attach the per-turn structured citations to the assistant
+        // message we just finalised so bubble clicks on `[memory: N]`
+        // can show the actual cited content regardless of source type.
+        if let cits = lastUsage?.citations,
+           !cits.isEmpty,
            assistantIdx < messages.count {
-            citationIdsByMessageId[messages[assistantIdx].id] = ids
+            citationsByMessageId[messages[assistantIdx].id] = cits
         }
 
         let totalMs = Date().timeIntervalSince(tStart) * 1000

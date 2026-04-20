@@ -385,6 +385,14 @@ async def _openai_stream_response(
                     search_triggered = bool(chunk.get("__search__", False))
                     memory_injected = bool(chunk.get("__memory__", False))
                     provenance_seed = dict(chunk.get("__provenance__", {}))
+                elif "__citations__" in chunk:
+                    # Deep-Dive turns stream their finalised source pool
+                    # mid-turn (Researcher + Reviewer finished). Merge it
+                    # into provenance so the usage payload carries full
+                    # citations regardless of normal-turn vs. loop.
+                    provenance_seed["retrieved"] = chunk["__citations__"]
+                    if chunk["__citations__"]:
+                        memory_injected = True
                 continue
             output_chars += len(chunk)
             reply_chunks.append(chunk)
@@ -408,16 +416,44 @@ async def _openai_stream_response(
     # Emit usage summary before DONE so the UI can show token stats + actual model name
     completion_tokens = max(1, output_chars // 4)
     prompt_tokens = sum(len(m.get("content", "") if isinstance(m.get("content"), str) else "") for m in messages) // 4
-    # Per-turn citation map so the client can deep-link [memory: N]
-    # clicks to the actual memory record. List is ordered by index —
-    # position 0 → [memory: 1]. Empty when no memory was injected so
-    # the client knows this turn has no resolvable citations.
-    citation_ids: list[str] = []
-    if memory_injected:
-        for m in provenance_seed.get("retrieved", []):
-            mid = str(m.get("id") or "")
-            if mid:
-                citation_ids.append(mid)
+    # Per-turn structured citations so clicking `[memory: N]` can show
+    # the actual cited content regardless of source type. The pool
+    # includes real memories, project items, obsidian notes, and (in
+    # Deep Dive) web hits — lumping them all as "memory ids" and deep-
+    # linking to the Memory panel sent users to unrelated rows when
+    # the citation was actually a web/vault source.
+    citations_out: list[dict] = []
+    for m in provenance_seed.get("retrieved", []) or []:
+        raw_id = str(m.get("id") or "")
+        if not raw_id:
+            continue
+        content = str(m.get("content") or "")
+        title = (m.get("title") or "").strip() or content[:60]
+        snippet = (m.get("snippet") or content)[:600]
+        url = m.get("url") or ""
+        kind = m.get("kind")
+        mem_id: str | None = None
+        if not kind:
+            # Infer from the id shape produced by orchestrator helpers.
+            if raw_id.startswith("project_item:"):
+                kind = "project_item"
+            elif raw_id.startswith("obsidian:"):
+                kind = "obsidian"
+            elif url:
+                kind = "web"
+            else:
+                kind = "memory"
+                mem_id = raw_id
+        elif kind == "memory":
+            mem_id = raw_id
+        citations_out.append({
+            "idx": int(m.get("index") or (len(citations_out) + 1)),
+            "kind": kind,
+            "title": title,
+            "snippet": snippet,
+            "url": url or None,
+            "memory_id": mem_id,
+        })
     usage_payload = json.dumps({
         "id": "chatcmpl-local",
         "object": "chat.completion.chunk",
@@ -429,7 +465,7 @@ async def _openai_stream_response(
             "total_tokens": prompt_tokens + completion_tokens,
             "search_triggered": search_triggered,
             "memory_injected": memory_injected,
-            "citation_ids": citation_ids,
+            "citations": citations_out,
         },
     })
     # Verifier pass: parse [memory: N] from the completed answer, flag any

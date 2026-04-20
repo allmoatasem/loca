@@ -591,9 +591,19 @@ class Orchestrator:
             },
         }
 
+        # `on_sources` is called once after Researcher + Reviewer so we
+        # can ship the finalised source pool to the client as structured
+        # citations. Captured here via a mutable list; emitted as an
+        # `__citations__` metadata dict the proxy folds into its
+        # provenance_seed before building the final SSE usage payload.
+        captured_sources: list[LoopSource] = []
+        def _capture(srcs: list[LoopSource]) -> None:
+            captured_sources.extend(srcs)
+
         # Stream through the loop. Each yield is a string; we chunk-
         # forward it so the SSE renders in consistent 50-char pieces.
         chunk_size = 50
+        sent_citations = False
         async for piece in run_research_loop(
             chat_fn=_chat_fn,
             search_fn=_search_fn,
@@ -603,9 +613,18 @@ class Orchestrator:
             conv_id=conv_id,
             temperature=temperature,
             max_tokens=max_tokens,
+            on_sources=_capture,
         ):
+            if not sent_citations and captured_sources:
+                yield {"__citations__": [s.to_retrieved_dict() for s in captured_sources]}
+                sent_citations = True
             for i in range(0, len(piece), chunk_size):
                 yield piece[i: i + chunk_size]
+        # Safety net: if the loop ended before producing sources (error
+        # path), still emit an empty citations dict so the proxy doesn't
+        # carry stale state from a previous turn.
+        if not sent_citations:
+            yield {"__citations__": []}
 
     async def _chat(
         self,

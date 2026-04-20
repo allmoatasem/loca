@@ -153,10 +153,25 @@ struct UsageStats: Decodable {
     let total_tokens: Int
     let search_triggered: Bool?
     let memory_injected: Bool?
-    /// Per-turn memory ids ordered by citation index — `citation_ids[0]`
-    /// is the record `[memory: 1]` points at. Used by MessageBubble to
-    /// deep-link citation clicks to the matching row in the Memory panel.
-    let citation_ids: [String]?
+    /// Per-turn structured citations. Each entry carries full content
+    /// so `[memory: N]` clicks can show the actual source regardless
+    /// of type (memory / vault / web / project-item). Supersedes the
+    /// older `citation_ids` list which silently sent users to the
+    /// wrong memory when the citation was a non-memory source.
+    let citations: [Citation]?
+}
+
+/// One entry in `UsageStats.citations`. `kind` tells the UI which
+/// affordance to offer: "Open in Memory" for memory, "Open link ↗"
+/// for web, or just the snippet for vault / project_item.
+struct Citation: Decodable, Identifiable {
+    let idx: Int
+    let kind: String
+    let title: String
+    let snippet: String
+    let url: String?
+    let memory_id: String?
+    var id: Int { idx }
 }
 
 // MARK: - Model capability
