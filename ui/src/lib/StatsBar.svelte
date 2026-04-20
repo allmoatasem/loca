@@ -81,13 +81,13 @@
   .bar {
     display: flex;
     flex-wrap: wrap;
-    justify-content: flex-end;
+    justify-content: center;
     gap: 4px;
-    padding: 4px 40px;
+    padding: 5px 40px;
     font-family: var(--loca-font-mono);
     font-size: 11px;
     color: var(--loca-color-text-muted);
-    border-bottom: 1px solid var(--loca-color-border);
+    border-top: 1px solid var(--loca-color-border);
     background: var(--loca-color-bg);
   }
   .model { font-weight: 500; color: var(--loca-color-text); }

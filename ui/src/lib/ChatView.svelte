@@ -66,9 +66,42 @@
   let errorMsg  = $state<string | null>(null);
   let scroller: HTMLDivElement | undefined = $state();
   let fileInput: HTMLInputElement | undefined = $state();
-  // Last turn's generation stats — rendered as a dense mono-spaced bar
-  // above the scroller, mirroring SwiftUI's GenerationStatsBar.
+  // Last turn's generation stats — rendered at the BOTTOM of the
+  // scroller (above the composer) so it stays visible next to the
+  // reply it describes, matching SwiftUI's `GenerationStatsBar`
+  // placement.
   let lastStats = $state<TurnStats | null>(null);
+  // ⌘F inline chat search — parity with SwiftUI's `ChatSearchBar`.
+  // Highlights matches inside bubbles via the `highlight` prop that
+  // flows through to MessageBubble's markdown renderer.
+  let chatSearchOpen = $state<boolean>(false);
+  let chatSearchQuery = $state<string>('');
+  let chatSearchInput = $state<HTMLInputElement | undefined>();
+  function toggleChatSearch(): void {
+    chatSearchOpen = !chatSearchOpen;
+    if (!chatSearchOpen) chatSearchQuery = '';
+    else setTimeout(() => chatSearchInput?.focus(), 0);
+  }
+  function closeChatSearch(): void {
+    chatSearchOpen = false;
+    chatSearchQuery = '';
+  }
+
+  // Global ⌘F / Ctrl+F toggles the chat search bar. Escape closes it
+  // when it's focused — matches the SwiftUI behaviour.
+  $effect(() => {
+    const handler = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        toggleChatSearch();
+      } else if (e.key === 'Escape' && chatSearchOpen) {
+        e.preventDefault();
+        closeChatSearch();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  });
   // Session-only toggles, same as SwiftUI's AppState.researchMode /
   // lockdownMode. Deep Dive = autonomous loop + Playwright full-page
   // web content (consolidated in omnibus #92 — used to be two buttons).
@@ -705,7 +738,24 @@
       <div class="drop-card">Drop files to attach</div>
     </div>
   {/if}
-  <StatsBar stats={lastStats} contextWindow={app.contextWindow} />
+  {#if chatSearchOpen}
+    <div class="chat-search">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+        <circle cx="7" cy="7" r="4.5" />
+        <line x1="10" y1="10" x2="14" y2="14" />
+      </svg>
+      <input
+        type="text"
+        placeholder="Search in conversation…"
+        bind:value={chatSearchQuery}
+        bind:this={chatSearchInput}
+      />
+      {#if chatSearchQuery}
+        <button class="clear" onclick={() => { chatSearchQuery = ''; }} aria-label="Clear">×</button>
+      {/if}
+      <button class="close" onclick={closeChatSearch} aria-label="Close search">✕</button>
+    </div>
+  {/if}
   <div class="scroller" bind:this={scroller}>
     {#if history.length === 0}
       <div class="empty">
@@ -720,12 +770,16 @@
             content={msg.content}
             imageUrls={msg.imageUrls ?? []}
             citations={msg.citations}
+            highlight={chatSearchQuery}
             isStreaming={streaming && i === history.length - 1 && msg.role === 'assistant'}
           />
         {/each}
       </div>
     {/if}
   </div>
+  {#if lastStats && !streaming}
+    <StatsBar stats={lastStats} contextWindow={app.contextWindow} />
+  {/if}
 
   {#if errorMsg}
     <div class="error">{errorMsg}</div>
@@ -909,6 +963,36 @@
     overflow-y: auto;
     padding: 20px 40px;
   }
+
+  /* Inline find bar — ⌘F toggles it. Mirrors SwiftUI's ChatSearchBar. */
+  .chat-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 40px;
+    background: color-mix(in srgb, var(--loca-color-accent) 5%, var(--loca-color-bg));
+    border-bottom: 1px solid var(--loca-color-border);
+  }
+  .chat-search svg { color: var(--loca-color-text-muted); flex-shrink: 0; }
+  .chat-search input {
+    flex: 1;
+    background: var(--loca-color-surface);
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-sm);
+    padding: 5px 10px;
+    font-size: 12px;
+    color: var(--loca-color-text);
+  }
+  .chat-search input:focus { outline: none; border-color: var(--loca-color-accent); }
+  .chat-search .clear, .chat-search .close {
+    background: none;
+    border: none;
+    color: var(--loca-color-text-muted);
+    font-size: 13px;
+    cursor: pointer;
+    padding: 0 6px;
+  }
+  .chat-search .clear:hover, .chat-search .close:hover { color: var(--loca-color-text); }
   .empty {
     text-align: center;
     color: var(--loca-color-text-muted);
@@ -925,12 +1009,9 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-    /* Cap the column width on wide monitors so assistant bubbles
-       don't sprawl edge-to-edge on a Mac Studio and bubbles from
-       both sides read at a comparable visual weight. */
-    max-width: 960px;
-    width: 100%;
-    margin: 0 auto;
+    /* Responsive — stretch with the viewport. Swift app uses a
+       `Spacer(minLength: 80)` to leave a gutter, so we match with
+       max-width on the bubbles themselves. */
   }
 
   .error {

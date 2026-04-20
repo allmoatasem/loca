@@ -28,16 +28,65 @@
     imageUrls?: string[];
     /** Per-turn structured citations from the proxy's usage payload. */
     citations?: Citation[];
+    /** Live query from the chat-search bar — matches inside the bubble
+     *  get a yellow background so the user can spot them while typing. */
+    highlight?: string;
   }
   let {
     role, content, isStreaming = false, imageUrls = [], citations = [],
+    highlight = '',
   }: Props = $props();
 
   const split = $derived(role === 'assistant' ? splitThinkBlocks(content) : null);
   const answerHtml = $derived.by(() => {
     if (!split) return '';
-    return renderMarkdown(linkMemoryCitations(stripToolCallJson(split.answer)));
+    const rendered = renderMarkdown(linkMemoryCitations(stripToolCallJson(split.answer)));
+    return applyHighlight(rendered, highlight);
   });
+
+  /** Wrap case-insensitive substring matches in a `<mark>` so the
+   *  chat-search bar can spotlight results without rerendering the
+   *  whole markdown pipeline. Skips anchors / tag contents by only
+   *  touching text nodes. */
+  function applyHighlight(html: string, needle: string): string {
+    const q = needle.trim();
+    if (!q) return html;
+    const tpl = document.createElement('template');
+    tpl.innerHTML = html;
+    const escapeRe = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(escapeRe, 'gi');
+    const walk = (node: Node): void => {
+      if (node.nodeType === 3) { // text
+        const t = node as Text;
+        if (!re.test(t.data)) return;
+        const frag = document.createDocumentFragment();
+        let last = 0;
+        re.lastIndex = 0;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(t.data)) !== null) {
+          if (m.index > last) frag.appendChild(document.createTextNode(t.data.slice(last, m.index)));
+          const mark = document.createElement('mark');
+          mark.textContent = m[0];
+          frag.appendChild(mark);
+          last = m.index + m[0].length;
+        }
+        if (last < t.data.length) frag.appendChild(document.createTextNode(t.data.slice(last)));
+        t.parentNode?.replaceChild(frag, t);
+        return;
+      }
+      if (node.nodeType === 1) {
+        const el = node as Element;
+        const tag = el.tagName.toLowerCase();
+        if (tag === 'script' || tag === 'style' || tag === 'a' || tag === 'mark') return;
+        // Iterate over a snapshot since walk() mutates siblings.
+        for (const child of Array.from(el.childNodes)) walk(child);
+      }
+    };
+    for (const child of Array.from(tpl.content.childNodes)) walk(child);
+    const out = document.createElement('div');
+    out.appendChild(tpl.content);
+    return out.innerHTML;
+  }
 
   let copied = $state(false);
   async function copyToClipboard(): Promise<void> {
@@ -78,11 +127,20 @@
 
   function anchorPopover(el: HTMLElement, cit: Citation): { top: number; left: number; cit: Citation } {
     const r = el.getBoundingClientRect();
-    return {
-      top: window.scrollY + r.top,
-      left: window.scrollX + r.left,
-      cit,
-    };
+    const popoverH = 260;          // conservative; actual content is smaller
+    const popoverW = 360;
+    const margin = 12;
+    // Prefer above the pill; fall back below when there's no room.
+    let top: number;
+    if (r.top - popoverH - margin > margin) {
+      top = r.top - popoverH - margin + window.scrollY;
+    } else {
+      top = r.bottom + margin + window.scrollY;
+    }
+    // Clamp horizontally so the popover stays on screen.
+    const maxLeft = window.innerWidth - popoverW - margin;
+    const left = Math.max(margin, Math.min(r.left + window.scrollX, maxLeft));
+    return { top, left, cit };
   }
 
   function closePopover(): void { popover = null; }
@@ -175,8 +233,18 @@
       </details>
     {/if}
     {#if !isStreaming && split.answer.trim()}
-      <button class="copy" onclick={copyToClipboard} aria-label="Copy reply">
-        {copied ? '✓ Copied' : 'Copy'}
+      <button class="copy" onclick={copyToClipboard} aria-label="Copy reply" title={copied ? 'Copied' : 'Copy reply'}>
+        {#if copied}
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="3 8 7 12 13 4" />
+          </svg>
+        {:else}
+          <!-- Document-on-document glyph matching SwiftUI's `doc.on.doc`. -->
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true">
+            <rect x="4" y="4" width="9" height="10" rx="1.5" />
+            <path d="M10 2H3.5A1.5 1.5 0 0 0 2 3.5V11" />
+          </svg>
+        {/if}
       </button>
     {/if}
   {/if}
@@ -218,7 +286,10 @@
 
 <style>
   .bubble {
-    max-width: 720px;
+    /* Responsive — stretch up to nearly the scroller's width but
+       leave a gutter on the opposite side so user/assistant bubbles
+       stay visually distinct. Mirrors Swift's `Spacer(minLength: 80)`. */
+    max-width: calc(100% - 80px);
     padding: 10px 14px;
     border-radius: var(--loca-radius-md);
     font-size: 14px;
@@ -247,12 +318,16 @@
   .copy {
     align-self: flex-start;
     margin-top: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     background: none;
     border: 1px solid var(--loca-color-border);
     color: var(--loca-color-text-muted);
     border-radius: var(--loca-radius-sm);
-    padding: 2px 8px;
-    font-size: 11px;
+    padding: 3px 6px;
+    width: 24px;
+    height: 22px;
     cursor: pointer;
   }
   .copy:hover { color: var(--loca-color-text); background: rgba(127, 127, 127, 0.08); }
@@ -312,6 +387,12 @@
     text-underline-offset: 2px;
   }
   .md :global(a:hover) { text-decoration-thickness: 2px; }
+  .md :global(mark) {
+    background: #fff1a8;
+    color: inherit;
+    padding: 0 1px;
+    border-radius: 2px;
+  }
   .md :global(a[href^="#loca-citation-"]) {
     display: inline-flex;
     align-items: center;
@@ -422,10 +503,11 @@
     background: color-mix(in srgb, var(--loca-color-accent) 22%, transparent);
   }
 
-  /* Citation preview popover */
+  /* Citation preview popover — `top`/`left` are precomputed in JS
+     (see `anchorPopover`) so the popover is always fully on-screen.
+     No transform here: keeps the positioning logic in one place. */
   .citation-pop {
     position: absolute;
-    transform: translateY(-100%);
     width: 360px;
     max-width: calc(100vw - 40px);
     background: var(--loca-color-bg);
