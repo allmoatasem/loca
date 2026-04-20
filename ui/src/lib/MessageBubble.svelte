@@ -3,7 +3,7 @@
   bubbleContent split between user / assistant / typing-indicator.
 -->
 <script lang="ts">
-  import { renderMarkdown, splitThinkBlocks, stripToolCallJson } from './markdown';
+  import { linkMemoryCitations, renderMarkdown, splitThinkBlocks, stripToolCallJson } from './markdown';
   import ThinkBlock from './ThinkBlock.svelte';
 
   export type Role = 'user' | 'assistant';
@@ -18,7 +18,7 @@
   const split = $derived(role === 'assistant' ? splitThinkBlocks(content) : null);
   const answerHtml = $derived.by(() => {
     if (!split) return '';
-    return renderMarkdown(stripToolCallJson(split.answer));
+    return renderMarkdown(linkMemoryCitations(stripToolCallJson(split.answer)));
   });
 
   let copied = $state(false);
@@ -166,6 +166,26 @@
     text-underline-offset: 2px;
   }
   .md :global(a:hover) { text-decoration-thickness: 2px; }
+  /* Memory citation pill — same visual language as the adapter chip
+     in the sidebar, distinct from external markdown links. */
+  .md :global(a[href^="#loca-memory-"]) {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0 6px;
+    margin: 0 1px;
+    font-family: var(--loca-font-mono);
+    font-size: 0.85em;
+    color: color-mix(in srgb, var(--loca-color-accent) 85%, var(--loca-color-text));
+    background: color-mix(in srgb, var(--loca-color-accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--loca-color-accent) 28%, transparent);
+    border-radius: 999px;
+    text-decoration: none;
+  }
+  .md :global(a[href^="#loca-memory-"]:hover) {
+    background: color-mix(in srgb, var(--loca-color-accent) 18%, transparent);
+    text-decoration: none;
+  }
 
   .md :global(table) {
     border-collapse: collapse;

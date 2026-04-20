@@ -129,6 +129,24 @@ export function renderMarkdown(raw: string): string {
  * if we can't extract the tool name, we leave the original text
  * alone so a curious user can still inspect it.
  */
+/**
+ * Wrap `[memory: N]` citations in a clickable anchor. The href encodes
+ * the memory index so the chat container can intercept the click and
+ * route to the Memory panel highlighted on that row. Index-only links
+ * are good enough for v1: per-turn provenance plumbing (id ↔ index)
+ * is the next step.
+ */
+export function linkMemoryCitations(raw: string): string {
+  if (!raw) return raw;
+  // Encoded as a same-origin hash fragment so DOMPurify keeps the
+  // anchor intact — custom URL schemes are stripped by default.
+  // Chat container intercepts clicks on `a[href^="#loca-memory-"]`.
+  return raw.replace(
+    /\[memory:\s*(\d+)\]/g,
+    (_match, idx: string) => `[memory:${idx}](#loca-memory-${idx})`,
+  );
+}
+
 export function stripToolCallJson(raw: string): string {
   if (!raw) return raw;
   let text = raw;

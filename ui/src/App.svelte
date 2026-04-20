@@ -28,6 +28,21 @@
     path = to;
   }
 
+  // Global click interceptor for `[memory: N]` citations rendered by
+  // MessageBubble. The marker is encoded as `#loca-memory-N` so DOMPurify
+  // keeps the anchor; here we catch the click before the browser tries
+  // to scroll to a non-existent fragment, then route to the Memory panel.
+  // (Per-memory deep-linking is the next step — would need per-turn
+  // provenance plumbing from the orchestrator.)
+  document.addEventListener('click', (e) => {
+    const target = (e.target as HTMLElement)?.closest('a');
+    if (!target) return;
+    const href = target.getAttribute('href') ?? '';
+    if (!href.startsWith('#loca-memory-')) return;
+    e.preventDefault();
+    navigate('/ui/memory');
+  });
+
   type OverlayKind = 'glossary' | 'preferences' | 'manage-models' | 'vault' | 'memory' | 'philosophy' | 'acknowledgements' | 'research';
   const openOverlay = $derived.by<null | OverlayKind>(() => {
     if (path.endsWith('/glossary'))         return 'glossary';
