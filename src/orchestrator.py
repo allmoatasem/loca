@@ -150,7 +150,10 @@ class Orchestrator:
             # sources over generic vault matches.
             if project_id:
                 project_boost = _project_items_as_memories(project_id)
-                pool = project_boost + pool
+                obsidian_boost = _obsidian_source_as_memories(
+                    project_id, recall_query, limit=10,
+                )
+                pool = project_boost + obsidian_boost + pool
             relevant = _rerank_memories(recall_query, pool, keep=10)
             mem_ctx = self._memory.format_for_prompt(relevant)
             # Snapshot the retrieved set for the provenance sidecar.
@@ -537,7 +540,10 @@ class Orchestrator:
                 pool = await self._memory.recall(user_message, limit=20)
                 if project_id:
                     project_boost = _project_items_as_memories(project_id)
-                    pool = project_boost + pool
+                    obsidian_boost = _obsidian_source_as_memories(
+                        project_id, user_message, limit=10,
+                    )
+                    pool = project_boost + obsidian_boost + pool
                 for i, m in enumerate(pool[:10], start=1):
                     memory_sources.append(LoopSource(
                         idx=i, origin="memory",
@@ -1112,6 +1118,49 @@ def _project_items_as_memories(project_id: str) -> list[dict]:
             "content": content,
             "score": 1.0,
             "type": "project_item",
+        })
+    return out
+
+
+def _obsidian_source_as_memories(
+    project_id: str, recall_query: str, limit: int = 10,
+) -> list[dict]:
+    """If the project opts into `obsidian_source`, run a semantic query
+    over every watched vault and reshape the top notes as recall hits.
+
+    This is how "attach the Obsidian vault without re-ingesting" works:
+    the shared `vault_notes` index populated by the background watcher
+    is queried live per turn. No per-project bookmarking, no duplicate
+    storage — just in-flight retrieval.
+    """
+    if not recall_query.strip():
+        return []
+    try:
+        from .store import get_project  # noqa: PLC0415
+        project = get_project(project_id)
+    except Exception:  # pragma: no cover
+        return []
+    if not project or not project.get("obsidian_source"):
+        return []
+    try:
+        from .obsidian_watcher import search_watched_vaults  # noqa: PLC0415
+        hits = search_watched_vaults(recall_query, limit=limit)
+    except Exception:  # pragma: no cover
+        return []
+    out: list[dict] = []
+    for h in hits:
+        title = (h.get("title") or "").strip()
+        rel = (h.get("rel_path") or "").strip()
+        snippet = (h.get("snippet") or "").strip()
+        parts = [p for p in (title, snippet) if p]
+        content = " — ".join(parts)
+        if not content:
+            continue
+        out.append({
+            "id": f"obsidian:{h.get('vault_path', '')}:{rel}",
+            "content": content,
+            "score": float(h.get("score") or 0.0),
+            "type": "obsidian_note",
         })
     return out
 

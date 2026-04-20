@@ -1203,6 +1203,11 @@ async def api_patch_project(project_id: str, request: Request) -> JSONResponse:
     # key to leave it alone.
     if "adapter" in body:
         kwargs["adapter_name"] = body["adapter"]
+    # `obsidian_source` opts the project into live retrieval over every
+    # watched Obsidian vault — no per-project ingestion, the orchestrator
+    # queries `vault_notes` directly each turn.
+    if "obsidian_source" in body:
+        kwargs["obsidian_source"] = bool(body["obsidian_source"])
     patch_project(project_id, **kwargs)
     return JSONResponse({"ok": True, "project": get_project(project_id)})
 
