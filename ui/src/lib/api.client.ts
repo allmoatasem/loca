@@ -436,6 +436,34 @@ export async function runWatch(
 
 // Discover — HF search, repo files, downloads
 export interface HFSearchHit { repo_id: string; downloads: number; likes: number }
+
+export interface ModelRecommendation {
+  name: string;
+  repo_id: string;
+  filename?: string | null;
+  format: string;
+  size_gb: number;
+  quant: string;
+  context: number;
+  why: string;
+  fit_level: string;       // "Perfect Fit" | "Good Fit" | "Tight Fit" | …
+  use_case: string;
+  provider: string;
+  score: number;           // llmfit fit score 0–100
+  tps: number;             // estimated tokens/sec
+}
+
+export interface RecommendationsResponse {
+  total_ram_gb: number;
+  has_apple_silicon: boolean;
+  llmfit_available: boolean;
+  recommendations: ModelRecommendation[];
+}
+
+export async function fetchRecommendations(force = false): Promise<RecommendationsResponse> {
+  const path = force ? '/api/recommended-models?force=true' : '/api/recommended-models';
+  return jsonGet<RecommendationsResponse>(path);
+}
 export interface RepoFile    { name: string; size_gb: number }
 
 export async function searchHF(q: string, format: 'gguf' | 'mlx', limit = 8): Promise<HFSearchHit[]> {
