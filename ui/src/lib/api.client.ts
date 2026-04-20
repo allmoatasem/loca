@@ -572,6 +572,17 @@ export async function scanVaultNow(path: string): Promise<{ ok: boolean } & Reco
 }
 
 // ── Voice (STT + TTS + end-to-end voice chat) ────────────────────────────────
+// ── System stats (RAM) ──────────────────────────────────────────────────────
+
+export interface SystemStats {
+  ram_used_gb: number | null;
+  ram_total_gb: number | null;
+}
+
+export async function fetchSystemStats(): Promise<SystemStats> {
+  return jsonGet<SystemStats>('/system-stats');
+}
+
 // Kept deliberately close to BackendClient.swift's voice methods; the
 // Python routes (src/proxy.py §voice) are OpenAI-compatible so both clients
 // hit the same endpoints.

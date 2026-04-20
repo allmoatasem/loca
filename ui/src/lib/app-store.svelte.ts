@@ -11,6 +11,7 @@ import {
   fetchConversations,
   fetchLocalModels,
   fetchProjects as apiFetchProjects,
+  fetchSystemStats,
   fetchVoiceConfig as apiFetchVoiceConfig,
   patchConversation as apiPatch,
   searchConversations as apiSearch,
@@ -78,6 +79,10 @@ function appStore() {
   let voiceError         = $state<string | null>(null);
   let voiceConfig        = $state<VoiceConfig | null>(null);
   let showVoiceSetup     = $state<boolean>(false);
+  // System RAM (GB) — sidebar footer reads these so the user has a
+  // glanceable parity with Activity Monitor's "Memory Used" figure.
+  let ramUsedGb          = $state<number | null>(null);
+  let ramTotalGb         = $state<number | null>(null);
 
   async function refresh(): Promise<void> {
     loading = true;
@@ -165,6 +170,16 @@ function appStore() {
 
   function setPartnerMode(mode: PartnerMode): void {
     partnerMode = mode;
+  }
+
+  async function refreshSystemStats(): Promise<void> {
+    try {
+      const s = await fetchSystemStats();
+      ramUsedGb = s.ram_used_gb;
+      ramTotalGb = s.ram_total_gb;
+    } catch {
+      // Transient — let the next poll retry.
+    }
   }
 
   async function refreshVoiceConfig(): Promise<void> {
@@ -308,6 +323,9 @@ function appStore() {
     refreshProjects,
     setActiveProject,
     setPartnerMode,
+    get ramUsedGb() { return ramUsedGb; },
+    get ramTotalGb() { return ramTotalGb; },
+    refreshSystemStats,
     refreshVoiceConfig,
     voiceReady,
     setVoiceMode,

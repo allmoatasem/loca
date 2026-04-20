@@ -25,6 +25,15 @@
 
   $effect(() => { void app.refresh(); });
 
+  // Poll system RAM every 10s while the sidebar is mounted so the
+  // footer indicator stays current — same cadence as Swift's
+  // `_pollSystemStats`.
+  $effect(() => {
+    void app.refreshSystemStats();
+    const t = setInterval(() => { void app.refreshSystemStats(); }, 10_000);
+    return () => clearInterval(t);
+  });
+
   const contextOptions = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
   function ctxLabel(n: number): string { return n >= 1024 ? `${n / 1024}K` : `${n}`; }
 
@@ -226,6 +235,22 @@
   </div>
 
   <div class="divider"></div>
+
+  {#if app.ramUsedGb != null && app.ramTotalGb != null}
+    {@const used = app.ramUsedGb}
+    {@const total = app.ramTotalGb}
+    {@const ratio = total > 0 ? used / total : 0}
+    <div class="ram-row" title="System RAM in use / total. Updated every 10s.">
+      <span class="ram-label">{used.toFixed(1)} / {total.toFixed(0)} GB</span>
+      <div class="ram-bar">
+        <div
+          class="ram-fill"
+          class:hot={ratio > 0.85}
+          style="width: {(Math.min(ratio, 1) * 100).toFixed(1)}%"
+        ></div>
+      </div>
+    </div>
+  {/if}
 
   <!-- Footer: two pinned primaries (Research, Memory) + an expandable
        "More" popover for the rest. The old seven-button flex-wrap row
@@ -441,6 +466,32 @@
   }
   .adapter-dot { font-size: 10px; line-height: 1; }
   .adapter-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .ram-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 12px 0;
+  }
+  .ram-label {
+    font-family: var(--loca-font-mono);
+    font-size: 10px;
+    color: var(--loca-color-text-muted);
+    flex-shrink: 0;
+  }
+  .ram-bar {
+    flex: 1;
+    height: 3px;
+    background: color-mix(in srgb, var(--loca-color-text) 12%, transparent);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .ram-fill {
+    height: 100%;
+    background: var(--loca-color-accent);
+    transition: width 0.3s ease, background 0.3s ease;
+  }
+  .ram-fill.hot { background: #f59e0b; }
 
   .footer {
     display: flex;
