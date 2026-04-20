@@ -192,6 +192,30 @@ def _migrate(c: sqlite3.Connection) -> None:
     project_cols = {r[1] for r in c.execute("PRAGMA table_info(projects)")}
     if "adapter_name" not in project_cols:
         c.execute("ALTER TABLE projects ADD COLUMN adapter_name TEXT")
+    # Obsidian Watcher integration — when true, the project's recall pulls
+    # from the app-level watched vaults instead of (or in addition to)
+    # its per-project bookmarked items. Replaces the per-project Sync
+    # Vault flow with a shared, always-fresh index.
+    if "obsidian_source" not in project_cols:
+        c.execute(
+            "ALTER TABLE projects "
+            "ADD COLUMN obsidian_source INTEGER NOT NULL DEFAULT 0",
+        )
+
+    # Obsidian Watcher — app-level registered vaults that the background
+    # scanner keeps in sync. Replaces per-project "Sync Vault" with a
+    # single source-of-truth index shared across all projects.
+    c.executescript("""
+    CREATE TABLE IF NOT EXISTS watched_vaults (
+        path             TEXT PRIMARY KEY,
+        name             TEXT NOT NULL DEFAULT '',
+        enabled          INTEGER NOT NULL DEFAULT 1,
+        scan_interval_s  INTEGER NOT NULL DEFAULT 300,
+        last_scan_at     REAL,
+        last_stats       TEXT NOT NULL DEFAULT '{}',
+        created          REAL NOT NULL
+    );
+    """)
 
     c.commit()
 
@@ -488,6 +512,74 @@ def get_vault_note_content_hash(vault_path: str, rel_path: str) -> str | None:
     return row["content_hash"] if row else None
 
 
+# ── Obsidian Watcher ─────────────────────────────────────────────────────────
+
+
+def _row_to_watched_vault(row: sqlite3.Row) -> dict:
+    d = dict(row)
+    d["enabled"] = bool(d.get("enabled"))
+    d["last_stats"] = json.loads(d.get("last_stats") or "{}")
+    return d
+
+
+def list_watched_vaults() -> list[dict]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM watched_vaults ORDER BY created ASC"
+        ).fetchall()
+    return [_row_to_watched_vault(r) for r in rows]
+
+
+def get_watched_vault(path: str) -> dict | None:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT * FROM watched_vaults WHERE path=?", (path,)
+        ).fetchone()
+    return _row_to_watched_vault(row) if row else None
+
+
+def upsert_watched_vault(
+    path: str, *, name: str = "", scan_interval_s: int = 300,
+) -> None:
+    now = time.time()
+    with _conn() as c:
+        c.execute(
+            """INSERT INTO watched_vaults
+                   (path, name, enabled, scan_interval_s, created)
+               VALUES (?, ?, 1, ?, ?)
+               ON CONFLICT(path) DO UPDATE SET
+                   name            = excluded.name,
+                   enabled         = 1,
+                   scan_interval_s = excluded.scan_interval_s""",
+            (path, name, max(60, scan_interval_s), now),
+        )
+        c.commit()
+
+
+def set_watched_vault_enabled(path: str, enabled: bool) -> None:
+    with _conn() as c:
+        c.execute(
+            "UPDATE watched_vaults SET enabled=? WHERE path=?",
+            (1 if enabled else 0, path),
+        )
+        c.commit()
+
+
+def delete_watched_vault(path: str) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM watched_vaults WHERE path=?", (path,))
+        c.commit()
+
+
+def mark_watched_vault_scanned(path: str, stats: dict) -> None:
+    with _conn() as c:
+        c.execute(
+            "UPDATE watched_vaults SET last_scan_at=?, last_stats=? WHERE path=?",
+            (time.time(), json.dumps(stats), path),
+        )
+        c.commit()
+
+
 def get_memories_context(limit_per_type: int = 10) -> str:
     """
     Return memories grouped by type, formatted for injection into system prompts.
@@ -563,23 +655,34 @@ def list_projects(limit: int = 100) -> list[dict]:
     with _conn() as c:
         rows = c.execute(
             "SELECT p.id, p.title, p.scope, p.notes, p.created, p.updated, "
+            "       p.obsidian_source, "
             "       (SELECT COUNT(*) FROM project_items i WHERE i.project_id = p.id) AS item_count, "
             "       (SELECT COUNT(*) FROM conversations c WHERE c.project_id = p.id) AS conv_count "
             "FROM projects p ORDER BY p.updated DESC LIMIT ?",
             (limit,),
         ).fetchall()
-    return [dict(r) for r in rows]
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["obsidian_source"] = bool(d.get("obsidian_source") or 0)
+        result.append(d)
+    return result
 
 
 def get_project(project_id: str) -> dict | None:
     with _conn() as c:
         row = c.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
-    return dict(row) if row else None
+    if not row:
+        return None
+    d = dict(row)
+    d["obsidian_source"] = bool(d.get("obsidian_source") or 0)
+    return d
 
 
 def patch_project(
     project_id: str, *,
     title=_MISSING, scope=_MISSING, notes=_MISSING, adapter_name=_MISSING,
+    obsidian_source=_MISSING,
 ) -> None:
     parts: list[str] = []
     vals: list[object] = []
@@ -595,6 +698,9 @@ def patch_project(
     if adapter_name is not _MISSING:
         parts.append("adapter_name = ?")
         vals.append(adapter_name)
+    if obsidian_source is not _MISSING:
+        parts.append("obsidian_source = ?")
+        vals.append(1 if obsidian_source else 0)
     if not parts:
         return
     parts.append("updated = ?")

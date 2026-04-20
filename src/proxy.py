@@ -133,9 +133,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # watch timeout, and the single-shot agent design.
     from .watches_runner import watches_loop  # noqa: PLC0415
     watches_task = asyncio.create_task(watches_loop())
+    # Obsidian Watcher — app-level background vault sync. Replaces the
+    # per-project Sync Vault flow; see `src/obsidian_watcher.py`.
+    from .obsidian_watcher import watcher_loop as _obsidian_loop  # noqa: PLC0415
+    obsidian_task = asyncio.create_task(_obsidian_loop())
     yield
     # Shutdown
     watches_task.cancel()
+    obsidian_task.cancel()
     if _plugin_manager:
         await _plugin_manager.stop()
     if _inference_backend:
@@ -2108,6 +2113,83 @@ async def api_repo_files(repo_id: str = "", format: str = "gguf") -> JSONRespons
         return JSONResponse({"files": files})
     except Exception as e:
         return JSONResponse({"files": [], "error": str(e)})
+
+
+# ---------------------------------------------------------------------------
+# Obsidian Watcher API — app-level background vault sync. See
+# `src/obsidian_watcher.py` for the loop + registry; these endpoints
+# are thin wrappers so the UI can register vaults, trigger an
+# immediate scan, and poll status.
+# ---------------------------------------------------------------------------
+
+@app.get("/api/obsidian/watched")
+async def api_obsidian_watched() -> JSONResponse:
+    from . import obsidian_watcher  # noqa: PLC0415
+    return JSONResponse({"vaults": obsidian_watcher.list_watched()})
+
+
+@app.post("/api/obsidian/register")
+async def api_obsidian_register(request: Request) -> JSONResponse:
+    from . import obsidian_watcher  # noqa: PLC0415
+    body = await request.json()
+    path = body.get("path", "")
+    scan_interval_s = int(body.get("scan_interval_s") or 300)
+    if not path:
+        return JSONResponse({"error": "path is required"}, status_code=400)
+    try:
+        row = obsidian_watcher.register(path, scan_interval_s=scan_interval_s)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    # Kick off an immediate scan so the registered vault appears in
+    # search results without making the user wait for the first tick.
+    asyncio.create_task(_obsidian_first_scan(row["path"]))
+    return JSONResponse({"ok": True, "vault": row})
+
+
+async def _obsidian_first_scan(path: str) -> None:
+    from . import obsidian_watcher  # noqa: PLC0415
+    try:
+        await obsidian_watcher.scan_now(path)
+    except Exception as exc:
+        logger.warning("first-scan for %s failed: %s", path, exc)
+
+
+@app.post("/api/obsidian/unregister")
+async def api_obsidian_unregister(request: Request) -> JSONResponse:
+    from . import obsidian_watcher  # noqa: PLC0415
+    body = await request.json()
+    path = body.get("path", "")
+    if not path:
+        return JSONResponse({"error": "path is required"}, status_code=400)
+    obsidian_watcher.unregister(path)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/obsidian/scan-now")
+async def api_obsidian_scan_now(request: Request) -> JSONResponse:
+    from . import obsidian_watcher  # noqa: PLC0415
+    body = await request.json()
+    path = body.get("path", "")
+    if not path:
+        return JSONResponse({"error": "path is required"}, status_code=400)
+    if obsidian_watcher.is_busy(path):
+        return JSONResponse({"error": "scan already in progress"}, status_code=409)
+    try:
+        stats = await obsidian_watcher.scan_now(path)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except asyncio.TimeoutError:
+        return JSONResponse({"error": "scan timed out"}, status_code=504)
+    return JSONResponse({"ok": True, **stats})
+
+
+@app.get("/api/obsidian/status")
+async def api_obsidian_status() -> JSONResponse:
+    from . import obsidian_watcher  # noqa: PLC0415
+    return JSONResponse({
+        "vaults": obsidian_watcher.list_watched(),
+        "busy": obsidian_watcher.busy_paths(),
+    })
 
 
 # ---------------------------------------------------------------------------
