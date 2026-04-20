@@ -187,6 +187,18 @@
   let sysPrompt = $state<string>(localStorage.getItem(sysPromptKey) ?? '');
   $effect(() => { localStorage.setItem(sysPromptKey, sysPrompt); });
 
+  // ── Typewriter stream ───────────────────────────────────────────────
+  // Replays incoming SSE deltas at a controlled character rate so the
+  // user reads alongside the model rather than seeing a single splat
+  // when responses arrive cached or post-generation. Off by default —
+  // matches the legacy "stream as fast as possible" behaviour.
+  const typewriterKey = 'loca-typewriter';
+  const typewriterRateKey = 'loca-typewriter-rate';
+  let typewriter     = $state<boolean>(localStorage.getItem(typewriterKey) === '1');
+  let typewriterRate = $state<number>(parseInt(localStorage.getItem(typewriterRateKey) ?? '60', 10));
+  $effect(() => { localStorage.setItem(typewriterKey, typewriter ? '1' : '0'); });
+  $effect(() => { localStorage.setItem(typewriterRateKey, String(typewriterRate)); });
+
   // ── Knowledge import ────────────────────────────────────────────────
   let importPath = $state<string>('');
   let importStatus = $state<string | null>(null);
@@ -272,6 +284,30 @@
             <option value="dark">Dark</option>
           </select>
         </div>
+      </section>
+
+      <section class="group">
+        <h3>Reading pace</h3>
+        <div class="row">
+          <label for="pref-typewriter">Typewriter stream</label>
+          <input id="pref-typewriter" type="checkbox" bind:checked={typewriter} />
+        </div>
+        <p class="hint">Replays incoming text at a controlled rate so you can read along instead of seeing it splat in.</p>
+        {#if typewriter}
+          <div class="row" style="flex-direction:column;align-items:stretch;gap:4px;">
+            <label for="pref-typewriter-rate" style="font-size:12px;">
+              Reading speed <span class="muted">{typewriterRate} chars/s</span>
+            </label>
+            <input
+              id="pref-typewriter-rate"
+              type="range"
+              min="10"
+              max="200"
+              step="5"
+              bind:value={typewriterRate}
+            />
+          </div>
+        {/if}
       </section>
 
       <section class="group">
