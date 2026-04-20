@@ -604,15 +604,31 @@ struct MessageBubble: View {
                         .overlay(alignment: .topLeading) { copyButton(isUser: true) }
                 }
             } else {
-                modelAvatar
+                // No avatar on the assistant side — matches the Svelte bubble
+                // which reads as a single framed reply, not an avatar+prose pair.
                 bubbleContent
                     .background(Color(nsColor: .controlBackgroundColor))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+                    )
                     .overlay(alignment: .topTrailing) { copyButton(isUser: false) }
                 Spacer(minLength: 80)
             }
         }
         .onHover { isHovered = $0 }
+        // Intercept `loca-memory:N` URLs produced by the memory-citation
+        // link pass in ProseView. The N currently opens the Memory panel
+        // without scrolling to a specific row — index-level deep-link
+        // plumbing lands with per-turn provenance in a follow-up.
+        .environment(\.openURL, OpenURLAction { url in
+            if url.scheme == "loca-memory" {
+                state.isMemoryPanelOpen = true
+                return .handled
+            }
+            return .systemAction
+        })
     }
 
     @ViewBuilder
@@ -632,37 +648,6 @@ struct MessageBubble: View {
             .padding(isUser ? .leading : .trailing, -28)
             .padding(.top, 4)
             .transition(.opacity.combined(with: .scale(scale: 0.8)))
-        }
-    }
-
-    // MARK: Avatar — initials derived from the model that generated this response
-
-    private var modelAvatar: some View {
-        ZStack {
-            Circle().fill(Color.accentColor)
-            Text(modelInitials(state.actualModel ?? state.selectedModelId))
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(.white)
-        }
-        .frame(width: 26, height: 26)
-    }
-
-    private func modelInitials(_ id: String?) -> String {
-        guard let id, !id.isEmpty else { return "AI" }
-        let name = String(id.split(separator: "/").last ?? Substring(id))
-        let skip = Set(["instruct", "chat", "it", "gguf", "hf", "v1", "v2", "v3",
-                        "v4", "q4", "q8", "fp16", "awq", "bnb", "gptq"])
-        let parts = name.components(separatedBy: CharacterSet(charactersIn: "-_.:"))
-            .filter { p in
-                !p.isEmpty &&
-                p.first?.isLetter == true &&
-                !skip.contains(p.lowercased()) &&
-                !p.allSatisfy({ $0.isNumber || $0 == "." })
-            }
-        switch parts.count {
-        case 0: return "AI"
-        case 1: return String(parts[0].prefix(2)).uppercased()
-        default: return (String(parts[0].prefix(1)) + String(parts[1].prefix(1))).uppercased()
         }
     }
 
@@ -955,6 +940,34 @@ struct ProseView: View {
     let text: String
     var highlight: String = ""
 
+    /// Wrap `[memory: N]` citations in a markdown link with a custom
+    /// `loca-memory:` URL scheme. The bubble intercepts those URLs via
+    /// `OpenURLAction` and opens the Memory panel on tap. Mirrors the
+    /// Svelte `linkMemoryCitations` pass.
+    static func linkMemoryCitations(_ raw: String) -> String {
+        guard let re = try? NSRegularExpression(pattern: #"\[memory:\s*(\d+)\]"#) else {
+            return raw
+        }
+        let ns = raw as NSString
+        let matches = re.matches(in: raw, range: NSRange(location: 0, length: ns.length))
+        guard !matches.isEmpty else { return raw }
+        var result = ""
+        var cursor = 0
+        for m in matches {
+            let full = m.range
+            let idxRange = m.range(at: 1)
+            result += ns.substring(with: NSRange(location: cursor, length: full.location - cursor))
+            let label = ns.substring(with: full)
+            let idx = ns.substring(with: idxRange)
+            result += "[\(label)](loca-memory:\(idx))"
+            cursor = full.location + full.length
+        }
+        if cursor < ns.length {
+            result += ns.substring(with: NSRange(location: cursor, length: ns.length - cursor))
+        }
+        return result
+    }
+
     private enum LineGroup {
         case header(Int, String)
         case bullet(String)
@@ -1104,12 +1117,26 @@ struct ProseView: View {
     /// renders bold, italic and inline code correctly regardless of the view's
     /// .font() modifier. Optionally highlights search matches.
     private func inline(_ raw: String, baseSize: CGFloat = 14) -> AttributedString {
+        // Pre-process citation markers into markdown links so the parser
+        // gives us proper `.link` runs to style + intercept. Matches the
+        // Svelte `linkMemoryCitations` step. URL scheme is `loca-memory:`
+        // — the bubble-level OpenURLAction catches it and opens the panel.
+        let withCitations = Self.linkMemoryCitations(raw)
         guard var attr = try? AttributedString(
-            markdown: raw,
+            markdown: withCitations,
             options: .init(interpretedSyntax: .inlineOnly)
         ) else { return AttributedString(raw) }
 
         for run in attr.runs {
+            // Citation runs — styled as a pill that reads "clickable"
+            // without mimicking a normal hyperlink.
+            if let url = run.link, url.scheme == "loca-memory" {
+                attr[run.range].font = .system(size: max(baseSize - 1, 11), design: .monospaced)
+                attr[run.range].foregroundColor = Color.accentColor
+                attr[run.range].backgroundColor = Color.accentColor.opacity(0.12)
+                attr[run.range].underlineStyle = nil
+                continue
+            }
             guard let intent = run.inlinePresentationIntent else { continue }
             if intent.contains(.code) {
                 attr[run.range].font = .system(size: max(baseSize - 1, 11), design: .monospaced)
