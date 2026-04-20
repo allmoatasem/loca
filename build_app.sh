@@ -103,10 +103,40 @@ rsync -a --delete "$BUNDLE/" "$DEST/"
 
 codesign --sign - --force --deep --entitlements "$ENTITLEMENTS" "$DEST"
 
-# Re-register with Launch Services so the Dock picks up the updated icon
+# Force-refresh Dock + Launch Services so the icon shows up the first
+# time without a logout/login. Touching the bundle's mtime alone isn't
+# enough on a stale install — macOS keeps a per-app icon cache that
+# only invalidates when LS re-scans + Dock restarts.
 touch "$DEST"
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
-    -f "$DEST" 2>/dev/null || true
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+"$LSREGISTER" -f -v "$DEST" >/dev/null 2>&1 || true
+"$LSREGISTER" -R -domain user >/dev/null 2>&1 || true
+# Wipe Finder/Dock icon caches and bounce the Dock so the new icon
+# appears immediately. Silent-fail in case the user's Dock is
+# customised or running in an unusual session.
+rm -rf "$HOME/Library/Caches/com.apple.iconservices.store" 2>/dev/null || true
+killall Dock 2>/dev/null || true
 
 echo "Updated ~/Applications/Loca.app"
+
+# ── 5. Optional DMG ──────────────────────────────────────────────────────────
+# Pass --dmg to package the bundle into a draggable disk image. The
+# image inherits the bundle's icon automatically; an /Applications
+# alias is added so the user can install by drag-and-drop.
+if [ "${1:-}" = "--dmg" ] || [ "${BUILD_DMG:-}" = "1" ]; then
+    DMG_TMP="$DIR/Loca-dmg-staging"
+    DMG_OUT="$DIR/Loca.dmg"
+    rm -rf "$DMG_TMP" "$DMG_OUT"
+    mkdir -p "$DMG_TMP"
+    cp -R "$BUNDLE" "$DMG_TMP/Loca.app"
+    ln -s /Applications "$DMG_TMP/Applications"
+    # Side-by-side icon for the DMG's window (uses the same icns the app does).
+    cp "$RESOURCES/loca.icns" "$DMG_TMP/.VolumeIcon.icns" 2>/dev/null || true
+    echo "Building DMG…"
+    hdiutil create -fs HFS+ -volname "Loca" -srcfolder "$DMG_TMP" \
+        -ov -format UDZO "$DMG_OUT" >/dev/null
+    rm -rf "$DMG_TMP"
+    echo "DMG written to $DMG_OUT"
+fi
+
 echo "Done — open Loca.app to launch."
