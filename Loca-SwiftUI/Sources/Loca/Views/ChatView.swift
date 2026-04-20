@@ -1141,6 +1141,33 @@ private struct CitationPopover: View {
     }
 }
 
+// MARK: - Cursor modifier for link-bearing prose
+
+/// Swaps the cursor to `pointingHand` while hovering a paragraph
+/// that contains any clickable content (memory citations or
+/// markdown links). Paragraph-level rather than per-character —
+/// SwiftUI Text doesn't expose hit testing against individual
+/// link runs, and macOS 14 lacks `.pointerStyle(_:)` — so we signal
+/// "interactive region ahead" on the paragraph as a whole. Still
+/// infinitely better than a static arrow over a clearly-tappable pill.
+private struct LinkPointerCursor: ViewModifier {
+    let active: Bool
+
+    func body(content: Content) -> some View {
+        if active {
+            content.onHover { inside in
+                if inside {
+                    NSCursor.pointingHand.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+        } else {
+            content
+        }
+    }
+}
+
 // MARK: - Prose renderer (headers, bullets, numbered lists, tables, paragraphs)
 
 struct ProseView: View {
@@ -1263,25 +1290,38 @@ struct ProseView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
                 .padding(.top, level < 3 ? 4 : 2)
+                .modifier(LinkPointerCursor(active: Self.hasLink(s)))
         case .bullet(let s):
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("•").font(.system(size: 14)).foregroundColor(.secondary)
                     .padding(.leading, 4)
                 Text(inline(s)).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             }
+            .modifier(LinkPointerCursor(active: Self.hasLink(s)))
         case .numbered(let n, let s):
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("\(n).").font(.system(size: 14)).foregroundColor(.secondary)
                     .padding(.leading, 4)
                 Text(inline(s)).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             }
+            .modifier(LinkPointerCursor(active: Self.hasLink(s)))
         case .paragraph(let s):
             Text(inline(s)).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                .modifier(LinkPointerCursor(active: Self.hasLink(s)))
         case .hrule:
             Divider().padding(.vertical, 4)
         case .table(let rows):
             tableView(rows)
         }
+    }
+
+    /// Heuristic — is there any clickable content in this segment
+    /// that warrants a pointing-hand cursor on hover? Cheaper than
+    /// parsing the AttributedString again.
+    static func hasLink(_ text: String) -> Bool {
+        text.contains("[memory:") || text.range(
+            of: #"\[[^\]]+\]\([^)]+\)"#, options: .regularExpression
+        ) != nil
     }
 
     private func tableView(_ rows: [[String]]) -> some View {

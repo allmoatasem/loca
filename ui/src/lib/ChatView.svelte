@@ -921,7 +921,17 @@
     color: var(--loca-color-text);
   }
   .empty p { margin: 0; font-size: 13px; }
-  .messages { display: flex; flex-direction: column; gap: 10px; }
+  .messages {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    /* Cap the column width on wide monitors so assistant bubbles
+       don't sprawl edge-to-edge on a Mac Studio and bubbles from
+       both sides read at a comparable visual weight. */
+    max-width: 960px;
+    width: 100%;
+    margin: 0 auto;
+  }
 
   .error {
     margin: 0 40px 10px;
