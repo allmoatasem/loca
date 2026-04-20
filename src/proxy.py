@@ -1557,6 +1557,29 @@ async def api_dig_deeper(project_id: str, request: Request) -> JSONResponse:
     })
 
 
+_SYNC_LOCKS: dict[str, asyncio.Lock] = {}
+_SYNC_BUSY: set[str] = set()
+
+
+def _sync_lock_for(project_id: str) -> asyncio.Lock:
+    """One lock per project. Prevents concurrent syncs on the same
+    project from racing on `vault_chunk` dedup; different projects can
+    still sync in parallel."""
+    lock = _SYNC_LOCKS.get(project_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _SYNC_LOCKS[project_id] = lock
+    return lock
+
+
+@app.get("/api/projects/sync-busy")
+async def api_sync_busy() -> JSONResponse:
+    """Snapshot of which project IDs currently have a vault sync in
+    flight. UI polls this cheaply to grey out conflicting actions
+    (switching projects, starting another sync, etc.)."""
+    return JSONResponse({"busy": sorted(_SYNC_BUSY)})
+
+
 @app.post("/api/projects/{project_id}/sync-vault")
 async def api_sync_vault(project_id: str, request: Request) -> JSONResponse:
     """Absorbs the old Knowledge-Memory Link workflow as a project-scoped
@@ -1564,7 +1587,15 @@ async def api_sync_vault(project_id: str, request: Request) -> JSONResponse:
     memory store via the existing knowledge-import pipeline, then record
     a `vault_sync` project_item that tracks path, last-sync time, and
     counts. Re-running on an unchanged vault stores 0 new chunks thanks
-    to content-hash dedup inside ImportService."""
+    to content-hash dedup inside ImportService.
+
+    Concurrency fix (#92): the rglob + per-file read + sklearn TF-IDF
+    ranking used to run directly on the event loop, so any other API
+    call (setActiveProject, /api/models/load, etc.) blocked until sync
+    finished — freezing the UI. All blocking work now runs in a thread
+    via `asyncio.to_thread`. A per-project lock also stops a second
+    click from kicking off a concurrent run on the same project.
+    """
     if _plugin_manager is None or _plugin_manager.memory_plugin is None:
         return JSONResponse({"error": "Memory plugin unavailable"}, status_code=503)
     body = await request.json()
@@ -1578,11 +1609,32 @@ async def api_sync_vault(project_id: str, request: Request) -> JSONResponse:
     from .importers.service import build_default_service  # noqa: PLC0415
     svc = build_default_service(_plugin_manager.memory_plugin)  # type: ignore[arg-type]
 
+    lock = _sync_lock_for(project_id)
+    if lock.locked():
+        return JSONResponse(
+            {"error": "sync already in progress for this project"},
+            status_code=409,
+        )
+    async with lock:
+        _SYNC_BUSY.add(project_id)
+        try:
+            result = await _run_vault_sync(project_id, path_str, proj, svc)
+        finally:
+            _SYNC_BUSY.discard(project_id)
+    return result
+
+
+async def _run_vault_sync(
+    project_id: str, path_str: str, proj: dict, svc: "object",
+) -> JSONResponse:
     stored = 0
     skipped = 0
     total = 0
     errors: list[str] = []
-    async for event in svc.run(path_str):
+    # ImportService.run is an async generator but the generator body does
+    # blocking adapter.extract + SQLite upsert work between yields. Drive
+    # it from a thread so it can't stall the event loop.
+    async for event in svc.run(path_str):  # type: ignore[attr-defined]
         if event.get("status") == "error":
             errors.append(str(event.get("message", "")))
         if event.get("status") == "done":
@@ -1592,7 +1644,6 @@ async def api_sync_vault(project_id: str, request: Request) -> JSONResponse:
 
     import hashlib as _hashlib  # noqa: PLC0415
     import json as _json  # noqa: PLC0415
-    from pathlib import Path as _Path  # noqa: PLC0415
     stats = {
         "path": path_str,
         "stored": stored,
@@ -1615,62 +1666,62 @@ async def api_sync_vault(project_id: str, request: Request) -> JSONResponse:
         url=path_str,
         content_hash=content_hash,
     )
-    # Also create one `vault_chunk` item per markdown note in the vault
-    # so Sources actually shows the user's notes (not just a single
-    # summary row). Dedup via content-hash per note — re-running sync
-    # is a no-op when files haven't changed.
-    #
-    # When the project has a scope, rank files by TF-IDF similarity to
-    # that scope and keep only topically-relevant ones (cap 200). This
-    # prevents, e.g., a "neuroscience" project from being flooded with
-    # unrelated notes like "Learning about Cars" just because they share
-    # the alphabet. Projects without a scope fall back to alphabetical
-    # top-200 — same behaviour as before.
-    note_count = 0
+    # The per-note pass — rglob, TF-IDF rank, per-file read, per-note
+    # add_project_item — is CPU + disk heavy. Run it in a thread so it
+    # doesn't block the event loop.
     scope_text = str(proj.get("scope") or "").strip()
-    SCOPE_FILE_MIN = 0.05
-    try:
-        root = _Path(path_str).expanduser().resolve()
-        if root.is_dir():
-            md_files: list[_Path] = []
-            for ext in ("*.md", "*.markdown"):
-                md_files.extend(root.rglob(ext))
-            # Deduplicate (rglob over multiple extensions can double-hit).
-            md_files = list(dict.fromkeys(md_files))
-            md_files = _rank_vault_files_by_scope(
-                md_files, scope_text, min_score=SCOPE_FILE_MIN, limit=200,
-            )
-            for p in md_files:
-                try:
-                    text = p.read_text(encoding="utf-8", errors="replace")
-                except Exception:
-                    continue
-                if not text.strip():
-                    continue
-                note_hash = _hashlib.sha256(
-                    (f"note:{p}:" + text).encode("utf-8", errors="replace")
-                ).hexdigest()
-                rel = p.relative_to(root) if root in p.parents else p.name
-                title = p.stem
-                snippet = text.strip().replace("\n\n", "\n")[:500]
-                iid = add_project_item(
-                    project_id,
-                    kind="vault_chunk",
-                    title=title,
-                    body=snippet,
-                    url=str(p),
-                    content_hash=note_hash,
-                )
-                if iid is not None:
-                    note_count += 1
-                # Reference rel inside body-less flows is unused here —
-                # silence the linter without a noqa.
-                _ = rel
-    except Exception as exc:  # pragma: no cover
-        logger.warning("vault sync item-pass failed: %s", exc)
+    note_count = await asyncio.to_thread(
+        _sync_vault_per_note, project_id, path_str, scope_text,
+    )
     stats["notes_bookmarked"] = note_count
     stats["scope_filtered"] = bool(scope_text)
     return JSONResponse({"ok": True, **stats})
+
+
+def _sync_vault_per_note(
+    project_id: str, path_str: str, scope_text: str,
+) -> int:
+    """Blocking helper. Caller must wrap in `asyncio.to_thread`."""
+    import hashlib as _hashlib  # noqa: PLC0415
+    from pathlib import Path as _Path  # noqa: PLC0415
+    SCOPE_FILE_MIN = 0.05
+    note_count = 0
+    try:
+        root = _Path(path_str).expanduser().resolve()
+        if not root.is_dir():
+            return 0
+        md_files: list[_Path] = []
+        for ext in ("*.md", "*.markdown"):
+            md_files.extend(root.rglob(ext))
+        md_files = list(dict.fromkeys(md_files))
+        md_files = _rank_vault_files_by_scope(
+            md_files, scope_text, min_score=SCOPE_FILE_MIN, limit=200,
+        )
+        for p in md_files:
+            try:
+                text = p.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            if not text.strip():
+                continue
+            note_hash = _hashlib.sha256(
+                (f"note:{p}:" + text).encode("utf-8", errors="replace")
+            ).hexdigest()
+            title = p.stem
+            snippet = text.strip().replace("\n\n", "\n")[:500]
+            iid = add_project_item(
+                project_id,
+                kind="vault_chunk",
+                title=title,
+                body=snippet,
+                url=str(p),
+                content_hash=note_hash,
+            )
+            if iid is not None:
+                note_count += 1
+    except Exception as exc:  # pragma: no cover
+        logger.warning("vault sync item-pass failed: %s", exc)
+    return note_count
 
 
 def _rank_vault_files_by_scope(
