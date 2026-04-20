@@ -77,8 +77,12 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     var id: UUID = UUID()
     let role: String          // "user" | "assistant" | "system"
     var content: MessageContent
+    /// Structured per-turn citations attached to assistant messages so
+    /// `[memory: N]` clicks keep working after save/reload. Optional —
+    /// user messages and pre-citation turns omit the field entirely.
+    var citations: [Citation]? = nil
 
-    enum CodingKeys: String, CodingKey { case role, content }
+    enum CodingKeys: String, CodingKey { case role, content, citations }
 }
 
 /// Content can be plain text or a multipart array (text + image_url).
@@ -163,8 +167,11 @@ struct UsageStats: Decodable {
 
 /// One entry in `UsageStats.citations`. `kind` tells the UI which
 /// affordance to offer: "Open in Memory" for memory, "Open link ↗"
-/// for web, or just the snippet for vault / project_item.
-struct Citation: Decodable, Identifiable {
+/// for web, or just the snippet for vault / project_item. Codable
+/// so the citation map persists through `/api/conversations` save +
+/// load — without that the popover goes MISSING on any previously-
+/// saved turn.
+struct Citation: Codable, Identifiable, Equatable {
     let idx: Int
     let kind: String
     let title: String

@@ -350,10 +350,22 @@
       const r = await fetch(`/api/conversations/${encodeURIComponent(id)}`);
       if (!r.ok) throw new Error(`GET /api/conversations/${id} → ${r.status}`);
       const data = await r.json();
-      const msgs = (data.messages ?? []) as Array<{ role: string; content: string }>;
+      const msgs = (data.messages ?? []) as Array<{
+        role: string;
+        content: string;
+        citations?: Citation[];
+      }>;
       history = msgs
         .filter((m) => m.role === 'user' || m.role === 'assistant')
-        .map((m) => ({ role: m.role as Role, content: m.content }));
+        .map((m) => ({
+          role: m.role as Role,
+          content: m.content,
+          // Preserve structured citations across reload so the popover
+          // keeps working on previously-saved turns.
+          citations: Array.isArray(m.citations) && m.citations.length
+            ? m.citations
+            : undefined,
+        }));
       convId = id;
       convTitle = data.title ?? '';
       lastStats = null;
@@ -376,7 +388,13 @@
       const payload = {
         id: convId,
         title: convTitle,
-        messages: msgs.map((m) => ({ role: m.role, content: m.content })),
+        messages: msgs.map((m) => {
+          // Only serialise citations when present — keeps the stored
+          // JSON lean for plain chat turns.
+          const base: Record<string, unknown> = { role: m.role, content: m.content };
+          if (m.citations && m.citations.length) base.citations = m.citations;
+          return base;
+        }),
         model: app.activeModelName ?? '',
       };
       const r = await fetch('/api/conversations', {

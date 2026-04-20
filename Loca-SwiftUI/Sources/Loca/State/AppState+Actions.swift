@@ -326,6 +326,14 @@ extension AppState {
         do {
             let detail = try await BackendClient.shared.getConversation(id)
             messages = detail.messages
+            // Rehydrate the per-turn citation map so popover clicks keep
+            // working on previously-saved conversations.
+            citationsByMessageId.removeAll()
+            for msg in detail.messages {
+                if let cits = msg.citations, !cits.isEmpty {
+                    citationsByMessageId[msg.id] = cits
+                }
+            }
             activeConversationId = id
             // Apply the conversation's per-conv adapter override (or its
             // project's default, or base). Server resolves the layered
@@ -352,10 +360,23 @@ extension AppState {
         let userMessages = messages.filter { $0.role == "user" }
         guard let first = userMessages.first else { return }
         let title = String(first.content.plainText.prefix(60))
+        // Fold the per-turn citation map into each assistant message
+        // so reload preserves the popover's source metadata. Without
+        // this, every pill on a reloaded turn goes MISSING.
+        let withCitations = messages.map { msg -> ChatMessage in
+            guard msg.role == "assistant",
+                  let cits = citationsByMessageId[msg.id],
+                  !cits.isEmpty else {
+                return msg
+            }
+            var copy = msg
+            copy.citations = cits
+            return copy
+        }
         let req = SaveConversationRequest(
             id: activeConversationId,
             title: title,
-            messages: messages,
+            messages: withCitations,
             model: selectedModelId ?? selectedCapability.modeHint
         )
         do {
