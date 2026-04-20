@@ -29,7 +29,6 @@
     listProjectItems,
     patchProject,
     runWatch,
-    syncVault,
     type Project,
     type ProjectDetail,
     type ProjectItem,
@@ -61,9 +60,6 @@
   let digBusy = $state(false);
   let digStatus = $state<string | null>(null);
 
-  let vaultPath = $state('');
-  let vaultBusy = $state(false);
-  let vaultStatus = $state<string | null>(null);
 
   let watchScope = $state('');
   let watchMinutes = $state(1440);
@@ -84,9 +80,8 @@
   // input on every render, confusing users who came to Sources just to
   // browse. Now the same inputs live behind an explicit "Add source"
   // flyout scoped to the picked kind.
-  type AddSourceKind = 'quote' | 'vault' | '';
+  type AddSourceKind = 'quote' | '';
   let addSourceKind = $state<AddSourceKind>('');
-  let detectedVaults = $state<Array<{ path: string; name: string }>>([]);
 
   // Quote modal — replaces the old prompt() which silently no-ops on
   // Mac's WKWebView when the app isn't focused.
@@ -124,14 +119,6 @@
       return;
     }
     void refreshDetail(id);
-  });
-
-  // Fire the vault detect immediately on mount so the Sync panel has a
-  // default path ready the moment the user opens it. Without this, the
-  // detect runs on picker-open and the sub-panel renders before the
-  // fetch resolves → placeholder shows the generic fallback.
-  $effect(() => {
-    void pickDetectedVault();
   });
 
   $effect(() => {
@@ -209,20 +196,15 @@
     }
   }
 
-  async function handleSyncVault(): Promise<void> {
+  async function toggleObsidianSource(enabled: boolean): Promise<void> {
     if (!app.activeProjectId) return;
-    const p = vaultPath.trim();
-    if (!p) return;
-    vaultBusy = true;
-    vaultStatus = 'Ingesting vault…';
     try {
-      const r = await syncVault(app.activeProjectId, p);
-      vaultStatus = `Synced: ${r.stored} stored, ${r.skipped} skipped (of ${r.total}).`;
-      await loadItems(app.activeProjectId);
+      await patchProject(app.activeProjectId, { obsidian_source: enabled });
+      await refreshDetail(app.activeProjectId);
     } catch (e) {
-      vaultStatus = `Failed: ${e instanceof Error ? e.message : String(e)}`;
-    } finally {
-      vaultBusy = false;
+      // Refresh so the checkbox resnaps to the stored value on failure.
+      await refreshDetail(app.activeProjectId);
+      console.warn('toggleObsidianSource failed', e);
     }
   }
 
@@ -327,25 +309,8 @@
     if (detail) detail.items_count = (detail.items_count ?? 0) + 1;
   }
 
-  async function pickDetectedVault(): Promise<void> {
-    // Populate vaultPath with the first detected vault so users don't
-    // have to type (or remember) the full path. Silent-fail is fine
-    // — the user can still paste a path manually.
-    if (detectedVaults.length > 0) return;
-    try {
-      const r = await fetch('/api/vault/detect');
-      if (!r.ok) return;
-      const data = await r.json() as { vaults?: Array<{ path: string; name: string }> };
-      detectedVaults = data.vaults ?? [];
-      if (!vaultPath && detectedVaults.length > 0) {
-        vaultPath = detectedVaults[0].path;
-      }
-    } catch { /* no-op */ }
-  }
-
   function openAddSource(kind: AddSourceKind): void {
     addSourceKind = kind;
-    if (kind === 'vault') void pickDetectedVault();
   }
 
   // Human-readable labels for the six project-item kinds. The raw
@@ -561,49 +526,30 @@
               >
                 <option value="">+ Add source…</option>
                 <option value="quote">Pin a quote</option>
-                <option value="vault">Sync Obsidian vault</option>
               </select>
             </div>
           </div>
         </div>
 
-        <!-- Vault sync sub-panel: only visible when user picks it from
-             the Add source dropdown, pre-fills with the detected default
-             path. Clears itself once synced. -->
-        {#if addSourceKind === 'vault'}
-          <div class="add-panel">
-            <p class="hint">
-              Ingest markdown notes from an Obsidian vault. Loca ranks notes
-              by relevance to this project's scope before storing them.
-            </p>
-            {#if detectedVaults.length === 0}
-              <p class="hint">No Obsidian vaults detected yet. Paste a vault path below or open the Vault panel to register one.</p>
-            {:else if detectedVaults.length === 1}
-              <p class="hint">Detected: <strong>{detectedVaults[0].name}</strong> — edit the path below to use a different one.</p>
-            {:else}
-              <label class="field">
-                <span>Detected vaults</span>
-                <select value={vaultPath} onchange={(e) => { vaultPath = (e.currentTarget as HTMLSelectElement).value; }}>
-                  {#each detectedVaults as v}
-                    <option value={v.path}>{v.name}</option>
-                  {/each}
-                </select>
-              </label>
-            {/if}
-            <label class="field">
-              <span>Vault path</span>
-              <input type="text" bind:value={vaultPath}
-                placeholder={detectedVaults[0]?.path ?? "/path/to/Obsidian/vault"} />
-            </label>
-            <div class="row tight">
-              <button class="primary" disabled={vaultBusy || !vaultPath.trim()} onclick={handleSyncVault}>
-                {vaultBusy ? 'Syncing…' : 'Sync vault'}
-              </button>
-              <button onclick={() => { addSourceKind = ''; vaultStatus = null; }}>Cancel</button>
-            </div>
-            {#if vaultStatus}<p class="status">{vaultStatus}</p>{/if}
-          </div>
-        {/if}
+        <!-- Obsidian Watcher attachment — one-click toggle that wires
+             this project into the app-level watched vault index. No
+             per-project ingestion; retrieval happens live each turn. -->
+        <div class="obsidian-toggle">
+          <label class="toggle-row">
+            <input
+              type="checkbox"
+              checked={detail.obsidian_source ?? false}
+              onchange={(e) => void toggleObsidianSource((e.currentTarget as HTMLInputElement).checked)}
+            />
+            <span class="toggle-label">
+              <strong>Use Obsidian Watcher</strong>
+              <span class="hint">
+                Draws live from watched vaults — no per-project re-ingestion.
+                Manage vaults in the Obsidian Watcher panel.
+              </span>
+            </span>
+          </label>
+        </div>
       </section>
 
       {#if items.length === 0}
@@ -888,14 +834,29 @@
     color: var(--loca-color-text);
     cursor: pointer;
   }
-  .add-panel {
+  .obsidian-toggle {
     background: var(--loca-color-surface);
     border: 1px solid var(--loca-color-border);
     border-radius: var(--loca-radius-sm);
     padding: 10px 12px;
+    margin-top: 8px;
+  }
+  .toggle-row {
     display: flex;
-    flex-direction: column;
-    gap: 8px;
+    align-items: flex-start;
+    gap: 10px;
+    cursor: pointer;
+  }
+  .toggle-row input[type="checkbox"] { margin-top: 3px; }
+  .toggle-label {
+    display: flex; flex-direction: column; gap: 2px;
+    font-size: 12px; color: var(--loca-color-text);
+  }
+  .toggle-label .hint {
+    font-size: 11px;
+    color: var(--loca-color-text-muted);
+    font-weight: 400;
+    line-height: 1.4;
   }
 
   /* Quote modal — overlay within the panel so the workspace backdrop

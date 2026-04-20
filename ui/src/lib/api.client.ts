@@ -196,6 +196,9 @@ export interface Project {
   conv_count?: number;
   /** Preferred LoRA adapter to activate when this project becomes active. */
   adapter_name?: string | null;
+  /** When true, recall draws live from the app-level Obsidian Watcher
+   *  index — no per-project Sync Vault ingestion required. */
+  obsidian_source?: boolean;
 }
 
 export interface ProjectItem {
@@ -258,7 +261,10 @@ export async function createProject(title: string, scope: string): Promise<Proje
 
 export async function patchProject(
   id: string,
-  patch: { title?: string; scope?: string; notes?: string; adapter?: string | null },
+  patch: {
+    title?: string; scope?: string; notes?: string;
+    adapter?: string | null; obsidian_source?: boolean;
+  },
 ): Promise<void> {
   const r = await fetch(`/api/projects/${encodeURIComponent(id)}`, {
     method: 'PATCH',
@@ -500,6 +506,69 @@ export async function searchVault(path: string, q: string, limit = 30): Promise<
     `/api/vault/semantic-search?path=${encodeURIComponent(path)}&q=${encodeURIComponent(q)}&limit=${limit}`,
   );
   return data.results ?? [];
+}
+
+// ── Obsidian Watcher — app-level vault registry + background scan ────────────
+
+export interface WatchedVault {
+  path: string;
+  name: string;
+  enabled: boolean;
+  scan_interval_s: number;
+  last_scan_at: number | null;
+  last_stats: {
+    total?: number;
+    added?: number;
+    updated?: number;
+    skipped?: number;
+    removed?: number;
+    errors?: number;
+  };
+  created: number;
+  busy: boolean;
+}
+
+export async function listWatchedVaults(): Promise<WatchedVault[]> {
+  const data = await jsonGet<{ vaults: WatchedVault[] }>('/api/obsidian/watched');
+  return data.vaults ?? [];
+}
+
+export async function registerVault(
+  path: string, scanIntervalS = 300,
+): Promise<WatchedVault> {
+  const r = await fetch('/api/obsidian/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, scan_interval_s: scanIntervalS }),
+  });
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    throw new Error(body?.error || `register vault → HTTP ${r.status}`);
+  }
+  const data = await r.json() as { vault: WatchedVault };
+  return data.vault;
+}
+
+export async function unregisterVault(path: string): Promise<void> {
+  const r = await fetch('/api/obsidian/unregister', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (!r.ok) throw new Error(`unregister → HTTP ${r.status}`);
+}
+
+export async function scanVaultNow(path: string): Promise<{ ok: boolean } & Record<string, number>> {
+  const r = await fetch('/api/obsidian/scan-now', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    throw new Error(body?.error || `scan-now → HTTP ${r.status}`);
+  }
+  return r.json();
 }
 
 // ── Voice (STT + TTS + end-to-end voice chat) ────────────────────────────────

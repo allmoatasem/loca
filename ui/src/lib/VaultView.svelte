@@ -1,24 +1,25 @@
 <!--
-  VaultView — Svelte port of Loca-SwiftUI/Sources/Loca/Views/VaultView.swift.
+  VaultView — "Obsidian Watcher" surface. Registered vaults sync in
+  the background via `/api/obsidian/*`; the bottom tabs render the
+  live analysis for whichever watched vault is selected.
 
-  Phase 6-c scope: vault detection + scan + 5-tab analysis surface
-  (Overview, Orphans, Broken Links, Suggestions, Search). Identical
-  endpoints the Swift app uses, so scan state is shared across UIs.
-
-  The upcoming Knowledge-Memory Link (Tier 2 roadmap item 6) reimagines
-  this panel with a second "Link" tab that reindexes a vault into
-  memory via the knowledge-import pipeline. This PR only ports the
-  existing Analyser surface; the Link tab lands with the wider redesign.
+  The per-project "Sync Vault" button has been retired: Research Partner
+  projects with `obsidian_source=true` read straight from the shared
+  `vault_notes` index populated by this watcher, with no re-ingestion.
 -->
 <script lang="ts">
   import {
     detectVaults,
     fetchVaultAnalysis,
-    scanVault,
+    listWatchedVaults,
+    registerVault,
+    scanVaultNow,
     searchVault,
+    unregisterVault,
     type DetectedVault,
     type VaultAnalysis,
     type VaultSearchHit,
+    type WatchedVault,
   } from './api.client';
 
   interface Props { onClose?: () => void }
@@ -28,6 +29,7 @@
   let tab = $state<Tab>('overview');
 
   let detected = $state<DetectedVault[]>([]);
+  let watched = $state<WatchedVault[]>([]);
   let selectedPath = $state<string>('');
   let manualPath   = $state<string>('');
   let analysis = $state<VaultAnalysis | null>(null);
@@ -39,20 +41,41 @@
   let searchHits  = $state<VaultSearchHit[]>([]);
   let searching   = $state<boolean>(false);
 
-  // Detect on mount; remember the first one so users land in a ready state.
+  // Keep a live copy of the watched list so last_scan_at / busy flags
+  // update while a background scan is in flight.
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
+
   $effect(() => {
     (async () => {
       try {
-        detected = await detectVaults();
-        if (detected.length > 0 && !selectedPath) {
-          selectedPath = detected[0].path;
+        const [dets, ws] = await Promise.all([
+          detectVaults(), listWatchedVaults(),
+        ]);
+        detected = dets;
+        watched = ws;
+        if (ws.length > 0 && !selectedPath) {
+          selectedPath = ws[0].path;
           await analyse(selectedPath);
+        } else if (dets.length > 0 && !selectedPath) {
+          // No vaults watched yet — surface the first detected path
+          // so the user can click "Watch" in a single step.
+          manualPath = dets[0].path;
         }
       } catch (e) {
         errorMsg = e instanceof Error ? e.message : String(e);
       }
     })();
+    pollTimer = setInterval(refreshWatched, 3000);
+    return () => {
+      if (pollTimer) clearInterval(pollTimer);
+    };
   });
+
+  async function refreshWatched(): Promise<void> {
+    try {
+      watched = await listWatchedVaults();
+    } catch { /* transient network — silently retry next tick */ }
+  }
 
   async function analyse(path: string): Promise<void> {
     if (!path) return;
@@ -61,7 +84,6 @@
     try {
       analysis = await fetchVaultAnalysis(path);
     } catch (e) {
-      // Not-scanned yet → backend returns empty stats; treat as "scan needed"
       errorMsg = e instanceof Error ? e.message : String(e);
       analysis = null;
     } finally {
@@ -69,20 +91,62 @@
     }
   }
 
-  async function runScan(): Promise<void> {
-    const path = selectedPath || manualPath.trim();
-    if (!path) { errorMsg = 'Enter or select a vault path first.'; return; }
+  async function watchPath(): Promise<void> {
+    const path = manualPath.trim() || (detected[0]?.path ?? '');
+    if (!path) { errorMsg = 'Pick a detected vault or paste a path first.'; return; }
     scanning = true;
     errorMsg = null;
     try {
-      await scanVault(path);
+      await registerVault(path);
       selectedPath = path;
-      await analyse(path);
+      manualPath = '';
+      await refreshWatched();
+      // First scan is kicked off server-side; poll briefly then analyse.
+      setTimeout(async () => {
+        await refreshWatched();
+        await analyse(path);
+      }, 1500);
     } catch (e) {
       errorMsg = e instanceof Error ? e.message : String(e);
     } finally {
       scanning = false;
     }
+  }
+
+  async function scanNow(path: string): Promise<void> {
+    scanning = true;
+    errorMsg = null;
+    try {
+      await scanVaultNow(path);
+      await refreshWatched();
+      if (path === selectedPath) await analyse(path);
+    } catch (e) {
+      errorMsg = e instanceof Error ? e.message : String(e);
+    } finally {
+      scanning = false;
+    }
+  }
+
+  async function removeWatch(path: string): Promise<void> {
+    try {
+      await unregisterVault(path);
+      if (selectedPath === path) {
+        selectedPath = '';
+        analysis = null;
+      }
+      await refreshWatched();
+    } catch (e) {
+      errorMsg = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  function relativeTime(ts: number | null): string {
+    if (!ts) return 'never scanned';
+    const secs = Math.max(1, Math.floor(Date.now() / 1000 - ts));
+    if (secs < 60) return `${secs}s ago`;
+    if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+    if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+    return `${Math.floor(secs / 86400)}d ago`;
   }
 
   let searchTimer = $state<ReturnType<typeof setTimeout> | null>(null);
@@ -107,11 +171,11 @@
   const stats = $derived(analysis?.stats ?? null);
 </script>
 
-<section class="panel" aria-label="Vault Analyser">
+<section class="panel" aria-label="Obsidian Watcher">
   <header>
-    <div class="title">📚 <span>Vault Analyser</span></div>
+    <div class="title">📚 <span>Obsidian Watcher</span></div>
     <div class="controls">
-      {#if detected.length > 0}
+      {#if watched.length > 0}
         <select
           value={selectedPath}
           onchange={(e) => {
@@ -120,23 +184,11 @@
             if (v) void analyse(v);
           }}
         >
-          {#each detected as v (v.path)}
-            <option value={v.path}>{v.name}</option>
+          {#each watched as v (v.path)}
+            <option value={v.path}>{v.name}{v.busy ? ' (syncing…)' : ''}</option>
           {/each}
         </select>
-      {:else}
-        <input
-          type="text"
-          placeholder="/path/to/vault"
-          bind:value={manualPath}
-        />
       {/if}
-      <button
-        onclick={runScan}
-        disabled={scanning || (!selectedPath && !manualPath.trim())}
-      >
-        {scanning ? 'Scanning…' : 'Scan'}
-      </button>
       {#if onClose}
         <button class="close" aria-label="Close" onclick={onClose}>×</button>
       {/if}
@@ -147,11 +199,83 @@
     <p class="status err">{errorMsg}</p>
   {/if}
 
-  {#if !selectedPath && detected.length === 0}
+  <!-- Register / watched list -->
+  <div class="watcher-bar">
+    {#if watched.length === 0}
+      <div class="empty-inline">
+        <span class="hint">No vaults watched yet.</span>
+        {#if detected.length > 0}
+          <select
+            value={manualPath || detected[0].path}
+            onchange={(e) => manualPath = (e.currentTarget as HTMLSelectElement).value}
+          >
+            {#each detected as v (v.path)}
+              <option value={v.path}>{v.name}</option>
+            {/each}
+          </select>
+        {:else}
+          <input
+            type="text"
+            placeholder="/path/to/vault"
+            bind:value={manualPath}
+          />
+        {/if}
+        <button
+          onclick={watchPath}
+          disabled={scanning || (!manualPath.trim() && detected.length === 0)}
+        >
+          {scanning ? 'Registering…' : 'Watch this vault'}
+        </button>
+      </div>
+    {:else}
+      <ul class="watched-list">
+        {#each watched as v (v.path)}
+          <li class:active={v.path === selectedPath}>
+            <button class="name-btn" onclick={() => { selectedPath = v.path; void analyse(v.path); }}>
+              <span class="name">{v.name}</span>
+              <span class="hint">
+                {v.busy ? 'syncing…' : relativeTime(v.last_scan_at)}
+                {#if v.last_stats?.total != null}· {v.last_stats.total} notes{/if}
+              </span>
+            </button>
+            <button class="row-btn" onclick={() => scanNow(v.path)} disabled={v.busy || scanning}>Scan now</button>
+            <button class="row-btn danger" onclick={() => removeWatch(v.path)}>Remove</button>
+          </li>
+        {/each}
+      </ul>
+      <div class="add-row">
+        {#if detected.filter((d) => !watched.some((w) => w.path === d.path)).length > 0}
+          <select
+            value={manualPath}
+            onchange={(e) => manualPath = (e.currentTarget as HTMLSelectElement).value}
+          >
+            <option value="">Add another detected vault…</option>
+            {#each detected.filter((d) => !watched.some((w) => w.path === d.path)) as v (v.path)}
+              <option value={v.path}>{v.name}</option>
+            {/each}
+          </select>
+        {:else}
+          <input
+            type="text"
+            placeholder="/path/to/another/vault"
+            bind:value={manualPath}
+          />
+        {/if}
+        <button
+          onclick={watchPath}
+          disabled={scanning || !manualPath.trim()}
+        >
+          {scanning ? 'Adding…' : 'Watch'}
+        </button>
+      </div>
+    {/if}
+  </div>
+
+  {#if !selectedPath && watched.length === 0}
     <div class="empty">
       <div class="icon">📂</div>
-      <p>Paste an Obsidian vault path above and press <strong>Scan</strong>.</p>
-      <p class="hint">The scan is read-only — your files are not modified.</p>
+      <p>Register a vault above to start watching.</p>
+      <p class="hint">Loca keeps the index fresh in the background — read-only, your files are never modified.</p>
     </div>
   {:else if analysing}
     <p class="hint loading">Analysing vault…</p>
@@ -275,7 +399,7 @@
     font-size: 14px; font-weight: 600;
   }
   .controls { display: flex; align-items: center; gap: 8px; }
-  .controls select, .controls input[type='text'] {
+  .controls select {
     background: var(--loca-color-surface);
     border: 1px solid var(--loca-color-border);
     border-radius: var(--loca-radius-sm);
@@ -294,6 +418,87 @@
     cursor: pointer;
   }
   .controls button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .watcher-bar {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--loca-color-border);
+    background: color-mix(in srgb, var(--loca-color-surface) 40%, transparent);
+  }
+  .empty-inline {
+    display: flex; align-items: center; gap: 8px;
+    flex-wrap: wrap;
+  }
+  .empty-inline select,
+  .empty-inline input[type='text'],
+  .add-row select,
+  .add-row input[type='text'] {
+    flex: 1;
+    min-width: 160px;
+    background: var(--loca-color-surface);
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-sm);
+    padding: 4px 8px;
+    font-size: 12px;
+    color: var(--loca-color-text);
+  }
+  .empty-inline button, .add-row button {
+    padding: 4px 12px;
+    font-size: 12px;
+    background: var(--loca-color-accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--loca-radius-sm);
+    cursor: pointer;
+  }
+  .empty-inline button:disabled, .add-row button:disabled {
+    opacity: 0.4; cursor: not-allowed;
+  }
+
+  .watched-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 8px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .watched-list li {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px;
+    background: var(--loca-color-surface);
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-sm);
+  }
+  .watched-list li.active {
+    border-color: var(--loca-color-accent);
+  }
+  .name-btn {
+    flex: 1;
+    display: flex; flex-direction: column; align-items: flex-start;
+    background: none; border: none;
+    padding: 2px 4px;
+    cursor: pointer;
+    color: var(--loca-color-text);
+    text-align: left;
+  }
+  .name-btn .name { font-size: 12px; font-weight: 500; }
+  .name-btn .hint { font-size: 11px; color: var(--loca-color-text-muted); }
+  .row-btn {
+    padding: 3px 10px;
+    font-size: 11px;
+    background: var(--loca-color-surface);
+    color: var(--loca-color-text);
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-sm);
+    cursor: pointer;
+  }
+  .row-btn:hover { background: var(--loca-color-border); }
+  .row-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .row-btn.danger { color: var(--loca-color-danger); }
+
+  .add-row {
+    display: flex; align-items: center; gap: 8px;
+  }
   .close {
     width: 24px; height: 24px;
     background: rgba(128, 128, 128, 0.1) !important;
