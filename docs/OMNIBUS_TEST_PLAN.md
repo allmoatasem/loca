@@ -41,11 +41,21 @@
 
 ## D. Research Partner polish
 
-- [ ] **D1.** Create a project, sync vault. Overview → Related Notes. **Expected:** no duplicate titles between memory 🧠 and vault 📓 rows.
+- [ ] **D1.** Create a project with Obsidian source ON. Overview → Related Notes. **Expected:** no duplicate titles between memory 🧠 and vault 📓 rows.
 - [ ] **D2.** Related Notes items never contain raw `[[foo|bar]]` wiki-link syntax.
 - [ ] **D3.** Related Notes items never show `--- tags: - xyz ---` frontmatter blocks.
 - [ ] **D4.** Long Related-Note titles end with `…` at a word boundary, not mid-word.
 - [ ] **D5.** Set a per-conversation adapter override on a single conv. **Expected:** that conv uses the override; siblings in the same project use the project's adapter; other convs use base.
+
+## D-bis. Obsidian Watcher (new)
+
+- [ ] **W1.** Open Vault panel (Svelte + Swift). Header says **Obsidian Watcher**, not "Vault Analyser".
+- [ ] **W2.** With no vault watched, pick a detected vault → click **Watch this vault**. **Expected:** appears in the watched list within ~2s; first scan kicks off automatically; last-scan label flips to "syncing…" then a timestamp.
+- [ ] **W3.** Click **Scan now** on a watched vault. **Expected:** "syncing…" appears, resolves to "Ns ago · N notes", no UI freeze.
+- [ ] **W4.** While a scan is running, switch projects in the sidebar. **Expected:** switch completes instantly — no freeze.
+- [ ] **W5.** With 2+ vaults watched, click the **Remove** button on one. **Expected:** row disappears; other vaults unaffected.
+- [ ] **W6.** Create a Research Partner project. Sources section shows **Use Obsidian Watcher** toggle. Flip on. Ask a question grounded in vault content. **Expected:** the response cites a vault note; nothing was "synced" into the project.
+- [ ] **W7.** Parity: watched list, Scan now, Remove, and the per-project toggle all work identically in Swift and Svelte.
 
 ## E. Adapter UX
 
