@@ -195,6 +195,18 @@
       </div>
     {/if}
     <p class="text">{content}</p>
+    <button class="copy user-copy" onclick={copyToClipboard} aria-label="Copy message" title={copied ? 'Copied' : 'Copy message'}>
+      {#if copied}
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="3 8 7 12 13 4" />
+        </svg>
+      {:else}
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true">
+          <rect x="4" y="4" width="9" height="10" rx="1.5" />
+          <path d="M10 2H3.5A1.5 1.5 0 0 0 2 3.5V11" />
+        </svg>
+      {/if}
+    </button>
   {:else if isStreaming && content === ''}
     <span class="dots"><span></span><span></span><span></span></span>
   {:else if split}
@@ -331,6 +343,9 @@
     cursor: pointer;
   }
   .copy:hover { color: var(--loca-color-text); background: rgba(127, 127, 127, 0.08); }
+  /* User messages align to the right of the chat column so their
+     copy affordance lives on the right edge of the bubble. */
+  .copy.user-copy { align-self: flex-end; }
 
   .dots { display: inline-flex; gap: 4px; padding: 4px 0; }
   .dots span {
