@@ -549,6 +549,27 @@ extension AppState {
         } catch {}
     }
 
+    /// Load a 50-row window centred on `id`. Used when a citation
+    /// deep-links into a store with thousands of memories — we skip
+    /// the 50-row-at-a-time pagination walk and jump straight to
+    /// the right page. Returns true when the id was located.
+    @discardableResult
+    func _loadMemoriesAround(_ id: String) async -> Bool {
+        do {
+            let pos = try await BackendClient.shared.memoryPosition(id)
+            if pos < 0 { return false }
+            let offset = max(0, pos - 10)
+            let page = try await BackendClient.shared.listMemoriesPaged(
+                limit: 50, offset: offset
+            )
+            memories = page.items
+            memoriesTotal = page.total
+            return memories.contains(where: { $0.id == id })
+        } catch {
+            return false
+        }
+    }
+
     // MARK: - Research Partner
 
     func loadProjects() async {

@@ -344,6 +344,25 @@ def count_memories(type: str | None = None) -> int:
         return row[0] if row else 0
 
 
+def get_memory_position(mid: str) -> int | None:
+    """Return the 0-based offset of a memory id in the default
+    `ORDER BY created DESC` list, or None when the id isn't present.
+    Lets the client skip-page directly to a deep-linked citation
+    instead of walking the list 50 rows at a time — essential when
+    a user has thousands of memories."""
+    with _conn() as c:
+        row = c.execute(
+            "SELECT created FROM memories WHERE id = ?", (mid,),
+        ).fetchone()
+        if not row:
+            return None
+        created = row[0]
+        count_row = c.execute(
+            "SELECT COUNT(*) FROM memories WHERE created > ?", (created,),
+        ).fetchone()
+        return int(count_row[0]) if count_row else 0
+
+
 def add_memory(content: str, conv_id: str | None = None, type: str = "user_fact") -> str:
     if type not in MEMORY_TYPES:
         type = "user_fact"

@@ -62,6 +62,25 @@
     }
   }
 
+  /** Jump-load the 50-row window centred on `id` so deep-linked
+   *  citations can be shown without walking thousands of memories. */
+  async function loadAround(id: string): Promise<boolean> {
+    try {
+      const posResp = await fetch(`/api/memories/${encodeURIComponent(id)}/position`);
+      if (!posResp.ok) return false;
+      const { offset: pos } = await posResp.json() as { offset: number };
+      const startOffset = Math.max(0, pos - 10);
+      const r = await fetch(`/api/memories?limit=${PAGE_SIZE}&offset=${startOffset}`);
+      const data = await r.json();
+      memories = data.memories ?? [];
+      total = data.total ?? memories.length;
+      offset = startOffset + memories.length;
+      return memories.some((m: MemoryItem) => m.id === id);
+    } catch {
+      return false;
+    }
+  }
+
   async function deleteMemory(id: string): Promise<void> {
     try {
       await fetch(`/api/memories/${encodeURIComponent(id)}`, { method: 'DELETE' });
@@ -132,14 +151,13 @@
   loadFirstPage();
 
   // Deep-link target from a citation popover's "Open in Memory"
-  // button. The store holds the memory id; we page in rows until it
-  // appears, then scroll + flash.
+  // button. Jumps straight to the window around the target (via
+  // `/api/memories/{id}/position`) instead of walking the list 50
+  // rows at a time — essential for stores with thousands of memories.
   async function focusHighlight(targetId: string): Promise<void> {
-    if (loading) return;
-    while (!memories.some((m) => m.id === targetId) && offset < total) {
-      await loadMore();
-    }
-    if (!memories.some((m) => m.id === targetId)) return;
+    const present = memories.some((m) => m.id === targetId)
+      || await loadAround(targetId);
+    if (!present) return;
     await tick();
     const el = itemEls[targetId];
     if (el) {

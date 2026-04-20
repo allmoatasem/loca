@@ -333,6 +333,8 @@ final class AppState: ObservableObject {
     func send(_ text: String, attachments: [UploadResult] = []) { Task { await _send(text, attachments: attachments) } }
     func loadMemories()         { Task { await _loadMemories() } }
     func loadMoreMemories() async { await _loadMoreMemories() }
+    @discardableResult
+    func loadMemoriesAround(_ id: String) async -> Bool { await _loadMemoriesAround(id) }
     func extractMemories()      { Task { await _extractMemories() } }
     func pollSystemStats()      { Task { await _pollSystemStats() } }
     func reloadConversations()  { Task { await _loadConversationList() } }

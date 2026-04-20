@@ -267,6 +267,20 @@ actor BackendClient {
         _ = try await delete("/api/conversations/\(id)")
     }
 
+    struct MemoryPositionResponse: Decodable { let offset: Int }
+
+    /// Returns the 0-based offset of `id` in the default memories
+    /// list (ORDER BY created DESC). Lets the client jump straight
+    /// to the right page for deep-linked citations instead of walking
+    /// 9k+ rows 50 at a time.
+    func memoryPosition(_ id: String) async throws -> Int {
+        let (data, resp) = try await get("/api/memories/\(id)/position")
+        if let http = resp as? HTTPURLResponse, http.statusCode == 404 {
+            return -1
+        }
+        return try JSONDecoder().decode(MemoryPositionResponse.self, from: data).offset
+    }
+
     func patchConversation(
         _ id: String,
         starred: Bool? = nil,

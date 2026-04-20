@@ -1897,43 +1897,46 @@ struct MemoryPanel: View {
                 }
                 .onChange(of: state.memoryHighlightId) { _, new in
                     guard let id = new else { return }
-                    Task {
-                        // Best-effort page-in until the row appears; cap
-                        // to avoid runaway loops when citations point
-                        // at an id no longer in the store.
-                        var attempts = 0
-                        while !state.memories.contains(where: { $0.id == id }),
-                              state.memories.count < state.memoriesTotal,
-                              attempts < 20 {
-                            await state.loadMoreMemories()
-                            attempts += 1
-                        }
-                        try? await Task.sleep(nanoseconds: 50_000_000)
-                        withAnimation(.easeInOut(duration: 0.35)) {
-                            proxy.scrollTo(id, anchor: .center)
-                        }
-                        // Clear after the flash so re-opening the panel
-                        // doesn't re-trigger the same highlight.
-                        try? await Task.sleep(nanoseconds: 1_800_000_000)
-                        if state.memoryHighlightId == id { state.memoryHighlightId = nil }
-                    }
+                    Task { await focusMemory(id: id, proxy: proxy) }
                 }
                 .onAppear {
-                    // Run the same effect on first appear in case the
-                    // panel was opened with a pending highlight.
+                    // When the panel mounts with a highlight already set
+                    // (citation click), jump-load the window around the
+                    // target and scroll to it.
                     if let id = state.memoryHighlightId {
-                        Task {
-                            try? await Task.sleep(nanoseconds: 120_000_000)
-                            withAnimation(.easeInOut(duration: 0.35)) {
-                                proxy.scrollTo(id, anchor: .center)
-                            }
-                        }
+                        Task { await focusMemory(id: id, proxy: proxy) }
                     }
                 }
                 }
             }
         }
-        .onAppear { state.loadMemories() }
+        .onAppear {
+            // Only load from offset 0 when we're NOT about to jump to
+            // a highlight — the focus path replaces `memories` with a
+            // window around the target id anyway.
+            if state.memoryHighlightId == nil {
+                state.loadMemories()
+            }
+        }
+    }
+
+    /// Fetch the memory's position, load a window around it, and
+    /// scroll the list to the highlighted row. Replaces the earlier
+    /// 50-row-at-a-time walk which couldn't reach citations deep in a
+    /// store of thousands of memories.
+    private func focusMemory(id: String, proxy: ScrollViewProxy) async {
+        let found = await state.loadMemoriesAround(id)
+        if !found {
+            // Fall back to a normal load so the panel isn't blank.
+            state.loadMemories()
+            return
+        }
+        try? await Task.sleep(nanoseconds: 80_000_000)
+        withAnimation(.easeInOut(duration: 0.35)) {
+            proxy.scrollTo(id, anchor: .center)
+        }
+        try? await Task.sleep(nanoseconds: 1_800_000_000)
+        if state.memoryHighlightId == id { state.memoryHighlightId = nil }
     }
 
     private func _triggerRecall() {

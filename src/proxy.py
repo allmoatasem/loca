@@ -1916,6 +1916,19 @@ async def api_list_memories(
     })
 
 
+@app.get("/api/memories/{memory_id}/position")
+async def api_memory_position(memory_id: str) -> JSONResponse:
+    """Return the 0-based offset of a memory in the default
+    created-desc list. Clients use this to skip-page directly to a
+    deep-linked citation — walking 9k+ memories 50 rows at a time
+    was making "Open in Memory" timeout or miss the target entirely."""
+    from .store import get_memory_position  # noqa: PLC0415
+    pos = get_memory_position(memory_id)
+    if pos is None:
+        return JSONResponse({"error": "memory not found"}, status_code=404)
+    return JSONResponse({"id": memory_id, "offset": pos})
+
+
 @app.post("/api/memories")
 async def api_add_memory(request: Request) -> JSONResponse:
     assert _plugin_manager is not None
