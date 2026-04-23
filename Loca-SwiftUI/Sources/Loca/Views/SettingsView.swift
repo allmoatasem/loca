@@ -447,7 +447,13 @@ private struct DiscoverTab: View {
                                     // the user can preview file variants
                                     // before committing to the download.
                                     discoverMode = .search
-                                    hfQuery = rec.name
+                                    // Prefer the repo_id over the display
+                                    // name — HF text search is stricter than
+                                    // expected and `OLMo-2-0425-1B-Instruct`
+                                    // can return zero results where
+                                    // `allenai/OLMo-2-0425-1B-Instruct`
+                                    // always finds the exact repo.
+                                    hfQuery = rec.repo_id
                                 }
                             }
                             if displayLimit < filtered.count {

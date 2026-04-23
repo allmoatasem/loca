@@ -137,7 +137,8 @@ class Orchestrator:
         expanded_queries: list[str] = []
         retrieved_for_provenance: list[RetrievedMemory] = []
         skipped_meta_query = _is_meta_query(user_message)
-        if self._memory and not skipped_meta_query:
+        trivial_query = _is_trivial_query(user_message)
+        if self._memory and not skipped_meta_query and not trivial_query:
             recall_query = _build_recall_query(messages)
             expanded_queries = _expand_query(recall_query)
             per_query_limit = 25 if len(expanded_queries) == 1 else 15
@@ -174,6 +175,13 @@ class Orchestrator:
         elif skipped_meta_query:
             logger.info("Skipping memory recall: meta-query detected in user message")
             mem_ctx = ""
+        elif trivial_query:
+            # Trivial greetings — keep background user-fact scaffolding
+            # but skip the noisy 10-row retrieval pool. Model still
+            # knows who the user is; bubble stays free of bogus
+            # "sources used" footers.
+            logger.debug("Skipping memory recall: trivial greeting/ack")
+            mem_ctx = get_memories_context()
         else:
             mem_ctx = get_memories_context()
         if mem_ctx:
@@ -252,7 +260,7 @@ class Orchestrator:
             system_prompt = _build_system_prompt(result.model, model_name, self._hw)
 
         # Memory injection — still on, this is the differentiator vs Ollama/LM-Studio.
-        if self._memory and not _is_meta_query(user_message):
+        if self._memory and not _is_meta_query(user_message) and not _is_trivial_query(user_message):
             recall_query = _build_recall_query(messages)
             queries = _expand_query(recall_query)
             per_query_limit = 25 if len(queries) == 1 else 15
@@ -1107,6 +1115,32 @@ def _is_meta_query(query: str) -> bool:
     the answer.
     """
     return any(marker in query.lower() for marker in _META_QUERY_MARKERS)
+
+
+# Words that appear in greetings, acknowledgements, and short closers
+# — queries made entirely of these (and ≤3 tokens long) skip the
+# retrieval pool entirely so "Hello there" doesn't end up with a
+# "10 sources used" footer on a bubble that had no business citing
+# anything. Background memory context (user facts) still injects.
+_TRIVIAL_TOKENS = frozenset({
+    "hi", "hello", "hey", "yo", "howdy", "greetings", "sup",
+    "thanks", "thank", "you", "ty", "thx", "cheers", "appreciated",
+    "ok", "okay", "cool", "nice", "great", "awesome", "perfect",
+    "yes", "yep", "yeah", "yup", "sure", "no", "nope", "nah",
+    "bye", "goodbye", "later", "cya",
+    "there", "morning", "afternoon", "evening",
+})
+
+
+def _is_trivial_query(query: str) -> bool:
+    """True for short greetings / acknowledgements that don't warrant
+    running semantic recall against the memory store. Distinct from
+    meta-queries: we still inject background `get_memories_context()`
+    so the model keeps its user-fact scaffolding."""
+    tokens = re.findall(r"[a-z']+", query.lower())
+    if not tokens or len(tokens) > 3:
+        return False
+    return set(tokens).issubset(_TRIVIAL_TOKENS)
 
 
 def _project_items_as_memories(project_id: str) -> list[dict]:

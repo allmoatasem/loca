@@ -512,13 +512,6 @@
     const chatTemplateKwargs = parseJsonPref('loca-template-kwargs');
     const extraBody          = parseJsonPref('loca-extra-body');
 
-    // Typewriter prefs — read once per turn so changing the slider
-    // mid-response doesn't cause a queue/drain race.
-    const typewriterOn = localStorage.getItem('loca-typewriter') === '1';
-    const typewriterRate = Math.max(10, parseInt(
-      localStorage.getItem('loca-typewriter-rate') ?? '60', 10,
-    ));
-
     try {
       const body: Record<string, unknown> = {
         mode: app.selectedCapability,
@@ -555,15 +548,6 @@
       let memoryInjected  = false;
       let turnCitations: Citation[] = [];
 
-      // Typewriter mode replays incoming deltas at a controlled
-      // chars/sec so the user reads alongside the model. The drain
-      // interval pulls characters off `pendingChars` and appends to
-      // `assembled` independently of network arrival rate. When off,
-      // deltas are appended immediately as before.
-      let pendingChars = '';
-      const tickMs = 50;
-      const charsPerTick = Math.max(1, Math.round(typewriterRate * tickMs / 1000));
-      let drainTimer: ReturnType<typeof setInterval> | null = null;
       const pumpHistory = (): void => {
         const updated = [...history];
         updated[assistantIdx] = {
@@ -573,16 +557,6 @@
         };
         history = updated;
       };
-      if (typewriterOn) {
-        drainTimer = setInterval(() => {
-          if (!pendingChars) return;
-          const take = pendingChars.slice(0, charsPerTick);
-          pendingChars = pendingChars.slice(take.length);
-          assembled += take;
-          pumpHistory();
-          void scrollToBottom();
-        }, tickMs);
-      }
 
       while (true) {
         const { done, value } = await reader.read();
@@ -600,13 +574,9 @@
             const delta = parsed?.choices?.[0]?.delta?.content;
             if (typeof delta === 'string' && delta.length > 0) {
               if (tFirst === null) tFirst = performance.now();
-              if (typewriterOn) {
-                pendingChars += delta;
-              } else {
-                assembled += delta;
-                pumpHistory();
-                await scrollToBottom();
-              }
+              assembled += delta;
+              pumpHistory();
+              await scrollToBottom();
             }
             // Final usage payload — proxy emits these stats right before [DONE].
             const usage = parsed?.usage;
@@ -622,17 +592,6 @@
             }
           } catch { /* ignore malformed SSE lines */ }
         }
-      }
-
-      // Stream ended — drain any remaining typewriter buffer in one
-      // shot so the bubble doesn't appear truncated. Stops the timer
-      // either way.
-      if (drainTimer) clearInterval(drainTimer);
-      if (pendingChars) {
-        assembled += pendingChars;
-        pendingChars = '';
-        pumpHistory();
-        await scrollToBottom();
       }
 
       const tEnd = performance.now();
@@ -825,13 +784,12 @@
       placeholder={
         app.isVoiceMode ? voicePlaceholder(voiceState, app.isTranscribing, isSpeaking)
         : app.loadingModel ? `Loading ${app.loadingModel}…`
-        : !app.activeModelName ? 'Load a model to start chatting'
         : 'Message Loca…  (⌘↵ to send)'
       }
       bind:value={input}
       onkeydown={onKeydown}
       rows="3"
-      disabled={streaming || app.isVoiceMode || !!app.loadingModel || !app.activeModelName}
+      disabled={streaming || app.isVoiceMode || !!app.loadingModel}
     ></textarea>
     <button
       class="mic"
@@ -856,7 +814,7 @@
     <button
       class="send"
       onclick={send}
-      disabled={streaming || !!app.loadingModel || !app.activeModelName || (!input.trim() && attachments.length === 0)}
+      disabled={streaming || !!app.loadingModel || (!input.trim() && attachments.length === 0)}
     >
       {streaming ? 'Streaming…' : app.loadingModel ? 'Loading…' : 'Send'}
     </button>
