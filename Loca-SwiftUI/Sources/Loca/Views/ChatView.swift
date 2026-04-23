@@ -1748,6 +1748,14 @@ struct MemoryPanel: View {
     @State private var recallResults: [Memory] = []
     @State private var isRecalling = false
     @State private var recallError: String?
+    @State private var showBulkSheet = false
+    @State private var bulkBusy = false
+    @State private var bulkStatus: String?
+    /// Deep-linked memory fetched via `GET /api/memories/{id}` when
+    /// a citation popover's "Open in Memory" button is clicked.
+    /// Shown pinned above the list — no scroll, no page walk.
+    @State private var citedMemory: Memory?
+    @State private var citedError: String?
 
     private var displayedMemories: [Memory] {
         if !searchText.isEmpty && !recallResults.isEmpty { return recallResults }
@@ -1781,6 +1789,25 @@ struct MemoryPanel: View {
                 .buttonStyle(.bordered)
                 .help("Store recent messages verbatim for future recall")
                 .disabled(state.messages.isEmpty || state.isExtractingMemories)
+
+                Menu {
+                    Button("Delete all user facts") { Task { await runBulkDelete(kind: "user_fact") } }
+                    Button("Delete all knowledge")  { Task { await runBulkDelete(kind: "knowledge") } }
+                    Button("Delete all corrections"){ Task { await runBulkDelete(kind: "correction") } }
+                    Divider()
+                    Button(role: .destructive) {
+                        Task { await runBulkDelete(kind: nil) }
+                    } label: {
+                        Text("Wipe EVERYTHING")
+                    }
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Bulk delete by kind, or wipe the whole store")
+                .disabled(bulkBusy)
 
                 Button("Done") { state.isMemoryPanelOpen = false }
                     .controlSize(.small)
@@ -1844,90 +1871,117 @@ struct MemoryPanel: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding()
             } else {
-                ScrollViewReader { proxy in
-                List {
-                    if !searchText.isEmpty && !recallResults.isEmpty {
-                        Section(header: Text("Semantic matches for \"\(searchText)\"")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.secondary)) {
-                            ForEach(displayedMemories) { memory in
-                                MemoryRow(memory: memory).id(memory.id)
-                            }
-                        }
-                    } else {
-                        ForEach(displayedMemories) { memory in
-                            MemoryRow(memory: memory).id(memory.id)
-                        }
-                        .onDelete { offsets in
-                            let ids = offsets.map { displayedMemories[$0].id }
-                            state.memories.removeAll { ids.contains($0.id) }
-                            state.memoriesTotal = max(0, state.memoriesTotal - ids.count)
-                            for id in ids { Task { try? await BackendClient.shared.deleteMemory(id) } }
-                        }
-                        if searchText.isEmpty && state.memories.count < state.memoriesTotal {
-                            Button {
-                                Task { await state.loadMoreMemories() }
-                            } label: {
-                                HStack {
-                                    Spacer()
-                                    if state.isLoadingMoreMemories {
-                                        ProgressView().controlSize(.small)
-                                    } else {
-                                        Text("Load more (\(state.memories.count) of \(state.memoriesTotal))")
-                                            .font(.system(size: 12))
-                                            .foregroundColor(.accentColor)
-                                    }
-                                    Spacer()
+                VStack(spacing: 0) {
+                    if citedMemory != nil || citedError != nil {
+                        CitedMemoryCard(
+                            memory: citedMemory,
+                            error: citedError,
+                            onDismiss: dismissCited
+                        )
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+                    }
+                    List {
+                        if !searchText.isEmpty && !recallResults.isEmpty {
+                            Section(header: Text("Semantic matches for \"\(searchText)\"")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(.secondary)) {
+                                ForEach(displayedMemories) { memory in
+                                    MemoryRow(memory: memory)
                                 }
-                                .padding(.vertical, 4)
                             }
-                            .buttonStyle(.plain)
-                            .disabled(state.isLoadingMoreMemories)
+                        } else {
+                            ForEach(displayedMemories) { memory in
+                                MemoryRow(memory: memory)
+                            }
+                            .onDelete { offsets in
+                                let ids = offsets.map { displayedMemories[$0].id }
+                                state.memories.removeAll { ids.contains($0.id) }
+                                state.memoriesTotal = max(0, state.memoriesTotal - ids.count)
+                                for id in ids { Task { try? await BackendClient.shared.deleteMemory(id) } }
+                            }
+                            if searchText.isEmpty && state.memories.count < state.memoriesTotal {
+                                Button {
+                                    Task { await state.loadMoreMemories() }
+                                } label: {
+                                    HStack {
+                                        Spacer()
+                                        if state.isLoadingMoreMemories {
+                                            ProgressView().controlSize(.small)
+                                        } else {
+                                            Text("Load more (\(state.memories.count) of \(state.memoriesTotal))")
+                                                .font(.system(size: 12))
+                                                .foregroundColor(.accentColor)
+                                        }
+                                        Spacer()
+                                    }
+                                    .padding(.vertical, 4)
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(state.isLoadingMoreMemories)
+                            }
                         }
                     }
-                }
-                .onChange(of: state.memoryHighlightId) { _, new in
-                    guard let id = new else { return }
-                    Task { await focusMemory(id: id, proxy: proxy) }
-                }
-                .onAppear {
-                    // When the panel mounts with a highlight already set
-                    // (citation click), jump-load the window around the
-                    // target and scroll to it.
-                    if let id = state.memoryHighlightId {
-                        Task { await focusMemory(id: id, proxy: proxy) }
-                    }
-                }
                 }
             }
         }
         .onAppear {
-            // Only load from offset 0 when we're NOT about to jump to
-            // a highlight — the focus path replaces `memories` with a
-            // window around the target id anyway.
-            if state.memoryHighlightId == nil {
-                state.loadMemories()
-            }
+            state.loadMemories()
+            // If a citation deep-link is pending, fetch the cited row
+            // immediately so the pinned card renders alongside the
+            // regular list.
+            if let id = state.memoryHighlightId { Task { await fetchCited(id: id) } }
+        }
+        .onChange(of: state.memoryHighlightId) { _, new in
+            if let id = new { Task { await fetchCited(id: id) } }
+            else { citedMemory = nil; citedError = nil }
         }
     }
 
-    /// Fetch the memory's position, load a window around it, and
-    /// scroll the list to the highlighted row. Replaces the earlier
-    /// 50-row-at-a-time walk which couldn't reach citations deep in a
-    /// store of thousands of memories.
-    private func focusMemory(id: String, proxy: ScrollViewProxy) async {
-        let found = await state.loadMemoriesAround(id)
-        if !found {
-            // Fall back to a normal load so the panel isn't blank.
-            state.loadMemories()
-            return
+    /// Fetch the single cited memory for the pinned-card header.
+    /// Replaces the old scroll-to-offset approach which raced with
+    /// paged loads and silently missed deep-list targets.
+    private func fetchCited(id: String) async {
+        do {
+            if let mem = try await BackendClient.shared.memoryById(id) {
+                citedMemory = mem
+                citedError = nil
+            } else {
+                citedMemory = nil
+                citedError = "That memory is no longer in the store — it may have been deleted."
+            }
+        } catch {
+            citedMemory = nil
+            citedError = error.localizedDescription
         }
-        try? await Task.sleep(nanoseconds: 80_000_000)
-        withAnimation(.easeInOut(duration: 0.35)) {
-            proxy.scrollTo(id, anchor: .center)
+    }
+
+    private func dismissCited() {
+        citedMemory = nil
+        citedError = nil
+        state.memoryHighlightId = nil
+    }
+
+    /// Bulk delete by kind (or all when `kind` is nil). Confirms via
+    /// NSAlert before firing because this is destructive.
+    private func runBulkDelete(kind: String?) async {
+        let label = kind ?? "EVERY memory"
+        let alert = NSAlert()
+        alert.messageText = "Delete \(label)?"
+        alert.informativeText = "This cannot be undone."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        bulkBusy = true
+        do {
+            let deleted = try await BackendClient.shared.bulkDeleteMemories(kind: kind)
+            bulkStatus = "Deleted \(deleted)."
+            await state._loadMemories()
+        } catch {
+            bulkStatus = "Failed: \(error.localizedDescription)"
         }
-        try? await Task.sleep(nanoseconds: 1_800_000_000)
-        if state.memoryHighlightId == id { state.memoryHighlightId = nil }
+        bulkBusy = false
     }
 
     private func _triggerRecall() {
@@ -1954,10 +2008,7 @@ struct MemoryPanel: View {
 }
 
 private struct MemoryRow: View {
-    @EnvironmentObject var state: AppState
     let memory: Memory
-
-    private var isFlashed: Bool { state.memoryHighlightId == memory.id }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -1981,16 +2032,6 @@ private struct MemoryRow: View {
                 .textSelection(.enabled)
         }
         .padding(.vertical, 3)
-        .padding(.horizontal, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isFlashed ? Color.accentColor.opacity(0.12) : Color.clear)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(isFlashed ? Color.accentColor : .clear, lineWidth: 1.5)
-        )
-        .animation(.easeInOut(duration: 0.3), value: isFlashed)
     }
 
     private var typeColor: Color {
@@ -1999,6 +2040,63 @@ private struct MemoryRow: View {
         case "correction": return .orange
         default:           return Color.secondary.opacity(0.5)
         }
+    }
+}
+
+/// Pinned-card variant shown above the memory list when a citation
+/// popover's "Open in Memory" is clicked. Keeps the cited row visible
+/// without scrolling through thousands of items.
+private struct CitedMemoryCard: View {
+    let memory: Memory?
+    let error: String?
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(error == nil ? "CITED MEMORY" : "MISSING")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(error == nil ? .accentColor : .red)
+                    .tracking(0.5)
+                if let m = memory {
+                    Text(m.typeLabel)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Color.secondary.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                }
+                Spacer()
+                Button { onDismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            if let m = memory {
+                Text(m.content)
+                    .font(.system(size: 12))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(m.createdDate, style: .relative)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            } else if let e = error {
+                Text(e)
+                    .font(.system(size: 12))
+                    .foregroundColor(.red)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill((error == nil ? Color.accentColor : Color.red).opacity(0.1))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(error == nil ? Color.accentColor : .red, lineWidth: 1)
+        )
     }
 }
 

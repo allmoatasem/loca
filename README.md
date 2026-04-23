@@ -21,7 +21,7 @@ Loca manages its own inference backend (MLX on Apple Silicon, llama.cpp everywhe
 - **Performance tuning** — hardware-aware suggestions for GPU layers, batch size, and CPU threads
 
 ### Intelligence
-- **Persistent memory** — three types (user facts, verified knowledge, corrections) injected into every conversation
+- **Persistent memory** — three types (user facts, verified knowledge, corrections) injected into every conversation; gated auto-extraction + bulk-delete-by-kind keep the store tight
 - **Research Partner** — scoped projects bundling sources, notes, background watches, and a one-click "Use Obsidian Watcher" toggle that draws live from the watched-vault index without re-ingestion
 - **Autonomous research loop** — Researcher → Reviewer → Writer → Verifier pipeline with `[memory: N]` citations and a phantom-citation safety net (Deep Dive mode)
 - **Obsidian Watcher** — app-level background sync of registered vaults: incremental re-index, per-vault scan-now / remove, always-live analyser with stats, orphans, broken links, and semantic search

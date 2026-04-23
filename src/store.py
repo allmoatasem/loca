@@ -344,6 +344,19 @@ def count_memories(type: str | None = None) -> int:
         return row[0] if row else 0
 
 
+def get_memory(mid: str) -> dict | None:
+    """Fetch a single memory by id. Used by the citation deep-link —
+    the client shows this one row highlighted above the regular list
+    instead of trying to scroll-to-position through thousands of rows
+    (which raced with page-loads and silently missed the target)."""
+    with _conn() as c:
+        row = c.execute(
+            "SELECT id, type, content, created FROM memories WHERE id=?",
+            (mid,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def get_memory_position(mid: str) -> int | None:
     """Return the 0-based offset of a memory id in the default
     `ORDER BY created DESC` list, or None when the id isn't present.
@@ -386,6 +399,28 @@ def delete_memory(mem_id: str) -> None:
     with _conn() as c:
         c.execute("DELETE FROM memories WHERE id=?", (mem_id,))
         c.commit()
+
+
+def delete_memories_by_type(kind: str) -> int:
+    """Bulk-delete every memory of a given type. Returns the row count.
+    Used by the Memory panel's "delete all <kind>" affordance — the
+    auto-extracted transcript pile can easily hit five digits, and
+    deleting one-by-one is not a sane UX."""
+    if kind not in MEMORY_TYPES:
+        return 0
+    with _conn() as c:
+        cursor = c.execute("DELETE FROM memories WHERE type=?", (kind,))
+        c.commit()
+        return cursor.rowcount or 0
+
+
+def delete_all_memories() -> int:
+    """Wipe the memories table. Returns the row count. Explicit
+    nuclear-option for users who want to start fresh."""
+    with _conn() as c:
+        cursor = c.execute("DELETE FROM memories")
+        c.commit()
+        return cursor.rowcount or 0
 
 
 def get_memory_embedding(mem_id: str) -> bytes | None:

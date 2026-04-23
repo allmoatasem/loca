@@ -324,6 +324,73 @@ class TestRerankMemories:
         out = _rerank_memories("python backend", mems, keep=5)
         assert out == []
 
+    def test_single_token_overlap_dropped_on_broad_query(self):
+        """Broad queries (3+ meaningful tokens) require overlap >= 2.
+        Prevents a lone coincidental token dragging an unrelated transcript
+        in — e.g. the `C++ / manual control` memory that surfaced on an
+        Al-Andalus query because both happened to contain "user"."""
+        mems = [
+            # "manual" is the only real overlap with the query's token pool.
+            {"id": "coincidental", "content": "User manual explains C++ control flow"},
+            # Proper double-match.
+            {"id": "focused", "content": "manual writing style and creative voice control"},
+        ]
+        out = _rerank_memories("creative writing voice style", mems, keep=5)
+        assert "coincidental" not in [m["id"] for m in out]
+        assert out and out[0]["id"] == "focused"
+
+    def test_transcript_shape_is_penalised(self):
+        """Auto-extracted conversation snippets shaped like `User: …` /
+        `Assistant: …` lose ties to curated memories on equivalent
+        overlap — keeps the pool from being dominated by over-collected
+        transcripts."""
+        mems = [
+            {
+                "id": "transcript",
+                "content": "User: I prefer Python for backend work over Node",
+                "type": "user_fact",
+            },
+            {
+                "id": "curated",
+                "content": "Backend preference: Python (fastapi) over Node",
+                "type": "knowledge",
+            },
+        ]
+        out = _rerank_memories("python backend preference", mems, keep=2)
+        assert out[0]["id"] == "curated"
+
+    def test_role_tokens_are_stopwords(self):
+        """The words "user" and "assistant" can't contribute to overlap —
+        they're in every saved transcript and would otherwise drag
+        unrelated transcripts in when the real query has nothing to do
+        with the conversation's subject matter."""
+        mems = [
+            # Only overlap with the query via the "user" stopword.
+            {"id": "role_only", "content": "User: hi Assistant: hello"},
+            # Real subject match.
+            {"id": "real_match", "content": "python backend async servers"},
+        ]
+        out = _rerank_memories("python backend preference", mems, keep=5)
+        # role_only's "user"/"assistant" tokens are stopwords now — it
+        # has zero counted overlap with the meaningful query terms.
+        assert "role_only" not in [m["id"] for m in out]
+        assert out[0]["id"] == "real_match"
+
+    def test_curated_kinds_beat_user_fact_on_ties(self):
+        """Project items / obsidian / knowledge get a small multiplicative
+        boost so user-curated content outranks auto-extracted user facts
+        when everything else is equal."""
+        mems = [
+            {"id": "user_fact",  "content": "photosynthesis basics", "type": "user_fact"},
+            {"id": "obsidian",   "content": "photosynthesis basics", "type": "obsidian"},
+            {"id": "project",    "content": "photosynthesis basics", "type": "project_item"},
+        ]
+        out = _rerank_memories("photosynthesis", mems, keep=3)
+        ids = [m["id"] for m in out]
+        # obsidian + project both get the same 1.20 boost — either may
+        # appear first, but `user_fact` is last at 0.95.
+        assert ids[-1] == "user_fact"
+
 
 # ---------------------------------------------------------------------------
 # Orchestrator.handle — non-streaming
@@ -853,7 +920,7 @@ class TestMemoryExtraction:
         orch._memory = mock_plugin
 
         messages = [
-            {"role": "user", "content": "I love hiking and outdoor adventures"},
+            {"role": "user", "content": "I love hiking long trails in the outdoor mountains every weekend"},
             {"role": "assistant", "content": "That's wonderful!"},
         ]
         saved = await orch.extract_and_save_memories(messages, conv_id="conv-1")
@@ -865,7 +932,7 @@ class TestMemoryExtraction:
 
     @pytest.mark.asyncio
     async def test_extract_skips_short_user_messages(self):
-        """Messages shorter than 20 chars should not be stored."""
+        """Messages below the length floor should not be stored."""
         from src.plugins.memory_plugin import MemoryPlugin
         orch, mm = _make_orchestrator()
         mock_plugin = MagicMock(spec=MemoryPlugin)
@@ -876,6 +943,55 @@ class TestMemoryExtraction:
         saved = await orch.extract_and_save_memories(messages)
         mock_plugin.store.assert_not_awaited()
         assert saved == []
+
+    @pytest.mark.asyncio
+    async def test_extract_skips_turns_below_length_floor(self):
+        """30-char turns fall below the extraction length floor
+        (40 chars), regardless of their word content — most casual
+        follow-ups land here."""
+        from src.plugins.memory_plugin import MemoryPlugin
+        orch, mm = _make_orchestrator()
+        mock_plugin = MagicMock(spec=MemoryPlugin)
+        mock_plugin.store = AsyncMock(return_value="mem-x")
+        orch._memory = mock_plugin
+
+        messages = [{"role": "user", "content": "ok thanks, what about X then?"}]  # 30 chars
+        saved = await orch.extract_and_save_memories(messages)
+        assert saved == []
+
+    @pytest.mark.asyncio
+    async def test_extract_skips_meta_queries(self):
+        """Questions about the model's training data aren't durable
+        user facts — gate them out of auto-extraction."""
+        from src.plugins.memory_plugin import MemoryPlugin
+        orch, mm = _make_orchestrator()
+        mock_plugin = MagicMock(spec=MemoryPlugin)
+        mock_plugin.store = AsyncMock(return_value="mem-x")
+        orch._memory = mock_plugin
+
+        messages = [{
+            "role": "user",
+            "content": "What was in your training data about local inference?",
+        }]
+        saved = await orch.extract_and_save_memories(messages)
+        assert saved == []
+
+    @pytest.mark.asyncio
+    async def test_extract_still_stores_durable_content(self):
+        """The gates shouldn't block real facts — a ≥40-char,
+        non-trivial, non-meta message still gets stored."""
+        from src.plugins.memory_plugin import MemoryPlugin
+        orch, mm = _make_orchestrator()
+        mock_plugin = MagicMock(spec=MemoryPlugin)
+        mock_plugin.store = AsyncMock(return_value="mem-ok")
+        orch._memory = mock_plugin
+
+        messages = [
+            {"role": "user", "content": "I run a fastapi backend on railway and deploy weekly."},
+            {"role": "assistant", "content": "Noted — I'll remember that deployment rhythm."},
+        ]
+        saved = await orch.extract_and_save_memories(messages)
+        assert saved and saved[0]["id"] == "mem-ok"
 
 
 # ---------------------------------------------------------------------------

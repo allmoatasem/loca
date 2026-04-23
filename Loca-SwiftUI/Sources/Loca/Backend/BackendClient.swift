@@ -269,6 +269,17 @@ actor BackendClient {
 
     struct MemoryPositionResponse: Decodable { let offset: Int }
 
+    /// Fetch a single memory row by id. Used by the citation deep-link
+    /// to render one pinned card without walking the full list.
+    /// Returns nil when the row no longer exists (404).
+    func memoryById(_ id: String) async throws -> Memory? {
+        let (data, resp) = try await get("/api/memories/\(id)")
+        if let http = resp as? HTTPURLResponse, http.statusCode == 404 {
+            return nil
+        }
+        return try JSONDecoder().decode(Memory.self, from: data)
+    }
+
     /// Returns the 0-based offset of `id` in the default memories
     /// list (ORDER BY created DESC). Lets the client jump straight
     /// to the right page for deep-linked citations instead of walking
@@ -356,6 +367,15 @@ actor BackendClient {
 
     func deleteMemory(_ id: String) async throws {
         _ = try await delete("/api/memories/\(id)")
+    }
+
+    /// Bulk-delete by type (pass the memory kind) or wipe everything
+    /// (pass nil). Returns the number of rows deleted.
+    func bulkDeleteMemories(kind: String?) async throws -> Int {
+        struct BulkResp: Decodable { let deleted: Int }
+        let body: [String: Any] = kind.map { ["type": $0] } ?? ["all": true]
+        let (data, _) = try await postRaw("/api/memories/bulk-delete", body: body)
+        return try JSONDecoder().decode(BulkResp.self, from: data).deleted
     }
 
     func extractMemories(messages: [[String: String]], convId: String?) async throws -> [Memory] {

@@ -812,6 +812,13 @@ class Orchestrator:
 
         Storing the pair gives MemPalace full context for room classification
         (decisions, preferences, problems, etc.) rather than just the user side.
+
+        Gating: we SKIP storage when the exchange is unlikely to yield a
+        durable fact — trivial greetings, meta-queries about the model's
+        weights, or bare acknowledgements. Without gating the store
+        balloons with 9k+ verbatim snippets (user hit exactly this on
+        2026-04-23), which also drags irrelevant transcripts into recall
+        even after the rerank tightening.
         """
         assert self._memory is not None
         saved = []
@@ -827,7 +834,10 @@ class Orchestrator:
             return []
 
         user_content = messages[last_user_idx].get("content", "")
-        if not isinstance(user_content, str) or len(user_content.strip()) < 20:
+        if not isinstance(user_content, str):
+            return []
+        stripped = user_content.strip()
+        if _should_skip_extraction(stripped):
             return []
 
         # Look for the immediately following assistant message
@@ -1143,6 +1153,35 @@ def _is_trivial_query(query: str) -> bool:
     return set(tokens).issubset(_TRIVIAL_TOKENS)
 
 
+# Minimum user-message length for a turn to be a candidate for
+# verbatim storage. Raised from 20 to 40 after the user saw their
+# store cross 9k — shorter turns are almost never durable facts,
+# just "ok sure" / "what about X" follow-ups that fragment the
+# store without adding signal.
+_EXTRACTION_MIN_USER_LEN = 40
+
+
+def _should_skip_extraction(user_message: str) -> bool:
+    """True when the turn's user message isn't worth storing as a
+    verbatim memory. Gates the auto-extractor so the store doesn't
+    accumulate 9k+ casual follow-ups.
+
+    Two gates, both simple:
+    - Length: shorter than `_EXTRACTION_MIN_USER_LEN` chars. Short
+      turns are almost always follow-ups, ack'd corrections, or
+      greetings — none of which are durable facts. This also catches
+      trivial greetings; the ≤3-token `_is_trivial_query` check is
+      redundant against the length floor in practice.
+    - Meta: queries probing the model's pretraining / weights aren't
+      user state, they're the user testing the assistant.
+    """
+    if len(user_message) < _EXTRACTION_MIN_USER_LEN:
+        return True
+    if _is_meta_query(user_message):
+        return True
+    return False
+
+
 def _project_items_as_memories(project_id: str) -> list[dict]:
     """Project-scoped bookmarks, shaped like recall hits so they can flow
     through `_merge_recall_results` + `_rerank_memories` unchanged."""
@@ -1219,23 +1258,49 @@ def _obsidian_source_as_memories(
 
 
 # Minimal English stopword list so "what do you know about me" doesn't inflate
-# overlap against every memory that happens to contain "you".
+# overlap against every memory that happens to contain "you". `user` and
+# `assistant` are here because verbatim conversation snippets start with
+# "User:" / "Assistant:" — those role tags trivially match any recall query
+# that also contains a user/assistant message and were dragging unrelated
+# transcripts into the pool (user hit this on an Al-Andalus query returning
+# a C++ programming snippet that only shared the "user" token).
 _RERANK_STOPWORDS = frozenset({
     "a", "an", "and", "are", "as", "at", "be", "by", "do", "does", "for", "from",
     "has", "have", "i", "in", "is", "it", "its", "me", "my", "myself", "of", "on",
     "or", "she", "so", "that", "the", "this", "to", "us", "was", "we", "were",
     "what", "when", "where", "which", "who", "whom", "with", "you", "your", "am",
     "about", "tell", "know", "everything", "anything",
+    # Transcript role labels — every saved conversation snippet contains these.
+    "user", "assistant", "system",
+    # High-frequency "conversational" verbs the rerank shouldn't reward.
+    "can", "could", "would", "should", "get", "got", "make", "made", "use",
+    "using", "used", "want", "need", "like", "think", "thought", "say", "said",
+    "ask", "asked", "help", "going", "try", "tried",
 })
 _RERANK_TOKEN_RE = re.compile(r"\w+")
 
-# Minimum content-token overlap with the query for a memory to survive
-# rerank. With overlap = 0 the only score contribution is `rank_bonus` —
-# a recall-ordering position bump — which lets unrelated chunks get
-# injected when the vault simply has nothing relevant to the query.
-# Grounding discipline (`[memory: N]` citations) then binds the model to
-# those noise chunks. Env override exists for experimentation.
+# Absolute floor for overlap count. The *effective* floor scales with
+# query size — see `_rerank_memories` — so this is the minimum below
+# which a memory is always dropped, even for single-word queries. The
+# env override exists for experimentation.
 _MIN_RERANK_OVERLAP = int(os.environ.get("LOCA_MIN_RERANK_OVERLAP", "1"))
+
+# Kind-aware relevance weights. User-curated sources (project bookmarks,
+# Obsidian notes, knowledge imports) get a boost — the user opted them
+# in, so their ranking signal is stronger than a generic auto-extracted
+# transcript. Conversation memories (`user_fact` verbatim snippets and
+# their transcript shape) get a small penalty because they're noisy
+# and numerous.
+_KIND_BOOST = {
+    "project_item":  1.20,
+    "obsidian":      1.20,
+    "obsidian_note": 1.20,
+    "vault_chunk":   1.15,
+    "knowledge":     1.10,
+    "correction":    1.05,
+    "user_fact":     0.95,
+    "memory":        1.00,
+}
 
 
 def _rerank_memories(query: str, memories: list[dict], keep: int) -> list[dict]:
@@ -1247,10 +1312,17 @@ def _rerank_memories(query: str, memories: list[dict], keep: int) -> list[dict]:
     cross-encoder pass is a future upgrade (would require sentence-transformers
     + torch which conflicts with Loca's MLX-first footprint).
 
-    Applies a relevance floor (`_MIN_RERANK_OVERLAP`): when the query has
-    meaningful tokens, memories with zero overlap are dropped rather than
-    kept-by-rank. Prevents "least-bad-irrelevant" chunks from being cited
-    when nothing in the vault actually matches.
+    Two-part relevance floor:
+    - Absolute: overlap >= `_MIN_RERANK_OVERLAP` (default 1) always.
+    - Proportional: for queries with ≥3 meaningful tokens, also require
+      overlap >= 2 — a single shared token on a broad query is almost
+      always coincidental (e.g. a verbatim "User: ..." transcript
+      matching the "user" label of a completely unrelated question).
+
+    Kind-aware boost: user-curated sources (project items, Obsidian notes,
+    knowledge imports) win tiebreakers over auto-extracted conversation
+    snippets, which addresses the "random transcript in a vault-backed
+    project" cases the user hit repeatedly.
     """
     if keep <= 0 or not memories:
         return []
@@ -1260,6 +1332,10 @@ def _rerank_memories(query: str, memories: list[dict], keep: int) -> list[dict]:
     }
     if not q_tokens:
         return memories[:keep]
+    # Query-size-adaptive floor. Broad queries (3+ meaningful tokens)
+    # demand at least 2 overlapping tokens so a lone coincidental match
+    # doesn't drag unrelated transcripts into the pool.
+    effective_floor = max(_MIN_RERANK_OVERLAP, 2 if len(q_tokens) >= 3 else 1)
     scored: list[tuple[float, int, dict]] = []
     for rank, m in enumerate(memories):
         content = m.get("content", "")
@@ -1269,7 +1345,7 @@ def _rerank_memories(query: str, memories: list[dict], keep: int) -> list[dict]:
             continue
         m_set = set(m_tokens)
         overlap = len(q_tokens & m_set)
-        if overlap < _MIN_RERANK_OVERLAP:
+        if overlap < effective_floor:
             continue
         overlap_score = overlap / len(q_tokens)
         density = overlap / len(m_tokens)
@@ -1281,7 +1357,16 @@ def _rerank_memories(query: str, memories: list[dict], keep: int) -> list[dict]:
             length_factor = 0.7
         else:
             length_factor = 1.0
-        score = (overlap_score * 2 + density * 3 + rank_bonus) * length_factor
+        # Transcript shape penalty — content starting with "User:" /
+        # "Assistant:" is an auto-extracted chat snippet, already
+        # over-represented in the store. Shave its score so curated
+        # sources with equivalent overlap win tiebreakers.
+        transcript_factor = 0.85 if low.startswith(("user:", "assistant:")) else 1.0
+        kind_boost = _KIND_BOOST.get(str(m.get("type") or "memory"), 1.0)
+        score = (
+            (overlap_score * 2 + density * 3 + rank_bonus)
+            * length_factor * transcript_factor * kind_boost
+        )
         scored.append((score, rank, m))
     scored.sort(key=lambda x: (-x[0], x[1]))
     return [m for _, _, m in scored[:keep]]

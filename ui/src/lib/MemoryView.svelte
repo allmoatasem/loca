@@ -5,7 +5,6 @@
   per-item delete.
 -->
 <script lang="ts">
-  import { tick } from 'svelte';
   import { app } from './app-store.svelte';
 
   interface Props {
@@ -17,6 +16,7 @@
     id: string;
     content: string;
     created: number;
+    type?: string;
   }
 
   const PAGE_SIZE = 50;
@@ -28,9 +28,19 @@
   let manualInput = $state('');
   let extractLabel = $state('✦ Extract memories from current conversation');
   let extractBusy = $state(false);
-  /** Memory id that just got highlighted — drives a ring flash. */
-  let flashId = $state<string | null>(null);
-  let itemEls = $state<Record<string, HTMLElement>>({});
+  /** Cited-memory panel content. Shown pinned above the list when a
+   *  `[memory: N]` pill's "Open in Memory" button set
+   *  `app.memoryHighlightId`. Isolated from the regular page so we
+   *  don't have to reconcile a windowed list against paging. */
+  let citedMemory = $state<MemoryItem | null>(null);
+  let citedError = $state<string | null>(null);
+
+  // Bulk-delete affordance — for users who've accumulated thousands
+  // of auto-extracted memories and want a clean slate (or just a
+  // kind-scoped wipe). Sentinel `__ALL__` nukes the whole store.
+  let bulkKind = $state<string>('');
+  let bulkBusy = $state<boolean>(false);
+  let bulkStatus = $state<string>('');
 
   async function loadFirstPage(): Promise<void> {
     loading = true;
@@ -62,22 +72,56 @@
     }
   }
 
-  /** Jump-load the 50-row window centred on `id` so deep-linked
-   *  citations can be shown without walking thousands of memories. */
-  async function loadAround(id: string): Promise<boolean> {
+  /** Fetch a single memory for the "Open in Memory" citation
+   *  deep-link. Shown highlighted above the normal list — no page
+   *  walk, no scroll race. */
+  async function fetchCited(id: string): Promise<void> {
     try {
-      const posResp = await fetch(`/api/memories/${encodeURIComponent(id)}/position`);
-      if (!posResp.ok) return false;
-      const { offset: pos } = await posResp.json() as { offset: number };
-      const startOffset = Math.max(0, pos - 10);
-      const r = await fetch(`/api/memories?limit=${PAGE_SIZE}&offset=${startOffset}`);
-      const data = await r.json();
-      memories = data.memories ?? [];
-      total = data.total ?? memories.length;
-      offset = startOffset + memories.length;
-      return memories.some((m: MemoryItem) => m.id === id);
-    } catch {
-      return false;
+      const r = await fetch(`/api/memories/${encodeURIComponent(id)}`);
+      if (!r.ok) {
+        citedError = r.status === 404
+          ? 'That memory is no longer in the store — it may have been deleted.'
+          : `Couldn't load the cited memory (HTTP ${r.status}).`;
+        citedMemory = null;
+        return;
+      }
+      citedMemory = await r.json();
+      citedError = null;
+    } catch (e) {
+      citedError = e instanceof Error ? e.message : String(e);
+      citedMemory = null;
+    }
+  }
+
+  function dismissCited(): void {
+    citedMemory = null;
+    citedError = null;
+    app.memoryHighlightId = null;
+  }
+
+  async function runBulkDelete(): Promise<void> {
+    if (!bulkKind || bulkBusy) return;
+    const isWipe = bulkKind === '__ALL__';
+    const label = isWipe ? 'EVERY memory' : `every "${bulkKind}" memory`;
+    if (!window.confirm(`This will permanently delete ${label}. Continue?`)) return;
+    bulkBusy = true;
+    bulkStatus = 'Deleting…';
+    try {
+      const body = isWipe ? { all: true } : { type: bulkKind };
+      const r = await fetch('/api/memories/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json() as { deleted: number };
+      bulkStatus = `Deleted ${data.deleted} ${isWipe ? 'memories' : bulkKind + ' memories'}.`;
+      bulkKind = '';
+      await loadFirstPage();
+    } catch (e) {
+      bulkStatus = `Failed: ${e instanceof Error ? e.message : String(e)}`;
+    } finally {
+      bulkBusy = false;
     }
   }
 
@@ -151,28 +195,12 @@
   loadFirstPage();
 
   // Deep-link target from a citation popover's "Open in Memory"
-  // button. Jumps straight to the window around the target (via
-  // `/api/memories/{id}/position`) instead of walking the list 50
-  // rows at a time — essential for stores with thousands of memories.
-  async function focusHighlight(targetId: string): Promise<void> {
-    const present = memories.some((m) => m.id === targetId)
-      || await loadAround(targetId);
-    if (!present) return;
-    await tick();
-    const el = itemEls[targetId];
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      flashId = targetId;
-      setTimeout(() => {
-        if (flashId === targetId) flashId = null;
-        if (app.memoryHighlightId === targetId) app.memoryHighlightId = null;
-      }, 1800);
-    }
-  }
-
+  // button. We just fetch the cited memory row and render it as a
+  // pinned card above the list — no page-walk, no scroll race, works
+  // the same whether the memory is at offset 5 or offset 5000.
   $effect(() => {
     const id = app.memoryHighlightId;
-    if (!loading && id) void focusHighlight(id);
+    if (id) void fetchCited(id);
   });
 
   const remaining = $derived(Math.max(0, total - offset));
@@ -210,14 +238,58 @@
       <button onclick={saveManual} disabled={!manualInput.trim()}>Save</button>
     </div>
 
-    <button
-      class="extract"
-      onclick={triggerExtract}
-      disabled={!canExtract}
-      title={canExtract ? '' : 'Open a conversation first'}
-    >
-      {extractLabel}
-    </button>
+    <div class="row-tools">
+      <button
+        class="extract"
+        onclick={triggerExtract}
+        disabled={!canExtract}
+        title={canExtract ? '' : 'Open a conversation first'}
+      >
+        {extractLabel}
+      </button>
+      <div class="bulk">
+        <select
+          bind:value={bulkKind}
+          title="Pick a type to bulk-delete"
+        >
+          <option value="">Bulk delete…</option>
+          <option value="user_fact">All user facts</option>
+          <option value="knowledge">All knowledge</option>
+          <option value="correction">All corrections</option>
+          <option value="__ALL__">Wipe everything</option>
+        </select>
+        <button
+          class="danger"
+          onclick={runBulkDelete}
+          disabled={!bulkKind || bulkBusy}
+        >
+          {bulkBusy ? 'Deleting…' : 'Apply'}
+        </button>
+      </div>
+    </div>
+    {#if bulkStatus}
+      <p class="bulk-status">{bulkStatus}</p>
+    {/if}
+
+    {#if citedMemory}
+      <section class="cited" aria-label="Cited memory">
+        <header>
+          <span class="cited-tag">CITED MEMORY</span>
+          <span class="cited-type">{citedMemory.type ?? ''}</span>
+          <button class="close" onclick={dismissCited} aria-label="Dismiss">×</button>
+        </header>
+        <p class="content">{citedMemory.content}</p>
+        <p class="date">{formatDate(citedMemory.created)}</p>
+      </section>
+    {:else if citedError}
+      <section class="cited cited-err" aria-label="Cited memory error">
+        <header>
+          <span class="cited-tag err">MISSING</span>
+          <button class="close" onclick={dismissCited} aria-label="Dismiss">×</button>
+        </header>
+        <p class="content">{citedError}</p>
+      </section>
+    {/if}
 
     <div class="list">
       {#if loading}
@@ -231,11 +303,7 @@
         </div>
       {:else}
         {#each memories as m (m.id)}
-          <article
-            class="item"
-            class:flash={flashId === m.id}
-            bind:this={itemEls[m.id]}
-          >
+          <article class="item">
             <div class="item-body">
               <p class="content">{m.content}</p>
               <p class="date">{formatDate(m.created)}</p>
@@ -347,6 +415,106 @@
   .extract {
     align-self: stretch;
     text-align: left;
+    flex: 1;
+  }
+
+  .row-tools {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .bulk {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .bulk select {
+    background: var(--loca-color-surface);
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-sm);
+    padding: 4px 8px;
+    font-size: 11px;
+    color: var(--loca-color-text);
+  }
+  .bulk .danger {
+    background: color-mix(in srgb, var(--loca-color-danger) 12%, transparent);
+    color: var(--loca-color-danger);
+    border: 1px solid color-mix(in srgb, var(--loca-color-danger) 35%, transparent);
+    border-radius: var(--loca-radius-sm);
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .bulk .danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--loca-color-danger) 22%, transparent);
+  }
+  .bulk .danger:disabled { opacity: 0.4; cursor: not-allowed; }
+  .bulk-status {
+    margin: 4px 0 0;
+    font-size: 11px;
+    color: var(--loca-color-text-muted);
+  }
+
+  /* Cited-memory pinned card — the citation-popover "Open in Memory"
+     target. Deliberately visually loud so the user knows which row
+     they're looking at without having to scroll a 9k-row list. */
+  .cited {
+    margin: 10px 0 4px;
+    padding: 10px 12px;
+    background: color-mix(in srgb, var(--loca-color-accent) 10%, var(--loca-color-surface));
+    border: 1px solid var(--loca-color-accent);
+    border-radius: var(--loca-radius-md);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--loca-color-accent) 22%, transparent);
+  }
+  .cited.cited-err {
+    background: color-mix(in srgb, var(--loca-color-danger) 8%, var(--loca-color-surface));
+    border-color: var(--loca-color-danger);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--loca-color-danger) 18%, transparent);
+  }
+  .cited header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .cited-tag {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--loca-color-accent);
+    letter-spacing: 0.5px;
+  }
+  .cited-tag.err { color: var(--loca-color-danger); }
+  .cited-type {
+    font-family: var(--loca-font-mono);
+    font-size: 10px;
+    color: var(--loca-color-text-muted);
+    padding: 1px 5px;
+    background: color-mix(in srgb, var(--loca-color-text) 6%, transparent);
+    border-radius: 3px;
+  }
+  .cited .close {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--loca-color-text-muted);
+    font-size: 14px;
+    cursor: pointer;
+    padding: 0 4px;
+  }
+  .cited .close:hover { color: var(--loca-color-text); }
+  .cited .content {
+    margin: 0 0 4px;
+    font-size: 13px;
+    color: var(--loca-color-text);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .cited .date {
+    margin: 0;
+    font-size: 10px;
+    color: var(--loca-color-text-muted);
   }
 
   .list {
@@ -365,11 +533,6 @@
     background: var(--loca-color-surface);
     transition: background 0.3s ease, border-color 0.3s ease,
                 box-shadow 0.3s ease;
-  }
-  .item.flash {
-    background: color-mix(in srgb, var(--loca-color-accent) 12%, var(--loca-color-surface));
-    border-color: var(--loca-color-accent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--loca-color-accent) 25%, transparent);
   }
   .item-body { flex: 1; }
   .content {
