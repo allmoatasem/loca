@@ -344,6 +344,19 @@ def count_memories(type: str | None = None) -> int:
         return row[0] if row else 0
 
 
+def get_memory(mid: str) -> dict | None:
+    """Fetch a single memory by id. Used by the citation deep-link —
+    the client shows this one row highlighted above the regular list
+    instead of trying to scroll-to-position through thousands of rows
+    (which raced with page-loads and silently missed the target)."""
+    with _conn() as c:
+        row = c.execute(
+            "SELECT id, type, content, created FROM memories WHERE id=?",
+            (mid,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def get_memory_position(mid: str) -> int | None:
     """Return the 0-based offset of a memory id in the default
     `ORDER BY created DESC` list, or None when the id isn't present.

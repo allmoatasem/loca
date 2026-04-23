@@ -5,6 +5,7 @@
 <script lang="ts">
   import { linkMemoryCitations, renderMarkdown, splitThinkBlocks, stripToolCallJson } from './markdown';
   import ThinkBlock from './ThinkBlock.svelte';
+  import { app } from './app-store.svelte';
 
   export type Role = 'user' | 'assistant';
 
@@ -144,6 +145,17 @@
 
   function closePopover(): void { popover = null; }
 
+  /** Kick the Memory panel open pinned to a specific memory id. The
+   *  store carries the id; MemoryView fetches that one row via
+   *  `/api/memories/{id}` and renders it highlighted above the list —
+   *  no page-walk, no scroll race. */
+  function openInMemoryPanel(memoryId: string): void {
+    app.memoryHighlightId = memoryId;
+    history.pushState(null, '', '/ui/memory');
+    dispatchEvent(new PopStateEvent('popstate'));
+    popover = null;
+  }
+
   function openUrl(url: string): void {
     window.open(url, '_blank', 'noopener,noreferrer');
     popover = null;
@@ -269,6 +281,11 @@
       <p class="cit-snippet">{popover.cit.snippet}</p>
     {/if}
     <footer>
+      {#if popover.cit.kind === 'memory' && popover.cit.memory_id}
+        <button class="primary" onclick={() => openInMemoryPanel(popover!.cit.memory_id!)}>
+          Open in Memory
+        </button>
+      {/if}
       {#if popover.cit.url}
         <button class="primary" onclick={() => openUrl(popover!.cit.url!)}>
           Open link ↗

@@ -1916,6 +1916,18 @@ async def api_list_memories(
     })
 
 
+@app.get("/api/memories/{memory_id}")
+async def api_get_memory(memory_id: str) -> JSONResponse:
+    """Fetch a single memory. Deep-link target for "Open in Memory"
+    so the UI can show the cited row in isolation without walking
+    the full list."""
+    from .store import get_memory  # noqa: PLC0415
+    row = get_memory(memory_id)
+    if not row:
+        return JSONResponse({"error": "memory not found"}, status_code=404)
+    return JSONResponse(row)
+
+
 @app.get("/api/memories/{memory_id}/position")
 async def api_memory_position(memory_id: str) -> JSONResponse:
     """Return the 0-based offset of a memory in the default

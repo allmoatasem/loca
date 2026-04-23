@@ -269,6 +269,17 @@ actor BackendClient {
 
     struct MemoryPositionResponse: Decodable { let offset: Int }
 
+    /// Fetch a single memory row by id. Used by the citation deep-link
+    /// to render one pinned card without walking the full list.
+    /// Returns nil when the row no longer exists (404).
+    func memoryById(_ id: String) async throws -> Memory? {
+        let (data, resp) = try await get("/api/memories/\(id)")
+        if let http = resp as? HTTPURLResponse, http.statusCode == 404 {
+            return nil
+        }
+        return try JSONDecoder().decode(Memory.self, from: data)
+    }
+
     /// Returns the 0-based offset of `id` in the default memories
     /// list (ORDER BY created DESC). Lets the client jump straight
     /// to the right page for deep-linked citations instead of walking
