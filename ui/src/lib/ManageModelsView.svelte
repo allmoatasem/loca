@@ -76,6 +76,7 @@
 
   async function load(m: LocalModel): Promise<void> {
     busyModel = m.name;
+    app.loadingModel = m.name;
     errorMsg = null;
     try {
       await apiLoadModel(m.name, app.contextWindow);
@@ -85,6 +86,7 @@
       errorMsg = e instanceof Error ? e.message : String(e);
     } finally {
       busyModel = null;
+      app.loadingModel = null;
     }
   }
 
@@ -176,31 +178,35 @@
               <button class="danger" onclick={() => confirmDelete = m} title="Delete from disk">Delete</button>
             </div>
           </div>
-          {#if m.is_loaded && m.format === 'mlx'}
-            <!-- LoRA adapter picker sits under the active MLX model, so
-                 the trained adapters are right where the user expects to
-                 find them. Activating restarts mlx_lm.server (~2–3s) and
-                 the UI is gated by `activateBusy` during that window. -->
+          {#if m.format === 'mlx'}
+            <!-- LoRA adapter picker shows on every MLX row so users
+                 discover it even before loading. Disabled + hint when
+                 the model isn't loaded so they can see what's available
+                 without guessing where to look (omnibus #92). -->
             <div class="adapter-row">
               <span class="adapter-label">Adapter</span>
               <select
-                disabled={app.activateBusy}
-                value={app.activeAdapter ?? ''}
+                disabled={!m.is_loaded || app.activateBusy}
+                value={m.is_loaded ? (app.activeAdapter ?? '') : ''}
                 onchange={(e) => {
                   const v = (e.currentTarget as HTMLSelectElement).value || null;
                   void activateAdapterSafe(m.name, v);
                 }}
               >
                 <option value="">— none (base model only) —</option>
-                {#each app.adapters as a (a.name)}
-                  <option value={a.name}>
-                    {a.name}
-                    {#if a.rank}(rank {a.rank}){/if}
-                    — {a.size_mb.toFixed(1)} MB
-                  </option>
-                {/each}
+                {#if m.is_loaded}
+                  {#each app.adapters as a (a.name)}
+                    <option value={a.name}>
+                      {a.name}
+                      {#if a.rank}(rank {a.rank}){/if}
+                      — {a.size_mb.toFixed(1)} MB
+                    </option>
+                  {/each}
+                {/if}
               </select>
-              {#if app.activateBusy}
+              {#if !m.is_loaded}
+                <span class="hint-inline">Load this model to pick an adapter.</span>
+              {:else if app.activateBusy}
                 <span class="busy">applying…</span>
               {:else if app.adapters.length === 0}
                 <span class="hint-inline">

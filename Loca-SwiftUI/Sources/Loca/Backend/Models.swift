@@ -9,10 +9,10 @@ struct ChatRequest: Encodable {
     let messages: [ChatMessage]
     let stream: Bool
     let num_ctx: Int
+    // Deep Dive — autonomous multi-role loop + Playwright full-page
+    // content. Server-side flag name stays `research_mode` for
+    // wire-compat with older clients.
     let research_mode: Bool
-    // Autonomous research loop — Researcher/Writer/Verifier pipeline.
-    // Optional so older clients' payloads still decode server-side.
-    let autonomous_loop: Bool?
     // Conversation id so the loop can write its plan checkpoint to the
     // right file. Optional — a loop without a conv_id still runs, it
     // just lands in `no-conv-id.md`.
@@ -77,8 +77,12 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     var id: UUID = UUID()
     let role: String          // "user" | "assistant" | "system"
     var content: MessageContent
+    /// Structured per-turn citations attached to assistant messages so
+    /// `[memory: N]` clicks keep working after save/reload. Optional —
+    /// user messages and pre-citation turns omit the field entirely.
+    var citations: [Citation]? = nil
 
-    enum CodingKeys: String, CodingKey { case role, content }
+    enum CodingKeys: String, CodingKey { case role, content, citations }
 }
 
 /// Content can be plain text or a multipart array (text + image_url).
@@ -153,6 +157,28 @@ struct UsageStats: Decodable {
     let total_tokens: Int
     let search_triggered: Bool?
     let memory_injected: Bool?
+    /// Per-turn structured citations. Each entry carries full content
+    /// so `[memory: N]` clicks can show the actual source regardless
+    /// of type (memory / vault / web / project-item). Supersedes the
+    /// older `citation_ids` list which silently sent users to the
+    /// wrong memory when the citation was a non-memory source.
+    let citations: [Citation]?
+}
+
+/// One entry in `UsageStats.citations`. `kind` tells the UI which
+/// affordance to offer: "Open in Memory" for memory, "Open link ↗"
+/// for web, or just the snippet for vault / project_item. Codable
+/// so the citation map persists through `/api/conversations` save +
+/// load — without that the popover goes MISSING on any previously-
+/// saved turn.
+struct Citation: Codable, Identifiable, Equatable {
+    let idx: Int
+    let kind: String
+    let title: String
+    let snippet: String
+    let url: String?
+    let memory_id: String?
+    var id: Int { idx }
 }
 
 // MARK: - Model capability
@@ -462,10 +488,14 @@ struct ConversationMeta: Decodable, Identifiable {
     let updated: Double   // Unix timestamp (matches store column name)
     let starred: Bool
     let folder: String?
+    /// Per-conversation LoRA override. Nil = inherit from project (or base).
+    let adapter_name: String?
 
     var updatedDate: Date { Date(timeIntervalSince1970: updated) }
 
-    private enum CodingKeys: String, CodingKey { case id, title, model, updated, starred, folder }
+    private enum CodingKeys: String, CodingKey {
+        case id, title, model, updated, starred, folder, adapter_name
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -476,6 +506,7 @@ struct ConversationMeta: Decodable, Identifiable {
         // SQLite returns INTEGER 0/1 for booleans
         starred = ((try? c.decode(Int.self, forKey: .starred)) ?? 0) != 0
         folder  = try? c.decode(String.self, forKey: .folder)
+        adapter_name = try? c.decode(String.self, forKey: .adapter_name)
     }
 }
 
@@ -606,6 +637,36 @@ struct DetectedVault: Decodable, Identifiable {
 }
 
 struct DetectedVaultsResponse: Decodable { let vaults: [DetectedVault] }
+
+// MARK: - Obsidian Watcher
+
+struct WatchedVaultStats: Decodable {
+    let total: Int?
+    let added: Int?
+    let updated: Int?
+    let skipped: Int?
+    let removed: Int?
+    let errors: Int?
+}
+
+struct WatchedVault: Decodable, Identifiable {
+    let path: String
+    let name: String
+    let enabled: Bool
+    let scan_interval_s: Int
+    let last_scan_at: Double?
+    let last_stats: WatchedVaultStats
+    let created: Double
+    let busy: Bool
+    var id: String { path }
+}
+
+struct WatchedVaultsResponse: Decodable { let vaults: [WatchedVault] }
+
+struct RegisterWatchResponse: Decodable {
+    let ok: Bool
+    let vault: WatchedVault
+}
 
 struct VaultScanResult: Decodable {
     let ok: Bool?; let total: Int?; let added: Int?; let updated: Int?
@@ -759,6 +820,9 @@ struct Project: Identifiable, Decodable, Equatable {
     let conv_count: Int?
     /// Preferred LoRA adapter to activate when the project becomes active.
     let adapter_name: String?
+    /// When true, recall draws live from the Obsidian Watcher index —
+    /// no per-project sync required.
+    let obsidian_source: Bool?
 }
 
 struct ProjectItem: Identifiable, Decodable, Equatable {
@@ -810,6 +874,7 @@ struct ProjectDetail: Decodable {
     let conversations: [ConversationMeta]
     let watches: [ProjectWatch]
     let adapter_name: String?
+    let obsidian_source: Bool?
 }
 
 struct CreateProjectResponse: Decodable {

@@ -29,6 +29,8 @@ export interface ConversationMeta {
   model?: string;
   folder?: string | null;
   starred?: boolean;
+  /** Per-conversation LoRA override. NULL = inherit from project / base. */
+  adapter_name?: string | null;
 }
 
 export interface ConversationDetail extends ConversationMeta {
@@ -151,7 +153,7 @@ export async function deleteConversation(id: string): Promise<void> {
 
 export async function patchConversation(
   id: string,
-  patch: { folder?: string | null; starred?: boolean },
+  patch: { folder?: string | null; starred?: boolean; adapter?: string | null },
 ): Promise<void> {
   const r = await fetch(`/api/conversations/${encodeURIComponent(id)}`, {
     method: 'PATCH',
@@ -159,6 +161,17 @@ export async function patchConversation(
     body: JSON.stringify(patch),
   });
   if (!r.ok) throw new Error(`patch ${id} → HTTP ${r.status}`);
+}
+
+/** Activate the conversation's adapter (or its project's adapter, or
+ *  base) on the currently loaded model. Server resolves the layered
+ *  fallback so both clients share the same policy. */
+export async function activateConversationAdapter(convId: string): Promise<void> {
+  const r = await fetch(
+    `/api/conversations/${encodeURIComponent(convId)}/activate-adapter`,
+    { method: 'POST' },
+  );
+  if (!r.ok) throw new Error(`activate-adapter ${convId} → HTTP ${r.status}`);
 }
 
 export async function unloadModel(): Promise<void> {
@@ -196,6 +209,9 @@ export interface Project {
   conv_count?: number;
   /** Preferred LoRA adapter to activate when this project becomes active. */
   adapter_name?: string | null;
+  /** When true, recall draws live from the app-level Obsidian Watcher
+   *  index — no per-project Sync Vault ingestion required. */
+  obsidian_source?: boolean;
 }
 
 export interface ProjectItem {
@@ -258,7 +274,10 @@ export async function createProject(title: string, scope: string): Promise<Proje
 
 export async function patchProject(
   id: string,
-  patch: { title?: string; scope?: string; notes?: string; adapter?: string | null },
+  patch: {
+    title?: string; scope?: string; notes?: string;
+    adapter?: string | null; obsidian_source?: boolean;
+  },
 ): Promise<void> {
   const r = await fetch(`/api/projects/${encodeURIComponent(id)}`, {
     method: 'PATCH',
@@ -417,6 +436,34 @@ export async function runWatch(
 
 // Discover — HF search, repo files, downloads
 export interface HFSearchHit { repo_id: string; downloads: number; likes: number }
+
+export interface ModelRecommendation {
+  name: string;
+  repo_id: string;
+  filename?: string | null;
+  format: string;
+  size_gb: number;
+  quant: string;
+  context: number;
+  why: string;
+  fit_level: string;       // "Perfect Fit" | "Good Fit" | "Tight Fit" | …
+  use_case: string;
+  provider: string;
+  score: number;           // llmfit fit score 0–100
+  tps: number;             // estimated tokens/sec
+}
+
+export interface RecommendationsResponse {
+  total_ram_gb: number;
+  has_apple_silicon: boolean;
+  llmfit_available: boolean;
+  recommendations: ModelRecommendation[];
+}
+
+export async function fetchRecommendations(force = false): Promise<RecommendationsResponse> {
+  const path = force ? '/api/recommended-models?force=true' : '/api/recommended-models';
+  return jsonGet<RecommendationsResponse>(path);
+}
 export interface RepoFile    { name: string; size_gb: number }
 
 export async function searchHF(q: string, format: 'gguf' | 'mlx', limit = 8): Promise<HFSearchHit[]> {
@@ -502,7 +549,81 @@ export async function searchVault(path: string, q: string, limit = 30): Promise<
   return data.results ?? [];
 }
 
+// ── Obsidian Watcher — app-level vault registry + background scan ────────────
+
+export interface WatchedVault {
+  path: string;
+  name: string;
+  enabled: boolean;
+  scan_interval_s: number;
+  last_scan_at: number | null;
+  last_stats: {
+    total?: number;
+    added?: number;
+    updated?: number;
+    skipped?: number;
+    removed?: number;
+    errors?: number;
+  };
+  created: number;
+  busy: boolean;
+}
+
+export async function listWatchedVaults(): Promise<WatchedVault[]> {
+  const data = await jsonGet<{ vaults: WatchedVault[] }>('/api/obsidian/watched');
+  return data.vaults ?? [];
+}
+
+export async function registerVault(
+  path: string, scanIntervalS = 300,
+): Promise<WatchedVault> {
+  const r = await fetch('/api/obsidian/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, scan_interval_s: scanIntervalS }),
+  });
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    throw new Error(body?.error || `register vault → HTTP ${r.status}`);
+  }
+  const data = await r.json() as { vault: WatchedVault };
+  return data.vault;
+}
+
+export async function unregisterVault(path: string): Promise<void> {
+  const r = await fetch('/api/obsidian/unregister', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (!r.ok) throw new Error(`unregister → HTTP ${r.status}`);
+}
+
+export async function scanVaultNow(path: string): Promise<{ ok: boolean } & Record<string, number>> {
+  const r = await fetch('/api/obsidian/scan-now', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    throw new Error(body?.error || `scan-now → HTTP ${r.status}`);
+  }
+  return r.json();
+}
+
 // ── Voice (STT + TTS + end-to-end voice chat) ────────────────────────────────
+// ── System stats (RAM) ──────────────────────────────────────────────────────
+
+export interface SystemStats {
+  ram_used_gb: number | null;
+  ram_total_gb: number | null;
+}
+
+export async function fetchSystemStats(): Promise<SystemStats> {
+  return jsonGet<SystemStats>('/system-stats');
+}
+
 // Kept deliberately close to BackendClient.swift's voice methods; the
 // Python routes (src/proxy.py §voice) are OpenAI-compatible so both clients
 // hit the same endpoints.

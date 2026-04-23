@@ -25,7 +25,7 @@
 -->
 <script lang="ts">
   import { app } from './app-store.svelte';
-  import MessageBubble, { type Role } from './MessageBubble.svelte';
+  import MessageBubble, { type Role, type Citation } from './MessageBubble.svelte';
   import StatsBar from './StatsBar.svelte';
   import { transcribeAudio, synthesizeSpeech } from './api.client';
   import { VoiceRecorder, type VoiceState } from './voice-recorder';
@@ -41,6 +41,11 @@
     role: Role;
     content: string;
     imageUrls?: string[];
+    /** Per-turn structured citations from the proxy's usage payload.
+     *  Each entry carries `{ idx, kind, title, snippet, url?, memory_id? }`
+     *  so clicking `[memory: N]` can show the actual cited content
+     *  regardless of source type (memory / vault / web / …). */
+    citations?: Citation[];
   }
 
   interface TurnStats {
@@ -61,31 +66,84 @@
   let errorMsg  = $state<string | null>(null);
   let scroller: HTMLDivElement | undefined = $state();
   let fileInput: HTMLInputElement | undefined = $state();
-  // Last turn's generation stats — rendered as a dense mono-spaced bar
-  // above the scroller, mirroring SwiftUI's GenerationStatsBar.
+  // Last turn's generation stats — rendered at the BOTTOM of the
+  // scroller (above the composer) so it stays visible next to the
+  // reply it describes, matching SwiftUI's `GenerationStatsBar`
+  // placement.
   let lastStats = $state<TurnStats | null>(null);
+  // ⌘F inline chat search — parity with SwiftUI's `ChatSearchBar`.
+  // Highlights matches inside bubbles via the `highlight` prop that
+  // flows through to MessageBubble's markdown renderer.
+  let chatSearchOpen = $state<boolean>(false);
+  let chatSearchQuery = $state<string>('');
+  let chatSearchInput = $state<HTMLInputElement | undefined>();
+  function toggleChatSearch(): void {
+    chatSearchOpen = !chatSearchOpen;
+    if (!chatSearchOpen) chatSearchQuery = '';
+    else setTimeout(() => chatSearchInput?.focus(), 0);
+  }
+  function closeChatSearch(): void {
+    chatSearchOpen = false;
+    chatSearchQuery = '';
+  }
+
+  // Global ⌘F / Ctrl+F toggles the chat search bar. Escape closes it
+  // when it's focused — matches the SwiftUI behaviour.
+  $effect(() => {
+    const handler = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        toggleChatSearch();
+      } else if (e.key === 'Escape' && chatSearchOpen) {
+        e.preventDefault();
+        closeChatSearch();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  });
   // Session-only toggles, same as SwiftUI's AppState.researchMode /
-  // lockdownMode. Research enables SearXNG + web fetching; lockdown
-  // disables all network tools and mutually excludes research.
+  // lockdownMode. Deep Dive = autonomous loop + Playwright full-page
+  // web content (consolidated in omnibus #92 — used to be two buttons).
+  // Lockdown disables all network tools and mutually excludes Deep Dive.
   let researchMode = $state<boolean>(false);
   let lockdownMode = $state<boolean>(false);
-  // Autonomous research loop — when on, the backend splits each turn
-  // into Researcher → Writer → Verifier with its own web searches.
-  // Orthogonal to researchMode (which only flips web_search transport).
-  let autonomousLoop = $state<boolean>(false);
   function toggleResearch(): void {
     if (lockdownMode) return;
     researchMode = !researchMode;
   }
-  function toggleAutonomousLoop(): void {
-    if (lockdownMode) return;
-    autonomousLoop = !autonomousLoop;
-  }
   function toggleLockdown(): void {
     lockdownMode = !lockdownMode;
-    if (lockdownMode) {
-      researchMode = false;
-      autonomousLoop = false;
+    if (lockdownMode) researchMode = false;
+  }
+
+  // Per-conversation adapter override. The store doesn't carry the
+  // conv-level binding (it'd need a per-conv detail fetch), so we
+  // resolve it from the cached conversation list which the API now
+  // returns with `adapter_name`.
+  const activeConvAdapter = $derived.by<string | null>(() => {
+    if (!app.activeConvId) return null;
+    const conv = app.conversations.find((c) => c.id === app.activeConvId)
+      ?? app.searchResults.find((c) => c.id === app.activeConvId);
+    return conv?.adapter_name ?? null;
+  });
+  const inheritedAdapterLabel = $derived.by<string>(() => {
+    if (app.activeProject?.adapter_name) return `project: ${app.activeProject.adapter_name}`;
+    return 'base';
+  });
+
+  async function setConvAdapter(adapter: string | null): Promise<void> {
+    if (!app.activeConvId) return;
+    try {
+      const { patchConversation, activateConversationAdapter } = await import('./api.client');
+      await patchConversation(app.activeConvId, { adapter });
+      // Refresh the cached conv list so the derived getter picks up
+      // the new value, then activate the resolved adapter on the
+      // running model.
+      await app.refresh();
+      await activateConversationAdapter(app.activeConvId);
+    } catch (e) {
+      errorMsg = e instanceof Error ? e.message : String(e);
     }
   }
 
@@ -325,10 +383,22 @@
       const r = await fetch(`/api/conversations/${encodeURIComponent(id)}`);
       if (!r.ok) throw new Error(`GET /api/conversations/${id} → ${r.status}`);
       const data = await r.json();
-      const msgs = (data.messages ?? []) as Array<{ role: string; content: string }>;
+      const msgs = (data.messages ?? []) as Array<{
+        role: string;
+        content: string;
+        citations?: Citation[];
+      }>;
       history = msgs
         .filter((m) => m.role === 'user' || m.role === 'assistant')
-        .map((m) => ({ role: m.role as Role, content: m.content }));
+        .map((m) => ({
+          role: m.role as Role,
+          content: m.content,
+          // Preserve structured citations across reload so the popover
+          // keeps working on previously-saved turns.
+          citations: Array.isArray(m.citations) && m.citations.length
+            ? m.citations
+            : undefined,
+        }));
       convId = id;
       convTitle = data.title ?? '';
       lastStats = null;
@@ -351,7 +421,13 @@
       const payload = {
         id: convId,
         title: convTitle,
-        messages: msgs.map((m) => ({ role: m.role, content: m.content })),
+        messages: msgs.map((m) => {
+          // Only serialise citations when present — keeps the stored
+          // JSON lean for plain chat turns.
+          const base: Record<string, unknown> = { role: m.role, content: m.content };
+          if (m.citations && m.citations.length) base.citations = m.citations;
+          return base;
+        }),
         model: app.activeModelName ?? '',
       };
       const r = await fetch('/api/conversations', {
@@ -383,6 +459,14 @@
   async function send(): Promise<void> {
     const text = input.trim();
     if ((!text && attachments.length === 0) || streaming) return;
+    // Friendly no-model guard — the old behaviour was to fire the
+    // request anyway and surface a raw "all connection attempts
+    // failed" error from the inference backend. Now we catch it at
+    // the UI layer and point the user to Manage Models (#92).
+    if (!app.activeModelName) {
+      errorMsg = 'No model loaded. Open Manage Models and load one before sending.';
+      return;
+    }
     errorMsg = null;
 
     const imageAttachments = attachments.filter((a) => a.type === 'image');
@@ -462,6 +546,17 @@
       let modelName = app.activeModelName ?? 'local';
       let searchTriggered = false;
       let memoryInjected  = false;
+      let turnCitations: Citation[] = [];
+
+      const pumpHistory = (): void => {
+        const updated = [...history];
+        updated[assistantIdx] = {
+          role: 'assistant',
+          content: assembled,
+          citations: turnCitations.length ? turnCitations : undefined,
+        };
+        history = updated;
+      };
 
       while (true) {
         const { done, value } = await reader.read();
@@ -480,9 +575,7 @@
             if (typeof delta === 'string' && delta.length > 0) {
               if (tFirst === null) tFirst = performance.now();
               assembled += delta;
-              const updated = [...history];
-              updated[assistantIdx] = { role: 'assistant', content: assembled };
-              history = updated;
+              pumpHistory();
               await scrollToBottom();
             }
             // Final usage payload — proxy emits these stats right before [DONE].
@@ -492,6 +585,10 @@
               usageCompletionTokens = Number(usage.completion_tokens) || usageCompletionTokens;
               if (typeof usage.search_triggered === 'boolean') searchTriggered = usage.search_triggered;
               if (typeof usage.memory_injected  === 'boolean') memoryInjected  = usage.memory_injected;
+              if (Array.isArray(usage.citations)) {
+                turnCitations = usage.citations as Citation[];
+                pumpHistory();
+              }
             }
           } catch { /* ignore malformed SSE lines */ }
         }
@@ -600,7 +697,24 @@
       <div class="drop-card">Drop files to attach</div>
     </div>
   {/if}
-  <StatsBar stats={lastStats} contextWindow={app.contextWindow} />
+  {#if chatSearchOpen}
+    <div class="chat-search">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+        <circle cx="7" cy="7" r="4.5" />
+        <line x1="10" y1="10" x2="14" y2="14" />
+      </svg>
+      <input
+        type="text"
+        placeholder="Search in conversation…"
+        bind:value={chatSearchQuery}
+        bind:this={chatSearchInput}
+      />
+      {#if chatSearchQuery}
+        <button class="clear" onclick={() => { chatSearchQuery = ''; }} aria-label="Clear">×</button>
+      {/if}
+      <button class="close" onclick={closeChatSearch} aria-label="Close search">✕</button>
+    </div>
+  {/if}
   <div class="scroller" bind:this={scroller}>
     {#if history.length === 0}
       <div class="empty">
@@ -614,12 +728,17 @@
             role={msg.role}
             content={msg.content}
             imageUrls={msg.imageUrls ?? []}
+            citations={msg.citations}
+            highlight={chatSearchQuery}
             isStreaming={streaming && i === history.length - 1 && msg.role === 'assistant'}
           />
         {/each}
       </div>
     {/if}
   </div>
+  {#if lastStats && !streaming}
+    <StatsBar stats={lastStats} contextWindow={app.contextWindow} />
+  {/if}
 
   {#if errorMsg}
     <div class="error">{errorMsg}</div>
@@ -637,8 +756,18 @@
     </div>
   {/if}
 
+  {#if !app.activeModelName && !app.loadingModel}
+    <div class="composer-banner" role="status">
+      <span>No model loaded. Open Manage Models and load one before chatting.</span>
+    </div>
+  {:else if app.loadingModel}
+    <div class="composer-banner loading" role="status">
+      <span>Loading <strong>{app.loadingModel}</strong>… input will unlock once it's ready.</span>
+    </div>
+  {/if}
+
   <div class="composer">
-    <button class="attach" onclick={() => fileInput?.click()} disabled={streaming} title="Attach file">
+    <button class="attach" onclick={() => fileInput?.click()} disabled={streaming || !!app.loadingModel} title="Attach file">
       +
     </button>
     <input
@@ -652,11 +781,15 @@
       }}
     />
     <textarea
-      placeholder={app.isVoiceMode ? voicePlaceholder(voiceState, app.isTranscribing, isSpeaking) : 'Message Loca…  (⌘↵ to send)'}
+      placeholder={
+        app.isVoiceMode ? voicePlaceholder(voiceState, app.isTranscribing, isSpeaking)
+        : app.loadingModel ? `Loading ${app.loadingModel}…`
+        : 'Message Loca…  (⌘↵ to send)'
+      }
       bind:value={input}
       onkeydown={onKeydown}
       rows="3"
-      disabled={streaming || app.isVoiceMode}
+      disabled={streaming || app.isVoiceMode || !!app.loadingModel}
     ></textarea>
     <button
       class="mic"
@@ -681,9 +814,9 @@
     <button
       class="send"
       onclick={send}
-      disabled={streaming || (!input.trim() && attachments.length === 0)}
+      disabled={streaming || !!app.loadingModel || (!input.trim() && attachments.length === 0)}
     >
-      {streaming ? 'Streaming…' : 'Send'}
+      {streaming ? 'Streaming…' : app.loadingModel ? 'Loading…' : 'Send'}
     </button>
   </div>
 
@@ -693,20 +826,26 @@
 
   <!-- Session-only toggles, mirrored from SwiftUI's composer row. -->
   <div class="input-tools">
+    {#if app.activeConvId && app.activeModelName && app.adapters.length > 0}
+      <select
+        class="adapter-pick"
+        title="Override the adapter just for this conversation. Inherits the project (or base) when unset."
+        value={activeConvAdapter ?? ''}
+        onchange={(e) => void setConvAdapter((e.currentTarget as HTMLSelectElement).value || null)}
+      >
+        <option value="">⊘ Inherit ({inheritedAdapterLabel})</option>
+        {#each app.adapters as a (a.name)}
+          <option value={a.name}>{a.name}</option>
+        {/each}
+      </select>
+    {/if}
     <button
       class="tool"
       class:active={researchMode}
       disabled={lockdownMode}
       onclick={toggleResearch}
-      title="Deep Dive — render full pages (not just snippets) and pull richer web context into the turn"
+      title="Deep Dive — multi-step research: plan sub-queries, fetch full pages, synthesise with citations, verify"
     >🌊 Deep Dive</button>
-    <button
-      class="tool"
-      class:active={autonomousLoop}
-      disabled={lockdownMode}
-      onclick={toggleAutonomousLoop}
-      title="Research Agent — multi-step turn: plan sub-queries, search, synthesise with citations, verify"
-    >🤖 Agent</button>
     <button
       class="tool"
       class:active={lockdownMode}
@@ -782,6 +921,36 @@
     overflow-y: auto;
     padding: 20px 40px;
   }
+
+  /* Inline find bar — ⌘F toggles it. Mirrors SwiftUI's ChatSearchBar. */
+  .chat-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 40px;
+    background: color-mix(in srgb, var(--loca-color-accent) 5%, var(--loca-color-bg));
+    border-bottom: 1px solid var(--loca-color-border);
+  }
+  .chat-search svg { color: var(--loca-color-text-muted); flex-shrink: 0; }
+  .chat-search input {
+    flex: 1;
+    background: var(--loca-color-surface);
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-sm);
+    padding: 5px 10px;
+    font-size: 12px;
+    color: var(--loca-color-text);
+  }
+  .chat-search input:focus { outline: none; border-color: var(--loca-color-accent); }
+  .chat-search .clear, .chat-search .close {
+    background: none;
+    border: none;
+    color: var(--loca-color-text-muted);
+    font-size: 13px;
+    cursor: pointer;
+    padding: 0 6px;
+  }
+  .chat-search .clear:hover, .chat-search .close:hover { color: var(--loca-color-text); }
   .empty {
     text-align: center;
     color: var(--loca-color-text-muted);
@@ -794,7 +963,14 @@
     color: var(--loca-color-text);
   }
   .empty p { margin: 0; font-size: 13px; }
-  .messages { display: flex; flex-direction: column; gap: 10px; }
+  .messages {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    /* Responsive — stretch with the viewport. Swift app uses a
+       `Spacer(minLength: 80)` to leave a gutter, so we match with
+       max-width on the bubbles themselves. */
+  }
 
   .error {
     margin: 0 40px 10px;
@@ -833,6 +1009,18 @@
     padding: 0 2px;
   }
 
+  .composer-banner {
+    margin: 0 40px;
+    padding: 8px 12px;
+    border-top: 1px solid var(--loca-color-border);
+    background: color-mix(in srgb, var(--loca-color-accent) 8%, transparent);
+    color: var(--loca-color-text);
+    font-size: 12px;
+    text-align: center;
+  }
+  .composer-banner.loading {
+    background: color-mix(in srgb, var(--loca-color-accent) 14%, transparent);
+  }
   .composer {
     display: flex;
     gap: 8px;
@@ -976,6 +1164,15 @@
   .input-tools .tool:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+  }
+  .input-tools .adapter-pick {
+    background: var(--loca-color-surface);
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-sm);
+    color: var(--loca-color-text);
+    padding: 2px 6px;
+    font-size: 11px;
+    max-width: 200px;
   }
   .partner-segment {
     display: inline-flex;

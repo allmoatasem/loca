@@ -28,6 +28,11 @@
     path = to;
   }
 
+  // MessageBubble handles `[memory: N]` clicks via an inline popover
+  // — no global interceptor needed here. The popover's "Open in
+  // Memory" button sets `app.memoryHighlightId` and pushes /ui/memory,
+  // which MemoryView consumes.
+
   type OverlayKind = 'glossary' | 'preferences' | 'manage-models' | 'vault' | 'memory' | 'philosophy' | 'acknowledgements' | 'research';
   const openOverlay = $derived.by<null | OverlayKind>(() => {
     if (path.endsWith('/glossary'))         return 'glossary';
@@ -69,7 +74,7 @@
       {:else if openOverlay === 'vault'}
         <VaultView onClose={() => navigate('/ui')} />
       {:else if openOverlay === 'memory'}
-        <MemoryView onClose={() => navigate('/ui')} />
+        <MemoryView onClose={() => { app.memoryHighlightId = null; navigate('/ui'); }} />
       {:else if openOverlay === 'philosophy'}
         <PhilosophyView onClose={() => navigate('/ui')} />
       {:else if openOverlay === 'acknowledgements'}

@@ -13,10 +13,12 @@
 <script lang="ts">
   import {
     cancelDownload,
+    fetchRecommendations,
     listRepoFiles,
     searchHF,
     startDownload,
     type HFSearchHit,
+    type ModelRecommendation,
     type RepoFile,
   } from './api.client';
 
@@ -29,6 +31,38 @@
   let results = $state<HFSearchHit[]>([]);
   let searching = $state<boolean>(false);
   let searchError = $state<string | null>(null);
+
+  // Hardware-aware recommendations from the llmfit-backed
+  // /api/recommended-models endpoint. Shown when the search box is
+  // empty so the panel doubles as a "For You" surface — parity with
+  // the Swift Discover tab's For You / Search HF segmented control.
+  let recs = $state<ModelRecommendation[]>([]);
+  let recsLoading = $state<boolean>(true);
+  let llmfitAvailable = $state<boolean>(false);
+  $effect(() => {
+    (async () => {
+      try {
+        const data = await fetchRecommendations();
+        recs = data.recommendations;
+        llmfitAvailable = data.llmfit_available;
+      } catch {
+        recs = [];
+      } finally {
+        recsLoading = false;
+      }
+    })();
+  });
+
+  const filteredRecs = $derived(recs.filter((r) => r.format === format));
+
+  /** "Perfect Fit" → green, "Good Fit" → amber, "Tight Fit" → red. */
+  function fitColor(level: string): string {
+    const l = (level || '').toLowerCase();
+    if (l.includes('perfect')) return '#10b981';
+    if (l.includes('good'))    return '#f59e0b';
+    if (l.includes('tight'))   return '#ef4444';
+    return 'var(--loca-color-text-muted)';
+  }
 
   // File-picker state — opened when the user clicks a GGUF result.
   let pickerFor = $state<HFSearchHit | null>(null);
@@ -189,12 +223,7 @@
     <p class="hint">Searching…</p>
   {:else if query.trim() && results.length === 0}
     <p class="hint">No matches for "{query.trim()}".</p>
-  {:else if results.length === 0}
-    <p class="hint">
-      Type to search Hugging Face. Click a result to download — GGUF repos
-      will show a file picker so you can choose the quantisation.
-    </p>
-  {:else}
+  {:else if results.length > 0}
     <div class="results">
       {#each results as hit (hit.repo_id)}
         <button class="result" onclick={() => onResultClick(hit)}>
@@ -202,6 +231,60 @@
           <span class="stats">
             ⬇ {hit.downloads.toLocaleString()} · ♥ {hit.likes.toLocaleString()}
           </span>
+        </button>
+      {/each}
+    </div>
+  {:else if recsLoading}
+    <p class="hint">Loading recommendations…</p>
+  {:else if filteredRecs.length === 0}
+    <p class="hint">
+      {#if !llmfitAvailable}
+        Install <code>llmfit</code> from the <strong>Settings</strong> tab to see
+        hardware-aware recommendations here. Until then, type to search Hugging Face.
+      {:else}
+        No {format.toUpperCase()} recommendations for your hardware. Type to search Hugging Face.
+      {/if}
+    </p>
+  {:else}
+    <div class="recs-header">
+      <span>For your hardware ({filteredRecs.length} {format.toUpperCase()})</span>
+      <span class="hint">Type above to search Hugging Face directly.</span>
+    </div>
+    <div class="recs">
+      {#each filteredRecs as rec (rec.repo_id + (rec.filename ?? ''))}
+        <button
+          class="rec"
+          onclick={() => onResultClick({ repo_id: rec.repo_id, downloads: 0, likes: 0 })}
+        >
+          <span
+            class="fit-dot"
+            style:background-color={fitColor(rec.fit_level)}
+            title={rec.fit_level || 'Fit unknown'}
+          ></span>
+          <div class="rec-body">
+            <div class="rec-row">
+              <span class="rec-name">{rec.name}</span>
+              <span class="rec-fmt">{rec.format.toUpperCase()}</span>
+              <span class="rec-meta">{rec.size_gb.toFixed(1)} GB · {rec.quant} · {Math.round(rec.context / 1024)}K ctx</span>
+            </div>
+            <div class="rec-meta-row">
+              {#if rec.fit_level}
+                <span class="pill" style:color={fitColor(rec.fit_level)}>{rec.fit_level}</span>
+              {/if}
+              {#if rec.score > 0}
+                <span class="pill subtle">{Math.round(rec.score)}% fit</span>
+              {/if}
+              {#if rec.tps > 0}
+                <span class="pill subtle">~{Math.round(rec.tps)} tok/s</span>
+              {/if}
+              {#if rec.provider}
+                <span class="pill subtle">{rec.provider}</span>
+              {/if}
+            </div>
+            {#if rec.why}
+              <div class="rec-why">{rec.why}</div>
+            {/if}
+          </div>
         </button>
       {/each}
     </div>
@@ -279,6 +362,56 @@
     border-radius: var(--loca-radius-sm);
     margin: 0;
   }
+
+  .recs-header {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--loca-color-text);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .recs { display: flex; flex-direction: column; gap: 6px; }
+  .rec {
+    display: flex; align-items: flex-start; gap: 10px;
+    background: var(--loca-color-surface);
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-sm);
+    padding: 8px 10px;
+    text-align: left;
+    cursor: pointer;
+    color: var(--loca-color-text);
+    width: 100%;
+  }
+  .rec:hover { background: color-mix(in srgb, var(--loca-color-accent) 6%, var(--loca-color-surface)); }
+  .fit-dot {
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    margin-top: 5px;
+    flex-shrink: 0;
+  }
+  .rec-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .rec-row { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+  .rec-name { font-size: 12px; font-weight: 600; }
+  .rec-fmt {
+    font-size: 9px; font-weight: 700;
+    color: color-mix(in srgb, var(--loca-color-accent) 80%, var(--loca-color-text));
+    background: color-mix(in srgb, var(--loca-color-accent) 14%, transparent);
+    padding: 1px 5px; border-radius: 3px;
+  }
+  .rec-meta { font-size: 10px; color: var(--loca-color-text-muted); }
+  .rec-meta-row { display: flex; gap: 5px; flex-wrap: wrap; }
+  .pill {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, currentColor 10%, transparent);
+  }
+  .pill.subtle {
+    color: var(--loca-color-text-muted);
+    background: color-mix(in srgb, var(--loca-color-text) 6%, transparent);
+  }
+  .rec-why { font-size: 11px; color: var(--loca-color-text-muted); line-height: 1.4; }
 
   .results { display: flex; flex-direction: column; gap: 6px; }
   .result {

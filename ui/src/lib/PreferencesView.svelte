@@ -642,14 +642,20 @@
 
   textarea {
     width: 100%;
+    box-sizing: border-box;
     background: var(--loca-color-surface);
     border: 1px solid var(--loca-color-border);
     border-radius: var(--loca-radius-sm);
-    padding: 8px 10px;
+    padding: 12px 14px;
     font-size: 12px;
     font-family: var(--loca-font-mono);
+    line-height: 1.5;
     color: var(--loca-color-text);
     resize: vertical;
+  }
+  textarea::placeholder {
+    color: var(--loca-color-text-muted);
+    opacity: 0.7;
   }
 
   .danger {

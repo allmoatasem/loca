@@ -217,6 +217,21 @@ class ModelManager:
                     f"Adapter '{adapter}' not found under {model.path}/adapters/",
                 )
             adapter_path = str(resolved)
+        # Skip the restart if the requested combination already matches
+        # what's running. Without this, `/api/projects/{id}/activate-adapter`
+        # on a project with no adapter binding unloads + reloads the model
+        # for no reason — the UI briefly sees `active=None` during the
+        # restart window and drops the model chip.
+        current_model = self.backend.current_model() or ""
+        current_adapter = self.current_adapter_name()
+        if (
+            self.backend.is_running()
+            and current_model == model.name
+            and (current_adapter or None) == (adapter or None)
+            and ctx_size is None and n_gpu_layers is None
+            and batch_size is None and num_threads is None
+        ):
+            return model.name, self.backend.api_base()
         await self.backend.restart(
             model.path, ctx_size, n_gpu_layers, batch_size, num_threads,
             adapter_path=adapter_path,
@@ -332,6 +347,15 @@ class ModelManager:
                         downloaded = resume_from
                         t0 = time.monotonic()
                         mode = "ab" if resume_from > 0 else "wb"
+                        # Surface the resume offset BEFORE the first
+                        # chunk arrives so the UI's progress bar snaps
+                        # to where it left off, not 0%. Without this
+                        # the bar zeros for ~1 s on every resume.
+                        if resume_from > 0 and total > 0:
+                            yield DownloadProgress(
+                                percent=min(resume_from / total * 100, 99.0),
+                                total_bytes=total,
+                            )
                         try:
                             with open(dest, mode) as f:
                                 async for chunk in resp.aiter_bytes(1024 * 1024):
@@ -461,6 +485,16 @@ class ModelManager:
                                     if mode == "wb":
                                         file_dest.unlink(missing_ok=True)
                                     raise
+
+                # Surface the resume offset BEFORE the workers fire so
+                # the UI's bar snaps to the partial-download percent
+                # rather than 0% while HTTP connections are dialled.
+                already_done = sum(downloaded_bytes.values())
+                if already_done > 0 and total_size > 0:
+                    yield DownloadProgress(
+                        percent=min(already_done / total_size * 100, 99.0),
+                        total_bytes=total_size,
+                    )
 
                 download_task = asyncio.gather(*[_download_file(s) for s in pending])
                 try:

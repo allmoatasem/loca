@@ -5,6 +5,7 @@
   per-item delete.
 -->
 <script lang="ts">
+  import { tick } from 'svelte';
   import { app } from './app-store.svelte';
 
   interface Props {
@@ -27,6 +28,9 @@
   let manualInput = $state('');
   let extractLabel = $state('✦ Extract memories from current conversation');
   let extractBusy = $state(false);
+  /** Memory id that just got highlighted — drives a ring flash. */
+  let flashId = $state<string | null>(null);
+  let itemEls = $state<Record<string, HTMLElement>>({});
 
   async function loadFirstPage(): Promise<void> {
     loading = true;
@@ -55,6 +59,25 @@
       offset += more.length;
     } catch {
       // silent: load-more is retryable
+    }
+  }
+
+  /** Jump-load the 50-row window centred on `id` so deep-linked
+   *  citations can be shown without walking thousands of memories. */
+  async function loadAround(id: string): Promise<boolean> {
+    try {
+      const posResp = await fetch(`/api/memories/${encodeURIComponent(id)}/position`);
+      if (!posResp.ok) return false;
+      const { offset: pos } = await posResp.json() as { offset: number };
+      const startOffset = Math.max(0, pos - 10);
+      const r = await fetch(`/api/memories?limit=${PAGE_SIZE}&offset=${startOffset}`);
+      const data = await r.json();
+      memories = data.memories ?? [];
+      total = data.total ?? memories.length;
+      offset = startOffset + memories.length;
+      return memories.some((m: MemoryItem) => m.id === id);
+    } catch {
+      return false;
     }
   }
 
@@ -127,6 +150,31 @@
   // Eagerly load on mount.
   loadFirstPage();
 
+  // Deep-link target from a citation popover's "Open in Memory"
+  // button. Jumps straight to the window around the target (via
+  // `/api/memories/{id}/position`) instead of walking the list 50
+  // rows at a time — essential for stores with thousands of memories.
+  async function focusHighlight(targetId: string): Promise<void> {
+    const present = memories.some((m) => m.id === targetId)
+      || await loadAround(targetId);
+    if (!present) return;
+    await tick();
+    const el = itemEls[targetId];
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      flashId = targetId;
+      setTimeout(() => {
+        if (flashId === targetId) flashId = null;
+        if (app.memoryHighlightId === targetId) app.memoryHighlightId = null;
+      }, 1800);
+    }
+  }
+
+  $effect(() => {
+    const id = app.memoryHighlightId;
+    if (!loading && id) void focusHighlight(id);
+  });
+
   const remaining = $derived(Math.max(0, total - offset));
   const pageLoadSize = $derived(Math.min(PAGE_SIZE, remaining));
   const canExtract = $derived(!!app.activeConvId && !extractBusy);
@@ -183,7 +231,11 @@
         </div>
       {:else}
         {#each memories as m (m.id)}
-          <article class="item">
+          <article
+            class="item"
+            class:flash={flashId === m.id}
+            bind:this={itemEls[m.id]}
+          >
             <div class="item-body">
               <p class="content">{m.content}</p>
               <p class="date">{formatDate(m.created)}</p>
@@ -311,6 +363,13 @@
     border: 1px solid var(--loca-color-border);
     border-radius: var(--loca-radius-sm);
     background: var(--loca-color-surface);
+    transition: background 0.3s ease, border-color 0.3s ease,
+                box-shadow 0.3s ease;
+  }
+  .item.flash {
+    background: color-mix(in srgb, var(--loca-color-accent) 12%, var(--loca-color-surface));
+    border-color: var(--loca-color-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--loca-color-accent) 25%, transparent);
   }
   .item-body { flex: 1; }
   .content {

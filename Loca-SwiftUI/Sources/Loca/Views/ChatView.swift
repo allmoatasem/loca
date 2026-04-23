@@ -589,6 +589,11 @@ struct MessageBubble: View {
     let showTypingIndicator: Bool
     var highlight: String = ""
     @State private var isHovered = false
+    /// Citation currently shown in the preview popover. Clicking a
+    /// `[memory: N]` pill sets this; the `.popover` modifier anchored
+    /// below renders the content inline so the user sees the actual
+    /// source text regardless of its type (memory / vault / web / …).
+    @State private var pendingCitation: Citation?
 
     private var isUser: Bool { message.role == "user" }
 
@@ -604,15 +609,56 @@ struct MessageBubble: View {
                         .overlay(alignment: .topLeading) { copyButton(isUser: true) }
                 }
             } else {
-                modelAvatar
+                // No avatar on the assistant side — matches the Svelte bubble
+                // which reads as a single framed reply, not an avatar+prose pair.
                 bubbleContent
                     .background(Color(nsColor: .controlBackgroundColor))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+                    )
                     .overlay(alignment: .topTrailing) { copyButton(isUser: false) }
                 Spacer(minLength: 80)
             }
         }
         .onHover { isHovered = $0 }
+        // Intercept `loca-memory:N` URLs produced by the citation pass
+        // in ProseView. Resolve the index against this turn's
+        // structured citations and open a popover with the actual
+        // cited content — no speculative navigation so phantom /
+        // non-memory sources never land on unrelated rows.
+        .environment(\.openURL, OpenURLAction { url in
+            if url.scheme == "loca-memory" {
+                let idxString = url.absoluteString
+                    .replacingOccurrences(of: "loca-memory:", with: "")
+                if let idx = Int(idxString),
+                   let cits = state.citationsByMessageId[message.id],
+                   let hit = cits.first(where: { $0.idx == idx }) {
+                    pendingCitation = hit
+                } else if let idx = Int(idxString) {
+                    // No structured payload — usually a phantom / old
+                    // turn. Show a placeholder so the click still
+                    // produces feedback.
+                    pendingCitation = Citation(
+                        idx: idx,
+                        kind: "missing",
+                        title: "Citation [memory: \(idx)]",
+                        snippet: "This turn did not ship source metadata for this citation. The model may have hallucinated the index (phantom citation) or the server is on an older version.",
+                        url: nil,
+                        memory_id: nil
+                    )
+                }
+                return .handled
+            }
+            return .systemAction
+        })
+        .popover(item: $pendingCitation, arrowEdge: .top) { cit in
+            CitationPopover(citation: cit) {
+                pendingCitation = nil
+            }
+            .environmentObject(state)
+        }
     }
 
     @ViewBuilder
@@ -632,37 +678,6 @@ struct MessageBubble: View {
             .padding(isUser ? .leading : .trailing, -28)
             .padding(.top, 4)
             .transition(.opacity.combined(with: .scale(scale: 0.8)))
-        }
-    }
-
-    // MARK: Avatar — initials derived from the model that generated this response
-
-    private var modelAvatar: some View {
-        ZStack {
-            Circle().fill(Color.accentColor)
-            Text(modelInitials(state.actualModel ?? state.selectedModelId))
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(.white)
-        }
-        .frame(width: 26, height: 26)
-    }
-
-    private func modelInitials(_ id: String?) -> String {
-        guard let id, !id.isEmpty else { return "AI" }
-        let name = String(id.split(separator: "/").last ?? Substring(id))
-        let skip = Set(["instruct", "chat", "it", "gguf", "hf", "v1", "v2", "v3",
-                        "v4", "q4", "q8", "fp16", "awq", "bnb", "gptq"])
-        let parts = name.components(separatedBy: CharacterSet(charactersIn: "-_.:"))
-            .filter { p in
-                !p.isEmpty &&
-                p.first?.isLetter == true &&
-                !skip.contains(p.lowercased()) &&
-                !p.allSatisfy({ $0.isNumber || $0 == "." })
-            }
-        switch parts.count {
-        case 0: return "AI"
-        case 1: return String(parts[0].prefix(2)).uppercased()
-        default: return (String(parts[0].prefix(1)) + String(parts[1].prefix(1))).uppercased()
         }
     }
 
@@ -746,12 +761,18 @@ struct MessageBubble: View {
                 .padding(.vertical, 12)
         } else {
             let split = splitThinkBlocks(plain)
+            let cits = state.citationsByMessageId[message.id] ?? []
             VStack(alignment: .leading, spacing: 8) {
                 if !split.thinking.isEmpty {
                     ThinkBlockView(text: split.thinking)
                 }
                 if !split.answer.isEmpty {
                     MarkdownView(text: split.answer, highlight: highlight)
+                }
+                if !cits.isEmpty && !showTypingIndicator {
+                    SourcesChip(citations: cits) { cit in
+                        pendingCitation = cit
+                    }
                 }
             }
             .padding(.horizontal, 12)
@@ -949,11 +970,228 @@ struct MarkdownView: View {
     }
 }
 
+// MARK: - Sources-used footer chip
+
+/// Compact expandable footer on assistant bubbles that lists every
+/// source retrieved for the turn. Makes memory use visible even when
+/// the model skips `[memory: N]` citation markers — common on smaller
+/// models that prefer prose references like "as we discussed earlier".
+private struct SourcesChip: View {
+    let citations: [Citation]
+    let onSelect: (Citation) -> Void
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                    Text("📓 \(citations.count) source\(citations.count == 1 ? "" : "s") used")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(Color.accentColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.accentColor.opacity(0.22), lineWidth: 1)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .foregroundColor(.accentColor)
+            }
+            .buttonStyle(.plain)
+            if expanded {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(citations) { cit in
+                        Button { onSelect(cit) } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(kindLabel(cit.kind))
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundColor(.accentColor)
+                                    Text("[memory: \(cit.idx)]")
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                }
+                                if !cit.title.isEmpty {
+                                    Text(cit.title)
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .lineLimit(1)
+                                }
+                                if !cit.snippet.isEmpty {
+                                    Text(cit.snippet)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(3)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                            .background(Color(nsColor: .textBackgroundColor))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    private func kindLabel(_ k: String) -> String {
+        switch k {
+        case "memory":       return "MEMORY"
+        case "project_item": return "PROJECT"
+        case "obsidian", "vault": return "VAULT"
+        case "web":          return "WEB"
+        default:             return k.uppercased()
+        }
+    }
+}
+
+// MARK: - Citation preview popover
+
+/// Inline source preview for a `[memory: N]` click. Shows the cited
+/// title + snippet and, when applicable, a primary button — "Open in
+/// Memory" for memory sources, "Open link ↗" for web. Skips any
+/// guess-based navigation so non-memory citations never land on an
+/// unrelated Memory row.
+private struct CitationPopover: View {
+    @EnvironmentObject var state: AppState
+    let citation: Citation
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(kindLabel)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.accentColor)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Color.accentColor.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                Text("[memory: \(citation.idx)]")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button { onClose() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            if !citation.title.isEmpty {
+                Text(citation.title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+            if !citation.snippet.isEmpty {
+                ScrollView {
+                    Text(citation.snippet)
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 180)
+            }
+            HStack {
+                Spacer()
+                if let urlString = citation.url,
+                   let url = URL(string: urlString) {
+                    Link(destination: url) {
+                        Label("Open link", systemImage: "arrow.up.right.square")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 360)
+    }
+
+    private var kindLabel: String {
+        switch citation.kind {
+        case "memory":       return "MEMORY"
+        case "project_item": return "PROJECT SOURCE"
+        case "obsidian", "vault": return "VAULT NOTE"
+        case "web":          return "WEB"
+        case "missing":      return "MISSING"
+        default:             return citation.kind.uppercased()
+        }
+    }
+}
+
+// MARK: - Cursor modifier for link-bearing prose
+
+/// Swaps the cursor to `pointingHand` while hovering a paragraph
+/// that contains any clickable content (memory citations or
+/// markdown links). Paragraph-level rather than per-character —
+/// SwiftUI Text doesn't expose hit testing against individual
+/// link runs, and macOS 14 lacks `.pointerStyle(_:)` — so we signal
+/// "interactive region ahead" on the paragraph as a whole. Still
+/// infinitely better than a static arrow over a clearly-tappable pill.
+private struct LinkPointerCursor: ViewModifier {
+    let active: Bool
+
+    func body(content: Content) -> some View {
+        if active {
+            content.onHover { inside in
+                if inside {
+                    NSCursor.pointingHand.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+        } else {
+            content
+        }
+    }
+}
+
 // MARK: - Prose renderer (headers, bullets, numbered lists, tables, paragraphs)
 
 struct ProseView: View {
     let text: String
     var highlight: String = ""
+
+    /// Wrap `[memory: N]` citations in a markdown link with a custom
+    /// `loca-memory:` URL scheme. The bubble intercepts those URLs via
+    /// `OpenURLAction` and opens the Memory panel on tap. Mirrors the
+    /// Svelte `linkMemoryCitations` pass.
+    static func linkMemoryCitations(_ raw: String) -> String {
+        guard let re = try? NSRegularExpression(pattern: #"\[memory:\s*(\d+)\]"#) else {
+            return raw
+        }
+        let ns = raw as NSString
+        let matches = re.matches(in: raw, range: NSRange(location: 0, length: ns.length))
+        guard !matches.isEmpty else { return raw }
+        var result = ""
+        var cursor = 0
+        for m in matches {
+            let full = m.range
+            let idxRange = m.range(at: 1)
+            result += ns.substring(with: NSRange(location: cursor, length: full.location - cursor))
+            let label = ns.substring(with: full)
+            let idx = ns.substring(with: idxRange)
+            result += "[\(label)](loca-memory:\(idx))"
+            cursor = full.location + full.length
+        }
+        if cursor < ns.length {
+            result += ns.substring(with: NSRange(location: cursor, length: ns.length - cursor))
+        }
+        return result
+    }
 
     private enum LineGroup {
         case header(Int, String)
@@ -1043,25 +1281,38 @@ struct ProseView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
                 .padding(.top, level < 3 ? 4 : 2)
+                .modifier(LinkPointerCursor(active: Self.hasLink(s)))
         case .bullet(let s):
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("•").font(.system(size: 14)).foregroundColor(.secondary)
                     .padding(.leading, 4)
                 Text(inline(s)).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             }
+            .modifier(LinkPointerCursor(active: Self.hasLink(s)))
         case .numbered(let n, let s):
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("\(n).").font(.system(size: 14)).foregroundColor(.secondary)
                     .padding(.leading, 4)
                 Text(inline(s)).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             }
+            .modifier(LinkPointerCursor(active: Self.hasLink(s)))
         case .paragraph(let s):
             Text(inline(s)).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                .modifier(LinkPointerCursor(active: Self.hasLink(s)))
         case .hrule:
             Divider().padding(.vertical, 4)
         case .table(let rows):
             tableView(rows)
         }
+    }
+
+    /// Heuristic — is there any clickable content in this segment
+    /// that warrants a pointing-hand cursor on hover? Cheaper than
+    /// parsing the AttributedString again.
+    static func hasLink(_ text: String) -> Bool {
+        text.contains("[memory:") || text.range(
+            of: #"\[[^\]]+\]\([^)]+\)"#, options: .regularExpression
+        ) != nil
     }
 
     private func tableView(_ rows: [[String]]) -> some View {
@@ -1104,12 +1355,26 @@ struct ProseView: View {
     /// renders bold, italic and inline code correctly regardless of the view's
     /// .font() modifier. Optionally highlights search matches.
     private func inline(_ raw: String, baseSize: CGFloat = 14) -> AttributedString {
+        // Pre-process citation markers into markdown links so the parser
+        // gives us proper `.link` runs to style + intercept. Matches the
+        // Svelte `linkMemoryCitations` step. URL scheme is `loca-memory:`
+        // — the bubble-level OpenURLAction catches it and opens the panel.
+        let withCitations = Self.linkMemoryCitations(raw)
         guard var attr = try? AttributedString(
-            markdown: raw,
+            markdown: withCitations,
             options: .init(interpretedSyntax: .inlineOnly)
         ) else { return AttributedString(raw) }
 
         for run in attr.runs {
+            // Citation runs — styled as a pill that reads "clickable"
+            // without mimicking a normal hyperlink.
+            if let url = run.link, url.scheme == "loca-memory" {
+                attr[run.range].font = .system(size: max(baseSize - 1, 11), design: .monospaced)
+                attr[run.range].foregroundColor = Color.accentColor
+                attr[run.range].backgroundColor = Color.accentColor.opacity(0.12)
+                attr[run.range].underlineStyle = nil
+                continue
+            }
             guard let intent = run.inlinePresentationIntent else { continue }
             if intent.contains(.code) {
                 attr[run.range].font = .system(size: max(baseSize - 1, 11), design: .monospaced)
@@ -1229,23 +1494,14 @@ struct InputBar: View {
                     icon: "drop", label: "Deep Dive",
                     isActive: state.researchMode, isDisabled: state.lockdownMode
                 ) { if !state.lockdownMode { state.researchMode.toggle() } }
-                .help("Deep Dive — render full pages (not just snippets) and pull richer web context into the turn")
-
-                InputToolButton(
-                    icon: "brain.head.profile", label: "Agent",
-                    isActive: state.autonomousLoop, isDisabled: state.lockdownMode
-                ) { if !state.lockdownMode { state.autonomousLoop.toggle() } }
-                .help("Research Agent — multi-step turn: plan sub-queries, search, synthesise with citations, verify")
+                .help("Deep Dive — multi-step research: plan sub-queries, fetch full pages, synthesise with citations, verify")
 
                 InputToolButton(
                     icon: "lock", label: "Lockdown",
                     isActive: state.lockdownMode, isDisabled: false
                 ) {
                     state.lockdownMode.toggle()
-                    if state.lockdownMode {
-                        state.researchMode = false
-                        state.autonomousLoop = false
-                    }
+                    if state.lockdownMode { state.researchMode = false }
                 }
                 .help("Lockdown — disable all network tools")
 
@@ -1588,18 +1844,19 @@ struct MemoryPanel: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding()
             } else {
+                ScrollViewReader { proxy in
                 List {
                     if !searchText.isEmpty && !recallResults.isEmpty {
                         Section(header: Text("Semantic matches for \"\(searchText)\"")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundColor(.secondary)) {
                             ForEach(displayedMemories) { memory in
-                                MemoryRow(memory: memory)
+                                MemoryRow(memory: memory).id(memory.id)
                             }
                         }
                     } else {
                         ForEach(displayedMemories) { memory in
-                            MemoryRow(memory: memory)
+                            MemoryRow(memory: memory).id(memory.id)
                         }
                         .onDelete { offsets in
                             let ids = offsets.map { displayedMemories[$0].id }
@@ -1629,9 +1886,48 @@ struct MemoryPanel: View {
                         }
                     }
                 }
+                .onChange(of: state.memoryHighlightId) { _, new in
+                    guard let id = new else { return }
+                    Task { await focusMemory(id: id, proxy: proxy) }
+                }
+                .onAppear {
+                    // When the panel mounts with a highlight already set
+                    // (citation click), jump-load the window around the
+                    // target and scroll to it.
+                    if let id = state.memoryHighlightId {
+                        Task { await focusMemory(id: id, proxy: proxy) }
+                    }
+                }
+                }
             }
         }
-        .onAppear { state.loadMemories() }
+        .onAppear {
+            // Only load from offset 0 when we're NOT about to jump to
+            // a highlight — the focus path replaces `memories` with a
+            // window around the target id anyway.
+            if state.memoryHighlightId == nil {
+                state.loadMemories()
+            }
+        }
+    }
+
+    /// Fetch the memory's position, load a window around it, and
+    /// scroll the list to the highlighted row. Replaces the earlier
+    /// 50-row-at-a-time walk which couldn't reach citations deep in a
+    /// store of thousands of memories.
+    private func focusMemory(id: String, proxy: ScrollViewProxy) async {
+        let found = await state.loadMemoriesAround(id)
+        if !found {
+            // Fall back to a normal load so the panel isn't blank.
+            state.loadMemories()
+            return
+        }
+        try? await Task.sleep(nanoseconds: 80_000_000)
+        withAnimation(.easeInOut(duration: 0.35)) {
+            proxy.scrollTo(id, anchor: .center)
+        }
+        try? await Task.sleep(nanoseconds: 1_800_000_000)
+        if state.memoryHighlightId == id { state.memoryHighlightId = nil }
     }
 
     private func _triggerRecall() {
@@ -1661,6 +1957,8 @@ private struct MemoryRow: View {
     @EnvironmentObject var state: AppState
     let memory: Memory
 
+    private var isFlashed: Bool { state.memoryHighlightId == memory.id }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
@@ -1683,6 +1981,16 @@ private struct MemoryRow: View {
                 .textSelection(.enabled)
         }
         .padding(.vertical, 3)
+        .padding(.horizontal, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isFlashed ? Color.accentColor.opacity(0.12) : Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(isFlashed ? Color.accentColor : .clear, lineWidth: 1.5)
+        )
+        .animation(.easeInOut(duration: 0.3), value: isFlashed)
     }
 
     private var typeColor: Color {

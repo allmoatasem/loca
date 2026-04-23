@@ -4,6 +4,7 @@
  */
 import {
   activateAdapter as apiActivateAdapter,
+  activateConversationAdapter as apiActivateConvAdapter,
   activateProjectAdapter as apiActivateProjectAdapter,
   deleteConversation as apiDelete,
   fetchActiveModelDetail,
@@ -11,6 +12,7 @@ import {
   fetchConversations,
   fetchLocalModels,
   fetchProjects as apiFetchProjects,
+  fetchSystemStats,
   fetchVoiceConfig as apiFetchVoiceConfig,
   patchConversation as apiPatch,
   searchConversations as apiSearch,
@@ -49,6 +51,10 @@ function appStore() {
   let activeAdapter      = $state<string | null>(null);
   let adapters           = $state<Adapter[]>([]);
   let activateBusy       = $state<boolean>(false);
+  // Name of the model currently being loaded (or null). Shared between
+  // ManageModelsView's load button and ChatView's composer so the
+  // composer can show a "loading…" banner instead of eating keystrokes.
+  let loadingModel       = $state<string | null>(null);
   let conversations      = $state<ConversationMeta[]>([]);
   let searchResults      = $state<ConversationMeta[]>([]);
   let searchQuery        = $state<string>('');
@@ -74,6 +80,15 @@ function appStore() {
   let voiceError         = $state<string | null>(null);
   let voiceConfig        = $state<VoiceConfig | null>(null);
   let showVoiceSetup     = $state<boolean>(false);
+  // System RAM (GB) — sidebar footer reads these so the user has a
+  // glanceable parity with Activity Monitor's "Memory Used" figure.
+  let ramUsedGb          = $state<number | null>(null);
+  let ramTotalGb         = $state<number | null>(null);
+  // Memory id the panel should scroll to + flash the next time it
+  // opens. Set by a citation popover's "Open in Memory" button;
+  // cleared by MemoryView after the scroll lands so re-opening
+  // the panel doesn't re-trigger it.
+  let memoryHighlightId  = $state<string | null>(null);
 
   async function refresh(): Promise<void> {
     loading = true;
@@ -163,6 +178,16 @@ function appStore() {
     partnerMode = mode;
   }
 
+  async function refreshSystemStats(): Promise<void> {
+    try {
+      const s = await fetchSystemStats();
+      ramUsedGb = s.ram_used_gb;
+      ramTotalGb = s.ram_total_gb;
+    } catch {
+      // Transient — let the next poll retry.
+    }
+  }
+
   async function refreshVoiceConfig(): Promise<void> {
     try {
       voiceConfig = await apiFetchVoiceConfig();
@@ -216,6 +241,18 @@ function appStore() {
   function selectConversation(id: string): void {
     activeConvId = id;
     convSelectNonce++;
+    // Apply the conversation's per-conv adapter override (or fall
+    // through to its project's binding) so siblings can carry
+    // different adapters in the same session. Fire-and-forget; the
+    // server handles the "no model loaded" case.
+    void apiActivateConvAdapter(id)
+      .then(async () => {
+        const detail = await fetchActiveModelDetail();
+        if (detail) activeAdapter = detail.adapter;
+      })
+      .catch((e: unknown) => {
+        errorMsg = e instanceof Error ? e.message : String(e);
+      });
   }
 
   /**
@@ -270,6 +307,8 @@ function appStore() {
     get activeAdapter() { return activeAdapter; },
     get adapters() { return adapters; },
     get activateBusy() { return activateBusy; },
+    get loadingModel() { return loadingModel; },
+    set loadingModel(v) { loadingModel = v; },
     get conversations() { return conversations; },
     get searchQuery() { return searchQuery; },
     get searchResults() { return searchResults; },
@@ -302,6 +341,11 @@ function appStore() {
     refreshProjects,
     setActiveProject,
     setPartnerMode,
+    get ramUsedGb() { return ramUsedGb; },
+    get ramTotalGb() { return ramTotalGb; },
+    get memoryHighlightId() { return memoryHighlightId; },
+    set memoryHighlightId(v) { memoryHighlightId = v; },
+    refreshSystemStats,
     refreshVoiceConfig,
     voiceReady,
     setVoiceMode,

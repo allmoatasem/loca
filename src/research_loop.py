@@ -77,6 +77,27 @@ class LoopSource:
         body = self.snippet.strip()
         return f"{head}\n{body}"
 
+    def to_retrieved_dict(self) -> dict:
+        """Shape this source like a RetrievedMemory entry so the proxy's
+        structured-citations builder can consume it uniformly with the
+        normal-turn retrieval pool. `kind` is the crucial discriminator
+        the client uses to pick the right UX (open memory vs. open URL
+        vs. show vault path)."""
+        kind = {
+            "memory": "memory",
+            "web":    "web",
+            "vault":  "vault",
+        }.get(self.origin, self.origin)
+        return {
+            "index": self.idx,
+            "id": f"loop:{self.origin}:{self.idx}",
+            "kind": kind,
+            "title": self.title,
+            "snippet": self.snippet,
+            "content": self.snippet,
+            "url": self.url,
+        }
+
 
 @dataclass
 class LoopPlan:
@@ -274,6 +295,127 @@ async def _run_researcher(
 
 
 # ---------------------------------------------------------------------
+# Reviewer — drop low-signal sources before the Writer sees them
+# ---------------------------------------------------------------------
+
+_REVIEWER_PROMPT = """\
+You are a research reviewer. Below are {n} numbered sources gathered \
+for a user question. Identify the ones that are clearly off-topic, \
+irrelevant, or duplicative — those should be dropped before writing \
+the answer.
+
+Reply with ONLY a JSON array of source numbers (1-indexed) to drop. \
+If every source is useful, reply `[]`. Do not include any prose.
+
+Question: {q}
+
+Sources:
+{pool}"""
+
+# Minimum number of sources to keep regardless of the Reviewer's
+# verdict. Without this floor a noisy reviewer can starve the Writer
+# and cause "no sources" answers when there were actually useful ones
+# below the model's confidence threshold.
+_MIN_SOURCES_AFTER_REVIEW = 2
+
+# Reviewer is a short JSON-emitting call — same cap as the Researcher's
+# planner so we don't budget an entire generation worth of tokens.
+_REVIEWER_TEMPERATURE = 0.1
+_REVIEWER_MAX_TOKENS  = 200
+
+
+async def _run_reviewer(
+    chat_fn: ChatFn,
+    user_query: str,
+    sources: list[LoopSource],
+) -> tuple[list[LoopSource], list[int]]:
+    """Score the source pool and drop the ones the model flags as
+    irrelevant. Returns (kept_sources, dropped_indices).
+
+    Best-effort: any parsing failure leaves the pool untouched so a
+    misbehaving model can't silently delete the Writer's evidence.
+    Indices are 1-based, matching the `[memory: N]` convention the
+    Writer prompt uses elsewhere."""
+    if len(sources) <= _MIN_SOURCES_AFTER_REVIEW:
+        return sources, []
+
+    pool = "\n\n".join(s.format_for_prompt() for s in sources)
+    prompt = _REVIEWER_PROMPT.format(n=len(sources), q=user_query, pool=pool)
+    try:
+        resp = await chat_fn(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=_REVIEWER_TEMPERATURE,
+            max_tokens=_REVIEWER_MAX_TOKENS,
+        )
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("reviewer call failed: %s", exc)
+        return sources, []
+
+    text = (resp.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
+    drop = _parse_drop_indices(text, max_idx=len(sources))
+    if not drop:
+        return sources, []
+
+    # Honour the floor — never let the Reviewer drop the pool below the
+    # minimum, even if it flags every source. Walk drop in descending
+    # confidence order (the model's reply order) so the last-resort
+    # survivors are the highest-ranked originals.
+    keep_min = max(_MIN_SOURCES_AFTER_REVIEW, len(sources) - len(drop))
+    drop_set = set(drop)
+    kept: list[LoopSource] = []
+    for s in sources:
+        if s.idx in drop_set and len(sources) - len(drop_set) < keep_min:
+            # Putting this back into the keep set restores the floor.
+            drop_set.discard(s.idx)
+        if s.idx not in drop_set:
+            kept.append(s)
+    # Reindex the kept sources so `[memory: N]` stays contiguous —
+    # otherwise the Writer can cite an integer that no longer exists.
+    actually_dropped: list[int] = []
+    for new_idx, s in enumerate(kept, start=1):
+        if s.idx != new_idx:
+            actually_dropped.extend(
+                i for i in drop if i not in actually_dropped
+            )
+            s.idx = new_idx
+    return kept, sorted(set(drop) - {s.idx for s in kept})
+
+
+def _parse_drop_indices(text: str, *, max_idx: int) -> list[int]:
+    """Parse the Reviewer's JSON array. Tolerates leading prose, code
+    fences, and stray whitespace. Returns 1-based indices clamped to
+    the valid range."""
+    candidates: list[int] = []
+    # Strip code fences first.
+    cleaned = re.sub(r"```[a-zA-Z]*\s*|```", "", text).strip()
+    # Find the first JSON array in the response.
+    m = re.search(r"\[[^\]]*\]", cleaned)
+    if not m:
+        return []
+    try:
+        parsed = json.loads(m.group(0))
+    except (ValueError, json.JSONDecodeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    for x in parsed:
+        try:
+            n = int(x)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= n <= max_idx:
+            candidates.append(n)
+    # Dedupe while preserving order.
+    seen: set[int] = set()
+    out: list[int] = []
+    for n in candidates:
+        if n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out
+
+
+# ---------------------------------------------------------------------
 # Writer — synthesise with [memory: N] citations
 # ---------------------------------------------------------------------
 
@@ -331,6 +473,7 @@ async def run_research_loop(
     conv_id: str,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    on_sources: Callable[[list[LoopSource]], None] | None = None,
 ) -> AsyncIterator[str]:
     """The async generator the orchestrator delegates to on
     `autonomous_loop=True`. Yields one `<think>...</think>` progress
@@ -362,6 +505,37 @@ async def run_research_loop(
         yield f"<think>\nResearch loop failed during planning: {exc}\n</think>\n"
         yield f"I couldn't gather sources for this question — {exc}."
         return
+
+    # Reviewer — drop low-signal sources before Writer wastes context
+    # on them. Cheap call, runs after Researcher so the Writer sees a
+    # tighter pool. Failures fall through silently (returns the
+    # original sources untouched).
+    try:
+        plan.phase = "reviewer"
+        _write_plan(plan)
+        sources, dropped = await _run_reviewer(chat_fn, user_query, sources)
+        if dropped:
+            progress_lines.append(
+                f"Reviewer: dropped {len(dropped)} low-signal source"
+                f"{'s' if len(dropped) != 1 else ''}"
+            )
+        else:
+            progress_lines.append("Reviewer: kept all sources")
+        plan.source_count_memory = sum(1 for s in sources if s.origin == "memory")
+        plan.source_count_web    = sum(1 for s in sources if s.origin == "web")
+        _write_plan(plan)
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("reviewer step failed, continuing with full pool: %s", exc)
+        progress_lines.append(f"Reviewer: skipped ({exc})")
+
+    # Hand the finalised source pool to the caller so the proxy can
+    # stream structured citations to the client. Fire-and-forget — a
+    # raising callback must not break the loop.
+    if on_sources is not None:
+        try:
+            on_sources(sources)
+        except Exception:
+            pass
 
     # Emit the think block first so the UI renders "research trail" up
     # top and the answer below. A single yield keeps the markdown parser

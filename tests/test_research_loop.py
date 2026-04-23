@@ -21,7 +21,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.research_loop import (  # noqa: E402
     LoopSource,
+    _parse_drop_indices,
     _parse_sub_queries,
+    _run_reviewer,
     run_research_loop,
 )
 from src.tools.web_search import SearchResult  # noqa: E402
@@ -89,6 +91,64 @@ def test_parse_sub_queries_returns_fallback_when_unusable():
 
 
 # ---------------------------------------------------------------------
+# Reviewer
+# ---------------------------------------------------------------------
+
+def test_parse_drop_indices_accepts_clean_json():
+    assert _parse_drop_indices("[1, 3, 5]", max_idx=10) == [1, 3, 5]
+
+
+def test_parse_drop_indices_strips_prose_and_fences():
+    text = "Sure! Here is the list:\n```json\n[2, 4]\n```"
+    assert _parse_drop_indices(text, max_idx=10) == [2, 4]
+
+
+def test_parse_drop_indices_clamps_out_of_range():
+    assert _parse_drop_indices("[0, 1, 99, -3]", max_idx=5) == [1]
+
+
+def test_parse_drop_indices_returns_empty_on_garbage():
+    assert _parse_drop_indices("the model rambled", max_idx=10) == []
+
+
+@pytest.mark.asyncio
+async def test_reviewer_drops_flagged_sources():
+    sources = [LoopSource(idx=i, origin="web", title=f"t{i}", snippet="s") for i in range(1, 6)]
+    chat_fn = _make_chat_fn(["[2, 4]"])
+    kept, _dropped = await _run_reviewer(chat_fn, "any q", sources)
+    titles = [s.title for s in kept]
+    # Sources at original index 2 + 4 are gone, others survive.
+    assert "t2" not in titles and "t4" not in titles
+    assert {"t1", "t3", "t5"}.issubset(set(titles))
+    # Reindex is contiguous starting at 1 so [memory: N] stays valid.
+    assert [s.idx for s in kept] == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_reviewer_skips_when_pool_too_small():
+    # Only 2 sources — at the floor, so reviewer must short-circuit
+    # without making a chat call.
+    sources = [LoopSource(idx=1, origin="memory", title="a", snippet="b"),
+               LoopSource(idx=2, origin="web",    title="c", snippet="d")]
+
+    async def panic_chat(**kwargs):
+        raise AssertionError("chat_fn should not have been called")
+
+    kept, dropped = await _run_reviewer(panic_chat, "q", sources)
+    assert kept == sources
+    assert dropped == []
+
+
+@pytest.mark.asyncio
+async def test_reviewer_honours_floor_even_when_model_drops_everything():
+    sources = [LoopSource(idx=i, origin="web", title=f"t{i}", snippet="s") for i in range(1, 5)]
+    # Model wants to drop every source — floor must protect at least 2.
+    chat_fn = _make_chat_fn(["[1, 2, 3, 4]"])
+    kept, _ = await _run_reviewer(chat_fn, "q", sources)
+    assert len(kept) >= 2
+
+
+# ---------------------------------------------------------------------
 # End-to-end loop
 # ---------------------------------------------------------------------
 
@@ -99,11 +159,13 @@ async def test_happy_path_gathers_sources_and_writes_answer(tmp_path, monkeypatc
     monkeypatch.setenv("LOCA_DATA_DIR", str(tmp_path))
 
     researcher_plan = json.dumps(["umayyad conquest", "abd al-rahman cordoba"])
+    # Reviewer keeps everything — the pool is small and on-topic.
+    reviewer_verdict = "[]"
     writer_answer = (
         "The Muslim conquest of Iberia began in 711 CE [memory: 2]. "
         "Abd al-Rahman I later founded Cordoba as an emirate [memory: 3]."
     )
-    chat_fn = _make_chat_fn([researcher_plan, writer_answer])
+    chat_fn = _make_chat_fn([researcher_plan, reviewer_verdict, writer_answer])
 
     search_fn = _make_search_fn([
         SearchResult(

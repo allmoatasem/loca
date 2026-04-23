@@ -72,7 +72,6 @@ class Orchestrator:
         model_override: str | None = None,
         num_ctx: int | None = None,
         research_mode: bool = False,
-        autonomous_loop: bool = False,
         conv_id: str | None = None,
         partner_mode: str | None = None,
         project_id: str | None = None,
@@ -92,17 +91,21 @@ class Orchestrator:
             + (f" | override={model_override}" if model_override else "")
             + (f" | partner={partner_mode}" if partner_mode else "")
             + (f" | project={project_id}" if project_id else "")
-            + (" | autonomous_loop" if autonomous_loop else "")
+            + (" | deep_dive" if research_mode else "")
         )
 
         model_name, api_base = await self.mm.ensure_loaded(result.model, model_name_override=model_override)
 
-        # Autonomous research loop takes over the whole turn: Researcher
-        # plans + runs searches, Writer synthesises with citations,
-        # Verifier catches phantoms. We need the model loaded (above) but
-        # we skip routing/tool-loop/single-call paths — those happen
-        # inside the loop's Writer step via its own chat + search fns.
-        if autonomous_loop:
+        # Deep Dive = autonomous multi-role loop + Playwright web fetch.
+        # Agent and Deep Dive used to be separate toggles; consolidated
+        # into this single flag in omnibus #92 — they were effectively
+        # augmenting each other. When `research_mode` is True we:
+        #   (a) hand the whole turn to the loop (Researcher → Reviewer →
+        #       Writer → Verifier), and
+        #   (b) the loop's `web_search` calls go through Playwright so
+        #       each source hit has full-page content, not snippets.
+        # When False: standard single model call + snippet-only search.
+        if research_mode:
             return self._stream_autonomous_loop(
                 messages=messages,
                 user_message=user_message,
@@ -134,7 +137,8 @@ class Orchestrator:
         expanded_queries: list[str] = []
         retrieved_for_provenance: list[RetrievedMemory] = []
         skipped_meta_query = _is_meta_query(user_message)
-        if self._memory and not skipped_meta_query:
+        trivial_query = _is_trivial_query(user_message)
+        if self._memory and not skipped_meta_query and not trivial_query:
             recall_query = _build_recall_query(messages)
             expanded_queries = _expand_query(recall_query)
             per_query_limit = 25 if len(expanded_queries) == 1 else 15
@@ -147,7 +151,10 @@ class Orchestrator:
             # sources over generic vault matches.
             if project_id:
                 project_boost = _project_items_as_memories(project_id)
-                pool = project_boost + pool
+                obsidian_boost = _obsidian_source_as_memories(
+                    project_id, recall_query, limit=10,
+                )
+                pool = project_boost + obsidian_boost + pool
             relevant = _rerank_memories(recall_query, pool, keep=10)
             mem_ctx = self._memory.format_for_prompt(relevant)
             # Snapshot the retrieved set for the provenance sidecar.
@@ -168,6 +175,13 @@ class Orchestrator:
         elif skipped_meta_query:
             logger.info("Skipping memory recall: meta-query detected in user message")
             mem_ctx = ""
+        elif trivial_query:
+            # Trivial greetings — keep background user-fact scaffolding
+            # but skip the noisy 10-row retrieval pool. Model still
+            # knows who the user is; bubble stays free of bogus
+            # "sources used" footers.
+            logger.debug("Skipping memory recall: trivial greeting/ack")
+            mem_ctx = get_memories_context()
         else:
             mem_ctx = get_memories_context()
         if mem_ctx:
@@ -246,7 +260,7 @@ class Orchestrator:
             system_prompt = _build_system_prompt(result.model, model_name, self._hw)
 
         # Memory injection — still on, this is the differentiator vs Ollama/LM-Studio.
-        if self._memory and not _is_meta_query(user_message):
+        if self._memory and not _is_meta_query(user_message) and not _is_trivial_query(user_message):
             recall_query = _build_recall_query(messages)
             queries = _expand_query(recall_query)
             per_query_limit = 25 if len(queries) == 1 else 15
@@ -534,7 +548,10 @@ class Orchestrator:
                 pool = await self._memory.recall(user_message, limit=20)
                 if project_id:
                     project_boost = _project_items_as_memories(project_id)
-                    pool = project_boost + pool
+                    obsidian_boost = _obsidian_source_as_memories(
+                        project_id, user_message, limit=10,
+                    )
+                    pool = project_boost + obsidian_boost + pool
                 for i, m in enumerate(pool[:10], start=1):
                     memory_sources.append(LoopSource(
                         idx=i, origin="memory",
@@ -558,12 +575,15 @@ class Orchestrator:
             )
 
         async def _search_fn(*, query: str, max_results: int = 5) -> list[SearchResult]:
+            # research_mode=True: Playwright fetches the full page for
+            # every hit instead of trafilatura snippets. Deep Dive = loop
+            # + full-page content, consolidated into one flag in #92.
             return await web_search(
                 query=query,
                 searxng_url=self._search_cfg.get("searxng_url", ""),
                 max_results=max_results,
                 max_tokens_per_result=self._search_cfg.get("max_tokens_per_result", 500),
-                research_mode=False,
+                research_mode=True,
             )
 
         # Metadata dict first — the proxy reads `__model__` etc. and the
@@ -579,9 +599,19 @@ class Orchestrator:
             },
         }
 
+        # `on_sources` is called once after Researcher + Reviewer so we
+        # can ship the finalised source pool to the client as structured
+        # citations. Captured here via a mutable list; emitted as an
+        # `__citations__` metadata dict the proxy folds into its
+        # provenance_seed before building the final SSE usage payload.
+        captured_sources: list[LoopSource] = []
+        def _capture(srcs: list[LoopSource]) -> None:
+            captured_sources.extend(srcs)
+
         # Stream through the loop. Each yield is a string; we chunk-
         # forward it so the SSE renders in consistent 50-char pieces.
         chunk_size = 50
+        sent_citations = False
         async for piece in run_research_loop(
             chat_fn=_chat_fn,
             search_fn=_search_fn,
@@ -591,9 +621,18 @@ class Orchestrator:
             conv_id=conv_id,
             temperature=temperature,
             max_tokens=max_tokens,
+            on_sources=_capture,
         ):
+            if not sent_citations and captured_sources:
+                yield {"__citations__": [s.to_retrieved_dict() for s in captured_sources]}
+                sent_citations = True
             for i in range(0, len(piece), chunk_size):
                 yield piece[i: i + chunk_size]
+        # Safety net: if the loop ended before producing sources (error
+        # path), still emit an empty citations dict so the proxy doesn't
+        # carry stale state from a previous turn.
+        if not sent_citations:
+            yield {"__citations__": []}
 
     async def _chat(
         self,
@@ -1078,6 +1117,32 @@ def _is_meta_query(query: str) -> bool:
     return any(marker in query.lower() for marker in _META_QUERY_MARKERS)
 
 
+# Words that appear in greetings, acknowledgements, and short closers
+# — queries made entirely of these (and ≤3 tokens long) skip the
+# retrieval pool entirely so "Hello there" doesn't end up with a
+# "10 sources used" footer on a bubble that had no business citing
+# anything. Background memory context (user facts) still injects.
+_TRIVIAL_TOKENS = frozenset({
+    "hi", "hello", "hey", "yo", "howdy", "greetings", "sup",
+    "thanks", "thank", "you", "ty", "thx", "cheers", "appreciated",
+    "ok", "okay", "cool", "nice", "great", "awesome", "perfect",
+    "yes", "yep", "yeah", "yup", "sure", "no", "nope", "nah",
+    "bye", "goodbye", "later", "cya",
+    "there", "morning", "afternoon", "evening",
+})
+
+
+def _is_trivial_query(query: str) -> bool:
+    """True for short greetings / acknowledgements that don't warrant
+    running semantic recall against the memory store. Distinct from
+    meta-queries: we still inject background `get_memories_context()`
+    so the model keeps its user-fact scaffolding."""
+    tokens = re.findall(r"[a-z']+", query.lower())
+    if not tokens or len(tokens) > 3:
+        return False
+    return set(tokens).issubset(_TRIVIAL_TOKENS)
+
+
 def _project_items_as_memories(project_id: str) -> list[dict]:
     """Project-scoped bookmarks, shaped like recall hits so they can flow
     through `_merge_recall_results` + `_rerank_memories` unchanged."""
@@ -1106,6 +1171,49 @@ def _project_items_as_memories(project_id: str) -> list[dict]:
             "content": content,
             "score": 1.0,
             "type": "project_item",
+        })
+    return out
+
+
+def _obsidian_source_as_memories(
+    project_id: str, recall_query: str, limit: int = 10,
+) -> list[dict]:
+    """If the project opts into `obsidian_source`, run a semantic query
+    over every watched vault and reshape the top notes as recall hits.
+
+    This is how "attach the Obsidian vault without re-ingesting" works:
+    the shared `vault_notes` index populated by the background watcher
+    is queried live per turn. No per-project bookmarking, no duplicate
+    storage — just in-flight retrieval.
+    """
+    if not recall_query.strip():
+        return []
+    try:
+        from .store import get_project  # noqa: PLC0415
+        project = get_project(project_id)
+    except Exception:  # pragma: no cover
+        return []
+    if not project or not project.get("obsidian_source"):
+        return []
+    try:
+        from .obsidian_watcher import search_watched_vaults  # noqa: PLC0415
+        hits = search_watched_vaults(recall_query, limit=limit)
+    except Exception:  # pragma: no cover
+        return []
+    out: list[dict] = []
+    for h in hits:
+        title = (h.get("title") or "").strip()
+        rel = (h.get("rel_path") or "").strip()
+        snippet = (h.get("snippet") or "").strip()
+        parts = [p for p in (title, snippet) if p]
+        content = " — ".join(parts)
+        if not content:
+            continue
+        out.append({
+            "id": f"obsidian:{h.get('vault_path', '')}:{rel}",
+            "content": content,
+            "score": float(h.get("score") or 0.0),
+            "type": "obsidian_note",
         })
     return out
 

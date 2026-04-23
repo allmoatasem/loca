@@ -65,6 +65,15 @@ final class AppState: ObservableObject {
     @Published var memoriesTotal: Int = 0
     @Published var isLoadingMoreMemories: Bool = false
     @Published var isMemoryPanelOpen          = false
+    /// Per-turn structured citations keyed on the assistant message's
+    /// UUID. Populated from `UsageStats.citations` when the final SSE
+    /// chunk arrives; queried by MessageBubble to render a popover
+    /// with the actual cited content on `[memory: N]` clicks.
+    @Published var citationsByMessageId: [UUID: [Citation]] = [:]
+    /// Memory row the panel should scroll to + flash the next time it
+    /// opens. Set by a citation click; cleared by MemoryView after
+    /// the scroll lands so re-opening the panel doesn't re-trigger it.
+    @Published var memoryHighlightId: String? = nil
     @Published var isAcknowledgementsOpen     = false
     @Published var isGlossaryOpen             = false
     @Published var isPhilosophyOpen           = false
@@ -73,12 +82,11 @@ final class AppState: ObservableObject {
 
     // MARK: - Research mode
 
+    // Deep Dive = autonomous multi-role loop + Playwright full-page
+    // content (consolidated from the old separate Research/Agent
+    // toggles in omnibus #92).
     @Published var researchMode = false
     @Published var lockdownMode = false
-    /// Autonomous research loop — swap a direct model call for a
-    /// Researcher/Writer/Verifier pipeline server-side. Independent of
-    /// `researchMode` which is just a web-search transport flag.
-    @Published var autonomousLoop = false
 
     // MARK: - Research Partner (projects)
 
@@ -268,6 +276,13 @@ final class AppState: ObservableObject {
     @Published var isVaultSearching     = false
     @Published var vaultSearchError: String?
 
+    // Obsidian Watcher — app-level background vault index. Mirror of
+    // the `/api/obsidian/*` state. The watcher loop keeps these in
+    // sync on its own tick; the UI polls periodically.
+    @Published var watchedVaults: [WatchedVault] = []
+    @Published var isRegisteringVault   = false
+    @Published var watcherError: String?
+
     // MARK: - Voice mode
 
     @Published var isVoiceMode       = false
@@ -318,6 +333,8 @@ final class AppState: ObservableObject {
     func send(_ text: String, attachments: [UploadResult] = []) { Task { await _send(text, attachments: attachments) } }
     func loadMemories()         { Task { await _loadMemories() } }
     func loadMoreMemories() async { await _loadMoreMemories() }
+    @discardableResult
+    func loadMemoriesAround(_ id: String) async -> Bool { await _loadMemoriesAround(id) }
     func extractMemories()      { Task { await _extractMemories() } }
     func pollSystemStats()      { Task { await _pollSystemStats() } }
     func reloadConversations()  { Task { await _loadConversationList() } }
@@ -346,6 +363,10 @@ final class AppState: ObservableObject {
     func analyseVault()   { Task { await _analyseVault() } }
     func selectVaultPath(_ path: String) { selectedVaultPath = path; analyseVault() }
     func vaultSearch(_ query: String) { Task { await _vaultSearch(query) } }
+    func refreshWatchedVaults() { Task { await _refreshWatchedVaults() } }
+    func registerWatchedVault(path: String) { Task { await _registerWatchedVault(path) } }
+    func unregisterWatchedVault(path: String) { Task { await _unregisterWatchedVault(path) } }
+    func scanWatchedVaultNow(path: String) { Task { await _scanWatchedVaultNow(path) } }
     func fetchVoiceConfig() { Task { do { voiceConfig = try await BackendClient.shared.fetchVoiceConfig() } catch {} } }
     func checkServerStatus()   { Task { await _checkServerStatus() } }
     func startExternalServer() { Task { await _startExternalServer() } }

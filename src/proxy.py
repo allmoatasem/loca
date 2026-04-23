@@ -78,6 +78,57 @@ def _basename(model_id: str) -> str:
     return os.path.basename(model_id.rstrip("/")) if "/" in model_id else model_id
 
 
+def _build_citations(retrieved: list[dict]) -> list[dict]:
+    """Convert the orchestrator's per-turn retrieval pool into the
+    structured citations array the client renders in its popover.
+
+    Each entry covers one cited source; `kind` is the discriminator
+    the UI uses to pick the right affordance (memory row / URL / just
+    the snippet). The builder is defensive about missing fields: real
+    memories from MemPalace carry only `{index, id, score, content}`
+    — we derive `title` and `snippet` from `content` when they're
+    absent so the popover always has *something* to display, and the
+    user never sees a bare "MISSING" placeholder for a turn that
+    actually had retrieval.
+    """
+    out: list[dict] = []
+    for m in retrieved:
+        raw_id = str(m.get("id") or "")
+        if not raw_id:
+            continue
+        content = str(m.get("content") or "")
+        title = (str(m.get("title") or "").strip()) or content[:60].strip()
+        snippet = (str(m.get("snippet") or content))[:600]
+        url = m.get("url") or ""
+        kind = m.get("kind")
+        mem_id: str | None = None
+        if not kind:
+            # Infer from the id shape produced by orchestrator helpers.
+            if raw_id.startswith("project_item:"):
+                kind = "project_item"
+            elif raw_id.startswith("obsidian:"):
+                kind = "obsidian"
+            elif url:
+                kind = "web"
+            else:
+                kind = "memory"
+                mem_id = raw_id
+        elif kind == "memory" and not raw_id.startswith("loop:"):
+            # Loop-synthesised ids (`loop:memory:1`) aren't real memory
+            # rows, so we can't deep-link. Only bind `memory_id` when
+            # we're pointing at a true storage id.
+            mem_id = raw_id
+        out.append({
+            "idx": int(m.get("index") or (len(out) + 1)),
+            "kind": kind,
+            "title": title,
+            "snippet": snippet,
+            "url": url or None,
+            "memory_id": mem_id,
+        })
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Config loading
 # ---------------------------------------------------------------------------
@@ -133,9 +184,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # watch timeout, and the single-shot agent design.
     from .watches_runner import watches_loop  # noqa: PLC0415
     watches_task = asyncio.create_task(watches_loop())
+    # Obsidian Watcher — app-level background vault sync. Replaces the
+    # per-project Sync Vault flow; see `src/obsidian_watcher.py`.
+    from .obsidian_watcher import watcher_loop as _obsidian_loop  # noqa: PLC0415
+    obsidian_task = asyncio.create_task(_obsidian_loop())
     yield
     # Shutdown
     watches_task.cancel()
+    obsidian_task.cancel()
     if _plugin_manager:
         await _plugin_manager.stop()
     if _inference_backend:
@@ -220,12 +276,12 @@ async def openai_chat(request: Request) -> Response:
     mode_hint: str | None = body.get("mode") or body.get("model")
     model_override: str | None = body.get("model_override")
     num_ctx: int | None = body.get("num_ctx")
+    # Deep Dive = autonomous loop (Researcher → Writer → Verifier) +
+    # Playwright full-page fetch for every sub-agent web search.
+    # Consolidated in omnibus #92; the previous split between this flag
+    # and `autonomous_loop` confused users without adding any value
+    # (they always wanted both together).
     research_mode: bool = body.get("research_mode", False)
-    # Autonomous multi-role loop. When true, the orchestrator hands the
-    # turn off to the research_loop module (Researcher → Writer → Verifier)
-    # instead of a single model call. Independent of `research_mode`
-    # which is just a web_search transport flag.
-    autonomous_loop: bool = body.get("autonomous_loop", False)
     # Conversation id — the loop uses it to name its plan checkpoint so
     # an interrupted session leaves a readable trail on disk.
     conv_id: str | None = body.get("conv_id")
@@ -289,7 +345,7 @@ async def openai_chat(request: Request) -> Response:
                 chat_template_kwargs=chat_template_kwargs,
                 extra_body=extra_body,
                 partner_mode=partner_mode, project_id=project_id,
-                autonomous_loop=autonomous_loop, conv_id=conv_id,
+                conv_id=conv_id,
             ),
             media_type="text/event-stream",
         )
@@ -298,7 +354,7 @@ async def openai_chat(request: Request) -> Response:
         messages, has_image=has_image, stream=False,
         model_hint=mode_hint, model_override=model_override,
         num_ctx=num_ctx, research_mode=research_mode,
-        autonomous_loop=autonomous_loop, conv_id=conv_id,
+        conv_id=conv_id,
         partner_mode=partner_mode, project_id=project_id,
         temperature=temperature, top_p=top_p, top_k=top_k,
         repeat_penalty=repeat_penalty, max_tokens=max_tokens,
@@ -351,7 +407,6 @@ async def _openai_stream_response(
     extra_body: dict | None = None,
     partner_mode: str | None = None,
     project_id: str | None = None,
-    autonomous_loop: bool = False,
     conv_id: str | None = None,
 ) -> AsyncIterator[bytes]:
     output_chars = 0
@@ -365,7 +420,7 @@ async def _openai_stream_response(
             messages, has_image=has_image, stream=True,
             model_hint=model_hint, model_override=model_override,
             num_ctx=num_ctx, research_mode=research_mode,
-            autonomous_loop=autonomous_loop, conv_id=conv_id,
+            conv_id=conv_id,
             partner_mode=partner_mode, project_id=project_id,
             temperature=temperature, top_p=top_p, top_k=top_k,
             repeat_penalty=repeat_penalty, max_tokens=max_tokens,
@@ -381,6 +436,14 @@ async def _openai_stream_response(
                     search_triggered = bool(chunk.get("__search__", False))
                     memory_injected = bool(chunk.get("__memory__", False))
                     provenance_seed = dict(chunk.get("__provenance__", {}))
+                elif "__citations__" in chunk:
+                    # Deep-Dive turns stream their finalised source pool
+                    # mid-turn (Researcher + Reviewer finished). Merge it
+                    # into provenance so the usage payload carries full
+                    # citations regardless of normal-turn vs. loop.
+                    provenance_seed["retrieved"] = chunk["__citations__"]
+                    if chunk["__citations__"]:
+                        memory_injected = True
                 continue
             output_chars += len(chunk)
             reply_chunks.append(chunk)
@@ -404,6 +467,16 @@ async def _openai_stream_response(
     # Emit usage summary before DONE so the UI can show token stats + actual model name
     completion_tokens = max(1, output_chars // 4)
     prompt_tokens = sum(len(m.get("content", "") if isinstance(m.get("content"), str) else "") for m in messages) // 4
+    citations_out = _build_citations(provenance_seed.get("retrieved", []) or [])
+    # Diagnostic — makes "popover always says MISSING" debuggable from
+    # the server log without having to inspect the SSE stream.
+    logger.info(
+        "stream: emitting %d citation(s) "
+        "(memory_injected=%s, retrieved_count=%d)",
+        len(citations_out),
+        memory_injected,
+        len(provenance_seed.get("retrieved", []) or []),
+    )
     usage_payload = json.dumps({
         "id": "chatcmpl-local",
         "object": "chat.completion.chunk",
@@ -415,6 +488,7 @@ async def _openai_stream_response(
             "total_tokens": prompt_tokens + completion_tokens,
             "search_triggered": search_triggered,
             "memory_injected": memory_injected,
+            "citations": citations_out,
         },
     })
     # Verifier pass: parse [memory: N] from the completed answer, flag any
@@ -783,12 +857,18 @@ async def start_download(request: Request) -> JSONResponse:
     _download_jobs[download_id] = queue
     _download_meta[download_id] = {"repo_id": repo_id, "filename": filename, "format": fmt}
 
+    # Prime the SSE stream with an immediate indeterminate event so the
+    # client's progress bar appears within ~one render frame instead of
+    # waiting 1–3 s for HF API resolution + first chunk. Without this
+    # the user clicks Get and stares at nothing, then assumes it hung.
+    from .model_manager import DownloadProgress as _DP  # noqa: PLC0415
+    await queue.put(_DP(percent=-1))
+
     async def _run_download() -> None:
         try:
             async for progress in _model_manager.download(repo_id, filename, fmt):
                 await queue.put(progress)
         except asyncio.CancelledError:
-            from .model_manager import DownloadProgress as _DP
             await queue.put(_DP(0, error="cancelled"))
         finally:
             _download_tasks.pop(download_id, None)
@@ -1143,6 +1223,12 @@ async def api_patch_conversation(conv_id: str, request: Request) -> JSONResponse
         kwargs["starred"] = bool(body["starred"])
     if "folder" in body:
         kwargs["folder"] = body.get("folder")  # None clears folder
+    # `adapter` (nullable) pins this conversation to a specific LoRA
+    # adapter — overrides the project's binding so siblings can use
+    # different adapters in the same session. Sending `null` clears
+    # the override; omit the key to leave it alone.
+    if "adapter" in body:
+        kwargs["adapter_name"] = body.get("adapter")
     patch_conversation(conv_id, **kwargs)
     return JSONResponse({"ok": True})
 
@@ -1199,8 +1285,43 @@ async def api_patch_project(project_id: str, request: Request) -> JSONResponse:
     # key to leave it alone.
     if "adapter" in body:
         kwargs["adapter_name"] = body["adapter"]
+    # `obsidian_source` opts the project into live retrieval over every
+    # watched Obsidian vault — no per-project ingestion, the orchestrator
+    # queries `vault_notes` directly each turn.
+    if "obsidian_source" in body:
+        kwargs["obsidian_source"] = bool(body["obsidian_source"])
     patch_project(project_id, **kwargs)
     return JSONResponse({"ok": True, "project": get_project(project_id)})
+
+
+@app.post("/api/conversations/{conv_id}/activate-adapter")
+async def api_conv_activate_adapter(conv_id: str) -> JSONResponse:
+    """Activate the conversation's adapter (or its project's adapter,
+    or base) on the currently loaded model. Layered fallback so the
+    per-conv override always wins, with the project's binding as a
+    sensible default when no override is set."""
+    assert _model_manager is not None
+    conv = get_conversation(conv_id)
+    if not conv:
+        return JSONResponse({"error": "conversation not found"}, status_code=404)
+    adapter = conv.get("adapter_name")
+    if adapter is None:
+        # Fall back to the project's binding if any.
+        pid = conv.get("project_id")
+        if pid:
+            proj = get_project(pid)
+            if proj:
+                adapter = proj.get("adapter_name")
+    active_model = _inference_backend.current_model() if _inference_backend else None
+    if not active_model:
+        return JSONResponse({"ok": True, "model": None, "adapter": None})
+    try:
+        name, api_base = await _model_manager.load(active_model, adapter=adapter)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse({
+        "ok": True, "model": name, "adapter": adapter, "api_base": api_base,
+    })
 
 
 @app.post("/api/projects/{project_id}/activate-adapter")
@@ -1417,19 +1538,83 @@ async def api_project_related(project_id: str, limit: int = 10) -> JSONResponse:
                 "score": float(raw_score),
                 "memory_id": h.get("id"),
             })
-    results.sort(key=lambda r: r.get("score", 0.0), reverse=True)
-    # Strip duplicates by title before capping.
-    seen: set[str] = set()
-    deduped: list[dict] = []
+    # Polish pass (omnibus #92):
+    #   1. Strip Obsidian wiki-link syntax — `[[target|display]]` →
+    #      `display`, `[[target]]` → `target`. Raw brackets looked
+    #      like markup in the UI.
+    #   2. Drop rows whose snippet is just YAML frontmatter (leading
+    #      `---\ntags: ...\n---`) — those are metadata lines that
+    #      happened to score above the threshold, not actual content.
+    #   3. Truncate long titles at a word boundary with `…`, not mid-
+    #      word, so "What notati…" becomes "What…".
+    #   4. Dedup across memory+vault by *normalised* title, preferring
+    #      the higher-scoring origin. Before this change a note that
+    #      existed as both an ingested memory chunk and a vault chunk
+    #      appeared twice on the Related Notes card.
     for r in results:
-        key = (r.get("title") or "") + "|" + (r.get("snippet", "")[:80])
-        if key in seen:
+        r["title"] = _truncate_words(_strip_wikilinks(r.get("title") or ""), 72)
+        r["snippet"] = _strip_wikilinks(r.get("snippet", ""))
+    results = [r for r in results if not _is_frontmatter_only(r.get("snippet", ""))]
+    results.sort(key=lambda r: r.get("score", 0.0), reverse=True)
+    dedup: dict[str, dict] = {}
+    for r in results:
+        key = _norm_title(r.get("title") or "")
+        if not key:
             continue
-        seen.add(key)
-        deduped.append(r)
-        if len(deduped) >= limit:
-            break
-    return JSONResponse({"items": deduped})
+        existing = dedup.get(key)
+        if existing is None or r.get("score", 0.0) > existing.get("score", 0.0):
+            dedup[key] = r
+    ranked = sorted(dedup.values(), key=lambda r: r.get("score", 0.0), reverse=True)
+    return JSONResponse({"items": ranked[:limit]})
+
+
+# ---- Related-Notes polish helpers ----
+
+def _strip_wikilinks(text: str) -> str:
+    """Collapse Obsidian `[[target|display]]` to `display` and
+    `[[target]]` to `target`. Keeps prose readable when a vault note
+    has raw wiki-link syntax in its headers."""
+    import re  # noqa: PLC0415
+    def repl(m: "re.Match[str]") -> str:
+        body = m.group(1)
+        return body.split("|", 1)[1] if "|" in body else body
+    return re.sub(r"\[\[([^\[\]]+)\]\]", repl, text)
+
+
+def _is_frontmatter_only(snippet: str) -> bool:
+    """True if the snippet is nothing but a YAML frontmatter block.
+    These slip through because tags happen to match the scope query
+    but aren't useful content in Related Notes."""
+    s = snippet.strip()
+    if not s.startswith("---"):
+        return False
+    # After the first `---`, everything up to the closing `---` (if any)
+    # is frontmatter. If the snippet has no actual body after it, drop.
+    closing = s.find("---", 3)
+    if closing == -1:
+        return True
+    body = s[closing + 3:].strip()
+    return not body
+
+
+def _norm_title(title: str) -> str:
+    """Lowercase + collapse whitespace so 'Al-Andalus' and 'al-andalus '
+    dedup together. Avoid unicode normalisation — titles are already
+    user-facing display strings."""
+    return " ".join(title.lower().split())
+
+
+def _truncate_words(text: str, max_chars: int) -> str:
+    """Cut at the last word boundary within budget and append `…`."""
+    text = text.strip()
+    if len(text) <= max_chars:
+        return text
+    cut = text[:max_chars]
+    # Find the last whitespace so we don't slice mid-word.
+    space = cut.rfind(" ")
+    if space > max_chars // 2:  # don't leave an empty truncation
+        cut = cut[:space]
+    return cut.rstrip(" ,.;:-") + "…"
 
 
 @app.post("/api/projects/{project_id}/dig-deeper")
@@ -1494,6 +1679,29 @@ async def api_dig_deeper(project_id: str, request: Request) -> JSONResponse:
     })
 
 
+_SYNC_LOCKS: dict[str, asyncio.Lock] = {}
+_SYNC_BUSY: set[str] = set()
+
+
+def _sync_lock_for(project_id: str) -> asyncio.Lock:
+    """One lock per project. Prevents concurrent syncs on the same
+    project from racing on `vault_chunk` dedup; different projects can
+    still sync in parallel."""
+    lock = _SYNC_LOCKS.get(project_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _SYNC_LOCKS[project_id] = lock
+    return lock
+
+
+@app.get("/api/projects/sync-busy")
+async def api_sync_busy() -> JSONResponse:
+    """Snapshot of which project IDs currently have a vault sync in
+    flight. UI polls this cheaply to grey out conflicting actions
+    (switching projects, starting another sync, etc.)."""
+    return JSONResponse({"busy": sorted(_SYNC_BUSY)})
+
+
 @app.post("/api/projects/{project_id}/sync-vault")
 async def api_sync_vault(project_id: str, request: Request) -> JSONResponse:
     """Absorbs the old Knowledge-Memory Link workflow as a project-scoped
@@ -1501,7 +1709,15 @@ async def api_sync_vault(project_id: str, request: Request) -> JSONResponse:
     memory store via the existing knowledge-import pipeline, then record
     a `vault_sync` project_item that tracks path, last-sync time, and
     counts. Re-running on an unchanged vault stores 0 new chunks thanks
-    to content-hash dedup inside ImportService."""
+    to content-hash dedup inside ImportService.
+
+    Concurrency fix (#92): the rglob + per-file read + sklearn TF-IDF
+    ranking used to run directly on the event loop, so any other API
+    call (setActiveProject, /api/models/load, etc.) blocked until sync
+    finished — freezing the UI. All blocking work now runs in a thread
+    via `asyncio.to_thread`. A per-project lock also stops a second
+    click from kicking off a concurrent run on the same project.
+    """
     if _plugin_manager is None or _plugin_manager.memory_plugin is None:
         return JSONResponse({"error": "Memory plugin unavailable"}, status_code=503)
     body = await request.json()
@@ -1515,11 +1731,32 @@ async def api_sync_vault(project_id: str, request: Request) -> JSONResponse:
     from .importers.service import build_default_service  # noqa: PLC0415
     svc = build_default_service(_plugin_manager.memory_plugin)  # type: ignore[arg-type]
 
+    lock = _sync_lock_for(project_id)
+    if lock.locked():
+        return JSONResponse(
+            {"error": "sync already in progress for this project"},
+            status_code=409,
+        )
+    async with lock:
+        _SYNC_BUSY.add(project_id)
+        try:
+            result = await _run_vault_sync(project_id, path_str, proj, svc)
+        finally:
+            _SYNC_BUSY.discard(project_id)
+    return result
+
+
+async def _run_vault_sync(
+    project_id: str, path_str: str, proj: dict, svc: "object",
+) -> JSONResponse:
     stored = 0
     skipped = 0
     total = 0
     errors: list[str] = []
-    async for event in svc.run(path_str):
+    # ImportService.run is an async generator but the generator body does
+    # blocking adapter.extract + SQLite upsert work between yields. Drive
+    # it from a thread so it can't stall the event loop.
+    async for event in svc.run(path_str):  # type: ignore[attr-defined]
         if event.get("status") == "error":
             errors.append(str(event.get("message", "")))
         if event.get("status") == "done":
@@ -1529,7 +1766,6 @@ async def api_sync_vault(project_id: str, request: Request) -> JSONResponse:
 
     import hashlib as _hashlib  # noqa: PLC0415
     import json as _json  # noqa: PLC0415
-    from pathlib import Path as _Path  # noqa: PLC0415
     stats = {
         "path": path_str,
         "stored": stored,
@@ -1552,62 +1788,62 @@ async def api_sync_vault(project_id: str, request: Request) -> JSONResponse:
         url=path_str,
         content_hash=content_hash,
     )
-    # Also create one `vault_chunk` item per markdown note in the vault
-    # so Sources actually shows the user's notes (not just a single
-    # summary row). Dedup via content-hash per note — re-running sync
-    # is a no-op when files haven't changed.
-    #
-    # When the project has a scope, rank files by TF-IDF similarity to
-    # that scope and keep only topically-relevant ones (cap 200). This
-    # prevents, e.g., a "neuroscience" project from being flooded with
-    # unrelated notes like "Learning about Cars" just because they share
-    # the alphabet. Projects without a scope fall back to alphabetical
-    # top-200 — same behaviour as before.
-    note_count = 0
+    # The per-note pass — rglob, TF-IDF rank, per-file read, per-note
+    # add_project_item — is CPU + disk heavy. Run it in a thread so it
+    # doesn't block the event loop.
     scope_text = str(proj.get("scope") or "").strip()
-    SCOPE_FILE_MIN = 0.05
-    try:
-        root = _Path(path_str).expanduser().resolve()
-        if root.is_dir():
-            md_files: list[_Path] = []
-            for ext in ("*.md", "*.markdown"):
-                md_files.extend(root.rglob(ext))
-            # Deduplicate (rglob over multiple extensions can double-hit).
-            md_files = list(dict.fromkeys(md_files))
-            md_files = _rank_vault_files_by_scope(
-                md_files, scope_text, min_score=SCOPE_FILE_MIN, limit=200,
-            )
-            for p in md_files:
-                try:
-                    text = p.read_text(encoding="utf-8", errors="replace")
-                except Exception:
-                    continue
-                if not text.strip():
-                    continue
-                note_hash = _hashlib.sha256(
-                    (f"note:{p}:" + text).encode("utf-8", errors="replace")
-                ).hexdigest()
-                rel = p.relative_to(root) if root in p.parents else p.name
-                title = p.stem
-                snippet = text.strip().replace("\n\n", "\n")[:500]
-                iid = add_project_item(
-                    project_id,
-                    kind="vault_chunk",
-                    title=title,
-                    body=snippet,
-                    url=str(p),
-                    content_hash=note_hash,
-                )
-                if iid is not None:
-                    note_count += 1
-                # Reference rel inside body-less flows is unused here —
-                # silence the linter without a noqa.
-                _ = rel
-    except Exception as exc:  # pragma: no cover
-        logger.warning("vault sync item-pass failed: %s", exc)
+    note_count = await asyncio.to_thread(
+        _sync_vault_per_note, project_id, path_str, scope_text,
+    )
     stats["notes_bookmarked"] = note_count
     stats["scope_filtered"] = bool(scope_text)
     return JSONResponse({"ok": True, **stats})
+
+
+def _sync_vault_per_note(
+    project_id: str, path_str: str, scope_text: str,
+) -> int:
+    """Blocking helper. Caller must wrap in `asyncio.to_thread`."""
+    import hashlib as _hashlib  # noqa: PLC0415
+    from pathlib import Path as _Path  # noqa: PLC0415
+    SCOPE_FILE_MIN = 0.05
+    note_count = 0
+    try:
+        root = _Path(path_str).expanduser().resolve()
+        if not root.is_dir():
+            return 0
+        md_files: list[_Path] = []
+        for ext in ("*.md", "*.markdown"):
+            md_files.extend(root.rglob(ext))
+        md_files = list(dict.fromkeys(md_files))
+        md_files = _rank_vault_files_by_scope(
+            md_files, scope_text, min_score=SCOPE_FILE_MIN, limit=200,
+        )
+        for p in md_files:
+            try:
+                text = p.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            if not text.strip():
+                continue
+            note_hash = _hashlib.sha256(
+                (f"note:{p}:" + text).encode("utf-8", errors="replace")
+            ).hexdigest()
+            title = p.stem
+            snippet = text.strip().replace("\n\n", "\n")[:500]
+            iid = add_project_item(
+                project_id,
+                kind="vault_chunk",
+                title=title,
+                body=snippet,
+                url=str(p),
+                content_hash=note_hash,
+            )
+            if iid is not None:
+                note_count += 1
+    except Exception as exc:  # pragma: no cover
+        logger.warning("vault sync item-pass failed: %s", exc)
+    return note_count
 
 
 def _rank_vault_files_by_scope(
@@ -1678,6 +1914,19 @@ async def api_list_memories(
         "limit": limit,
         "offset": offset,
     })
+
+
+@app.get("/api/memories/{memory_id}/position")
+async def api_memory_position(memory_id: str) -> JSONResponse:
+    """Return the 0-based offset of a memory in the default
+    created-desc list. Clients use this to skip-page directly to a
+    deep-linked citation — walking 9k+ memories 50 rows at a time
+    was making "Open in Memory" timeout or miss the target entirely."""
+    from .store import get_memory_position  # noqa: PLC0415
+    pos = get_memory_position(memory_id)
+    if pos is None:
+        return JSONResponse({"error": "memory not found"}, status_code=404)
+    return JSONResponse({"id": memory_id, "offset": pos})
 
 
 @app.post("/api/memories")
@@ -1994,6 +2243,83 @@ async def api_repo_files(repo_id: str = "", format: str = "gguf") -> JSONRespons
         return JSONResponse({"files": files})
     except Exception as e:
         return JSONResponse({"files": [], "error": str(e)})
+
+
+# ---------------------------------------------------------------------------
+# Obsidian Watcher API — app-level background vault sync. See
+# `src/obsidian_watcher.py` for the loop + registry; these endpoints
+# are thin wrappers so the UI can register vaults, trigger an
+# immediate scan, and poll status.
+# ---------------------------------------------------------------------------
+
+@app.get("/api/obsidian/watched")
+async def api_obsidian_watched() -> JSONResponse:
+    from . import obsidian_watcher  # noqa: PLC0415
+    return JSONResponse({"vaults": obsidian_watcher.list_watched()})
+
+
+@app.post("/api/obsidian/register")
+async def api_obsidian_register(request: Request) -> JSONResponse:
+    from . import obsidian_watcher  # noqa: PLC0415
+    body = await request.json()
+    path = body.get("path", "")
+    scan_interval_s = int(body.get("scan_interval_s") or 300)
+    if not path:
+        return JSONResponse({"error": "path is required"}, status_code=400)
+    try:
+        row = obsidian_watcher.register(path, scan_interval_s=scan_interval_s)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    # Kick off an immediate scan so the registered vault appears in
+    # search results without making the user wait for the first tick.
+    asyncio.create_task(_obsidian_first_scan(row["path"]))
+    return JSONResponse({"ok": True, "vault": row})
+
+
+async def _obsidian_first_scan(path: str) -> None:
+    from . import obsidian_watcher  # noqa: PLC0415
+    try:
+        await obsidian_watcher.scan_now(path)
+    except Exception as exc:
+        logger.warning("first-scan for %s failed: %s", path, exc)
+
+
+@app.post("/api/obsidian/unregister")
+async def api_obsidian_unregister(request: Request) -> JSONResponse:
+    from . import obsidian_watcher  # noqa: PLC0415
+    body = await request.json()
+    path = body.get("path", "")
+    if not path:
+        return JSONResponse({"error": "path is required"}, status_code=400)
+    obsidian_watcher.unregister(path)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/obsidian/scan-now")
+async def api_obsidian_scan_now(request: Request) -> JSONResponse:
+    from . import obsidian_watcher  # noqa: PLC0415
+    body = await request.json()
+    path = body.get("path", "")
+    if not path:
+        return JSONResponse({"error": "path is required"}, status_code=400)
+    if obsidian_watcher.is_busy(path):
+        return JSONResponse({"error": "scan already in progress"}, status_code=409)
+    try:
+        stats = await obsidian_watcher.scan_now(path)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except asyncio.TimeoutError:
+        return JSONResponse({"error": "scan timed out"}, status_code=504)
+    return JSONResponse({"ok": True, **stats})
+
+
+@app.get("/api/obsidian/status")
+async def api_obsidian_status() -> JSONResponse:
+    from . import obsidian_watcher  # noqa: PLC0415
+    return JSONResponse({
+        "vaults": obsidian_watcher.list_watched(),
+        "busy": obsidian_watcher.busy_paths(),
+    })
 
 
 # ---------------------------------------------------------------------------

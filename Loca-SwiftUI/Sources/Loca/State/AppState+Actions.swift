@@ -326,7 +326,25 @@ extension AppState {
         do {
             let detail = try await BackendClient.shared.getConversation(id)
             messages = detail.messages
+            // Rehydrate the per-turn citation map so popover clicks keep
+            // working on previously-saved conversations.
+            citationsByMessageId.removeAll()
+            for msg in detail.messages {
+                if let cits = msg.citations, !cits.isEmpty {
+                    citationsByMessageId[msg.id] = cits
+                }
+            }
             activeConversationId = id
+            // Apply the conversation's per-conv adapter override (or its
+            // project's default, or base). Server resolves the layered
+            // fallback so siblings can carry different adapters in the
+            // same session. Fire-and-forget; "no model loaded" is a no-op.
+            do {
+                try await BackendClient.shared.activateConversationAdapter(id)
+            } catch {
+                // Ignore — sidebar's adapter chip will refresh on the
+                // next /api/models/active poll.
+            }
         } catch {}
     }
 
@@ -342,10 +360,23 @@ extension AppState {
         let userMessages = messages.filter { $0.role == "user" }
         guard let first = userMessages.first else { return }
         let title = String(first.content.plainText.prefix(60))
+        // Fold the per-turn citation map into each assistant message
+        // so reload preserves the popover's source metadata. Without
+        // this, every pill on a reloaded turn goes MISSING.
+        let withCitations = messages.map { msg -> ChatMessage in
+            guard msg.role == "assistant",
+                  let cits = citationsByMessageId[msg.id],
+                  !cits.isEmpty else {
+                return msg
+            }
+            var copy = msg
+            copy.citations = cits
+            return copy
+        }
         let req = SaveConversationRequest(
             id: activeConversationId,
             title: title,
-            messages: messages,
+            messages: withCitations,
             model: selectedModelId ?? selectedCapability.modeHint
         )
         do {
@@ -440,7 +471,6 @@ extension AppState {
             stream:         true,
             num_ctx:        contextWindow,
             research_mode:  researchMode && !lockdownMode,
-            autonomous_loop: autonomousLoop && !lockdownMode,
             conv_id:        activeConversationId,
             partner_mode:   partnerMode == .default_ ? nil : partnerMode.rawValue,
             project_id:     activeProjectId,
@@ -484,6 +514,15 @@ extension AppState {
         streamingText = ""
         isStreaming   = false
 
+        // Attach the per-turn structured citations to the assistant
+        // message we just finalised so bubble clicks on `[memory: N]`
+        // can show the actual cited content regardless of source type.
+        if let cits = lastUsage?.citations,
+           !cits.isEmpty,
+           assistantIdx < messages.count {
+            citationsByMessageId[messages[assistantIdx].id] = cits
+        }
+
         let totalMs = Date().timeIntervalSince(tStart) * 1000
         let ttftMs  = firstTokenTime.map { $0.timeIntervalSince(tStart) * 1000 } ?? 0
         lastStats = GenerationStats(
@@ -508,6 +547,27 @@ extension AppState {
             memories = page.items
             memoriesTotal = page.total
         } catch {}
+    }
+
+    /// Load a 50-row window centred on `id`. Used when a citation
+    /// deep-links into a store with thousands of memories — we skip
+    /// the 50-row-at-a-time pagination walk and jump straight to
+    /// the right page. Returns true when the id was located.
+    @discardableResult
+    func _loadMemoriesAround(_ id: String) async -> Bool {
+        do {
+            let pos = try await BackendClient.shared.memoryPosition(id)
+            if pos < 0 { return false }
+            let offset = max(0, pos - 10)
+            let page = try await BackendClient.shared.listMemoriesPaged(
+                limit: 50, offset: offset
+            )
+            memories = page.items
+            memoriesTotal = page.total
+            return memories.contains(where: { $0.id == id })
+        } catch {
+            return false
+        }
     }
 
     // MARK: - Research Partner
@@ -640,6 +700,48 @@ extension AppState {
         do { vaultSearchResults = try await BackendClient.shared.semanticSearch(path: selectedVaultPath, query: query) }
         catch { vaultSearchError = error.localizedDescription }
         isVaultSearching = false
+    }
+
+    // MARK: - Obsidian Watcher
+
+    func _refreshWatchedVaults() async {
+        do {
+            watchedVaults = try await BackendClient.shared.listWatchedVaults()
+        } catch {
+            // Silent — polling will retry and transient failures
+            // shouldn't wipe the last-known-good list from the UI.
+        }
+    }
+
+    func _registerWatchedVault(_ path: String) async {
+        isRegisteringVault = true
+        watcherError = nil
+        do {
+            _ = try await BackendClient.shared.registerWatchedVault(path: path)
+            await _refreshWatchedVaults()
+        } catch {
+            watcherError = error.localizedDescription
+        }
+        isRegisteringVault = false
+    }
+
+    func _unregisterWatchedVault(_ path: String) async {
+        do {
+            try await BackendClient.shared.unregisterWatchedVault(path: path)
+            await _refreshWatchedVaults()
+        } catch {
+            watcherError = error.localizedDescription
+        }
+    }
+
+    func _scanWatchedVaultNow(_ path: String) async {
+        watcherError = nil
+        do {
+            try await BackendClient.shared.scanWatchedVaultNow(path: path)
+            await _refreshWatchedVaults()
+        } catch {
+            watcherError = error.localizedDescription
+        }
     }
 
     // MARK: - System stats

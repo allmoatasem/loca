@@ -42,7 +42,6 @@ struct ResearchWorkspaceView: View {
     enum AddSourceKind: String, CaseIterable, Identifiable {
         case none = ""
         case quote
-        case vault
         var id: String { rawValue }
     }
     @State private var addSourceKind: AddSourceKind = .none
@@ -63,14 +62,6 @@ struct ResearchWorkspaceView: View {
     @State private var digDraft = ""
     @State private var digBusy = false
     @State private var digStatus: String?
-
-    // Vault sync — `detectedVaults` is fetched on appear so the Sync
-    // sub-panel can pre-fill vaultPath with the user's actual Obsidian
-    // vault (matches the Svelte behaviour).
-    @State private var vaultPath = ""
-    @State private var vaultBusy = false
-    @State private var vaultStatus: String?
-    @State private var detectedVaults: [DetectedVault] = []
 
     // New watch
     @State private var watchScope = ""
@@ -96,7 +87,6 @@ struct ResearchWorkspaceView: View {
         }
         .onAppear {
             Task { await state.loadProjects() }
-            Task { await loadDetectedVaults() }
             if let id = state.activeProjectId { Task { await refreshDetail(id) } }
         }
         .onChange(of: state.activeProjectId) { _, id in
@@ -341,7 +331,6 @@ struct ResearchWorkspaceView: View {
                 Picker("", selection: $addSourceKind) {
                     Text("+ Add source…").tag(AddSourceKind.none)
                     Text("Pin a quote").tag(AddSourceKind.quote)
-                    Text("Sync Obsidian vault").tag(AddSourceKind.vault)
                 }
                 .labelsHidden()
                 .frame(maxWidth: 160)
@@ -354,40 +343,24 @@ struct ResearchWorkspaceView: View {
                 }
             }
 
-            // Vault sync sub-panel only appears when the user picks it.
-            if addSourceKind == .vault {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Sync an Obsidian vault. Loca ranks notes by relevance to this project's scope before storing them.")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if detectedVaults.count == 1, let v = detectedVaults.first {
-                        Text("Detected: **\(v.name)** — edit the path below to use a different one.")
+            // Obsidian Watcher toggle — flips `obsidian_source` on the
+            // project so recall pulls live from the app-level watched
+            // vault index. Replaces the per-project Sync Vault flow.
+            if let d = detail {
+                HStack(alignment: .top, spacing: 10) {
+                    Toggle("", isOn: Binding(
+                        get: { d.obsidian_source ?? false },
+                        set: { newValue in Task { await toggleObsidianSource(newValue) } }
+                    ))
+                    .labelsHidden()
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Use Obsidian Watcher").font(.system(size: 12, weight: .medium))
+                        Text("Draws live from watched vaults — no per-project re-ingestion. Manage vaults in the Vault panel.")
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
-                    } else if detectedVaults.count > 1 {
-                        Picker("", selection: $vaultPath) {
-                            ForEach(detectedVaults) { v in
-                                Text(v.name).tag(v.path)
-                            }
-                        }
-                        .labelsHidden()
-                    } else {
-                        Text("No Obsidian vaults detected yet. Paste a vault path below or register one in the Vault panel.")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    HStack {
-                        TextField("/path/to/Obsidian/vault", text: $vaultPath)
-                            .textFieldStyle(.roundedBorder)
-                        Button(vaultBusy ? "Syncing…" : "Sync vault") { Task { await syncVault() } }
-                            .disabled(vaultBusy || vaultPath.trimmingCharacters(in: .whitespaces).isEmpty)
-                        Button("Cancel") {
-                            addSourceKind = .none
-                            vaultStatus = nil
-                        }
-                    }
-                    if let s = vaultStatus { Text(s).font(.system(size: 11)).foregroundColor(.secondary) }
+                    Spacer()
                 }
                 .padding(10)
                 .background(Color.secondary.opacity(0.06))
@@ -493,8 +466,11 @@ struct ResearchWorkspaceView: View {
                 Text("Weekly").tag(10080)
             }
             .pickerStyle(.menu)
+            // .borderedProminent reads as an actual button — `.borderless`
+            // rendered as faint text that first-time users missed (omnibus #92).
             Button("Create watch") { Task { await createWatch() } }
-                .buttonStyle(.borderless)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
                 .disabled(watchScope.trimmingCharacters(in: .whitespaces).isEmpty)
             if let s = watchStatus {
                 Text(s).font(.system(size: 11)).foregroundColor(.secondary)
@@ -750,24 +726,6 @@ struct ResearchWorkspaceView: View {
         quoteSheetOpen = true
     }
 
-    /// Fetches detected Obsidian vaults and pre-fills `vaultPath` with
-    /// the first match when the field is empty. Silent failure — if no
-    /// vault is found or the endpoint is unavailable, the user can still
-    /// type a path manually.
-    private func loadDetectedVaults() async {
-        do {
-            let vaults = try await BackendClient.shared.detectVaults()
-            await MainActor.run {
-                detectedVaults = vaults
-                if vaultPath.isEmpty, let first = vaults.first {
-                    vaultPath = first.path
-                }
-            }
-        } catch {
-            // No-op — manual entry still works.
-        }
-    }
-
     private func saveProjectAdapter(_ adapterName: String?) async {
         guard let id = state.activeProjectId else { return }
         do {
@@ -823,20 +781,16 @@ struct ResearchWorkspaceView: View {
         digBusy = false
     }
 
-    private func syncVault() async {
+    private func toggleObsidianSource(_ enabled: Bool) async {
         guard let pid = state.activeProjectId else { return }
-        let p = vaultPath.trimmingCharacters(in: .whitespaces)
-        guard !p.isEmpty else { return }
-        vaultBusy = true
-        vaultStatus = "Ingesting vault…"
         do {
-            let r = try await BackendClient.shared.syncVault(projectId: pid, path: p)
-            vaultStatus = "Synced: \(r.stored) stored, \(r.skipped) skipped (of \(r.total))."
-            await reloadItems(pid)
+            try await BackendClient.shared.patchProject(pid, obsidianSource: enabled)
+            await refreshDetail(pid)
         } catch {
-            vaultStatus = "Failed."
+            // Server rejected the patch — refresh so the toggle
+            // snaps back to the stored value.
+            await refreshDetail(pid)
         }
-        vaultBusy = false
     }
 
     private func createWatch() async {
