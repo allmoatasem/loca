@@ -9,7 +9,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "openapi": "openapi-typescript openapi.json -o src/lib/api.ts"
+    "openapi": "openapi-typescript openapi.json -o src/lib/api.ts",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium"
   },
   "dependencies": {
     "dompurify": "^3.2.0",
@@ -19,6 +21,7 @@
     "prismjs": "^1.30.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.48.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "@tsconfig/svelte": "^5.0.4",
     "@types/katex": "^0.16.7",
