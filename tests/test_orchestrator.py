@@ -324,6 +324,73 @@ class TestRerankMemories:
         out = _rerank_memories("python backend", mems, keep=5)
         assert out == []
 
+    def test_single_token_overlap_dropped_on_broad_query(self):
+        """Broad queries (3+ meaningful tokens) require overlap >= 2.
+        Prevents a lone coincidental token dragging an unrelated transcript
+        in — e.g. the `C++ / manual control` memory that surfaced on an
+        Al-Andalus query because both happened to contain "user"."""
+        mems = [
+            # "manual" is the only real overlap with the query's token pool.
+            {"id": "coincidental", "content": "User manual explains C++ control flow"},
+            # Proper double-match.
+            {"id": "focused", "content": "manual writing style and creative voice control"},
+        ]
+        out = _rerank_memories("creative writing voice style", mems, keep=5)
+        assert "coincidental" not in [m["id"] for m in out]
+        assert out and out[0]["id"] == "focused"
+
+    def test_transcript_shape_is_penalised(self):
+        """Auto-extracted conversation snippets shaped like `User: …` /
+        `Assistant: …` lose ties to curated memories on equivalent
+        overlap — keeps the pool from being dominated by over-collected
+        transcripts."""
+        mems = [
+            {
+                "id": "transcript",
+                "content": "User: I prefer Python for backend work over Node",
+                "type": "user_fact",
+            },
+            {
+                "id": "curated",
+                "content": "Backend preference: Python (fastapi) over Node",
+                "type": "knowledge",
+            },
+        ]
+        out = _rerank_memories("python backend preference", mems, keep=2)
+        assert out[0]["id"] == "curated"
+
+    def test_role_tokens_are_stopwords(self):
+        """The words "user" and "assistant" can't contribute to overlap —
+        they're in every saved transcript and would otherwise drag
+        unrelated transcripts in when the real query has nothing to do
+        with the conversation's subject matter."""
+        mems = [
+            # Only overlap with the query via the "user" stopword.
+            {"id": "role_only", "content": "User: hi Assistant: hello"},
+            # Real subject match.
+            {"id": "real_match", "content": "python backend async servers"},
+        ]
+        out = _rerank_memories("python backend preference", mems, keep=5)
+        # role_only's "user"/"assistant" tokens are stopwords now — it
+        # has zero counted overlap with the meaningful query terms.
+        assert "role_only" not in [m["id"] for m in out]
+        assert out[0]["id"] == "real_match"
+
+    def test_curated_kinds_beat_user_fact_on_ties(self):
+        """Project items / obsidian / knowledge get a small multiplicative
+        boost so user-curated content outranks auto-extracted user facts
+        when everything else is equal."""
+        mems = [
+            {"id": "user_fact",  "content": "photosynthesis basics", "type": "user_fact"},
+            {"id": "obsidian",   "content": "photosynthesis basics", "type": "obsidian"},
+            {"id": "project",    "content": "photosynthesis basics", "type": "project_item"},
+        ]
+        out = _rerank_memories("photosynthesis", mems, keep=3)
+        ids = [m["id"] for m in out]
+        # obsidian + project both get the same 1.20 boost — either may
+        # appear first, but `user_fact` is last at 0.95.
+        assert ids[-1] == "user_fact"
+
 
 # ---------------------------------------------------------------------------
 # Orchestrator.handle — non-streaming
