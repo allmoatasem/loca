@@ -920,7 +920,7 @@ class TestMemoryExtraction:
         orch._memory = mock_plugin
 
         messages = [
-            {"role": "user", "content": "I love hiking and outdoor adventures"},
+            {"role": "user", "content": "I love hiking long trails in the outdoor mountains every weekend"},
             {"role": "assistant", "content": "That's wonderful!"},
         ]
         saved = await orch.extract_and_save_memories(messages, conv_id="conv-1")
@@ -932,7 +932,7 @@ class TestMemoryExtraction:
 
     @pytest.mark.asyncio
     async def test_extract_skips_short_user_messages(self):
-        """Messages shorter than 20 chars should not be stored."""
+        """Messages below the length floor should not be stored."""
         from src.plugins.memory_plugin import MemoryPlugin
         orch, mm = _make_orchestrator()
         mock_plugin = MagicMock(spec=MemoryPlugin)
@@ -943,6 +943,55 @@ class TestMemoryExtraction:
         saved = await orch.extract_and_save_memories(messages)
         mock_plugin.store.assert_not_awaited()
         assert saved == []
+
+    @pytest.mark.asyncio
+    async def test_extract_skips_turns_below_length_floor(self):
+        """30-char turns fall below the extraction length floor
+        (40 chars), regardless of their word content — most casual
+        follow-ups land here."""
+        from src.plugins.memory_plugin import MemoryPlugin
+        orch, mm = _make_orchestrator()
+        mock_plugin = MagicMock(spec=MemoryPlugin)
+        mock_plugin.store = AsyncMock(return_value="mem-x")
+        orch._memory = mock_plugin
+
+        messages = [{"role": "user", "content": "ok thanks, what about X then?"}]  # 30 chars
+        saved = await orch.extract_and_save_memories(messages)
+        assert saved == []
+
+    @pytest.mark.asyncio
+    async def test_extract_skips_meta_queries(self):
+        """Questions about the model's training data aren't durable
+        user facts — gate them out of auto-extraction."""
+        from src.plugins.memory_plugin import MemoryPlugin
+        orch, mm = _make_orchestrator()
+        mock_plugin = MagicMock(spec=MemoryPlugin)
+        mock_plugin.store = AsyncMock(return_value="mem-x")
+        orch._memory = mock_plugin
+
+        messages = [{
+            "role": "user",
+            "content": "What was in your training data about local inference?",
+        }]
+        saved = await orch.extract_and_save_memories(messages)
+        assert saved == []
+
+    @pytest.mark.asyncio
+    async def test_extract_still_stores_durable_content(self):
+        """The gates shouldn't block real facts — a ≥40-char,
+        non-trivial, non-meta message still gets stored."""
+        from src.plugins.memory_plugin import MemoryPlugin
+        orch, mm = _make_orchestrator()
+        mock_plugin = MagicMock(spec=MemoryPlugin)
+        mock_plugin.store = AsyncMock(return_value="mem-ok")
+        orch._memory = mock_plugin
+
+        messages = [
+            {"role": "user", "content": "I run a fastapi backend on railway and deploy weekly."},
+            {"role": "assistant", "content": "Noted — I'll remember that deployment rhythm."},
+        ]
+        saved = await orch.extract_and_save_memories(messages)
+        assert saved and saved[0]["id"] == "mem-ok"
 
 
 # ---------------------------------------------------------------------------
