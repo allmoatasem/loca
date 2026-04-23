@@ -358,6 +358,15 @@ actor BackendClient {
         _ = try await delete("/api/memories/\(id)")
     }
 
+    /// Bulk-delete by type (pass the memory kind) or wipe everything
+    /// (pass nil). Returns the number of rows deleted.
+    func bulkDeleteMemories(kind: String?) async throws -> Int {
+        struct BulkResp: Decodable { let deleted: Int }
+        let body: [String: Any] = kind.map { ["type": $0] } ?? ["all": true]
+        let (data, _) = try await postRaw("/api/memories/bulk-delete", body: body)
+        return try JSONDecoder().decode(BulkResp.self, from: data).deleted
+    }
+
     func extractMemories(messages: [[String: String]], convId: String?) async throws -> [Memory] {
         var body: [String: Any] = ["messages": messages]
         if let convId { body["conv_id"] = convId }

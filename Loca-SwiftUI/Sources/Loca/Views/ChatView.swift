@@ -1748,6 +1748,9 @@ struct MemoryPanel: View {
     @State private var recallResults: [Memory] = []
     @State private var isRecalling = false
     @State private var recallError: String?
+    @State private var showBulkSheet = false
+    @State private var bulkBusy = false
+    @State private var bulkStatus: String?
 
     private var displayedMemories: [Memory] {
         if !searchText.isEmpty && !recallResults.isEmpty { return recallResults }
@@ -1781,6 +1784,25 @@ struct MemoryPanel: View {
                 .buttonStyle(.bordered)
                 .help("Store recent messages verbatim for future recall")
                 .disabled(state.messages.isEmpty || state.isExtractingMemories)
+
+                Menu {
+                    Button("Delete all user facts") { Task { await runBulkDelete(kind: "user_fact") } }
+                    Button("Delete all knowledge")  { Task { await runBulkDelete(kind: "knowledge") } }
+                    Button("Delete all corrections"){ Task { await runBulkDelete(kind: "correction") } }
+                    Divider()
+                    Button(role: .destructive) {
+                        Task { await runBulkDelete(kind: nil) }
+                    } label: {
+                        Text("Wipe EVERYTHING")
+                    }
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Bulk delete by kind, or wipe the whole store")
+                .disabled(bulkBusy)
 
                 Button("Done") { state.isMemoryPanelOpen = false }
                     .controlSize(.small)
@@ -1928,6 +1950,28 @@ struct MemoryPanel: View {
         }
         try? await Task.sleep(nanoseconds: 1_800_000_000)
         if state.memoryHighlightId == id { state.memoryHighlightId = nil }
+    }
+
+    /// Bulk delete by kind (or all when `kind` is nil). Confirms via
+    /// NSAlert before firing because this is destructive.
+    private func runBulkDelete(kind: String?) async {
+        let label = kind ?? "EVERY memory"
+        let alert = NSAlert()
+        alert.messageText = "Delete \(label)?"
+        alert.informativeText = "This cannot be undone."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        bulkBusy = true
+        do {
+            let deleted = try await BackendClient.shared.bulkDeleteMemories(kind: kind)
+            bulkStatus = "Deleted \(deleted)."
+            await state._loadMemories()
+        } catch {
+            bulkStatus = "Failed: \(error.localizedDescription)"
+        }
+        bulkBusy = false
     }
 
     private func _triggerRecall() {

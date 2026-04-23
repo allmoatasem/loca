@@ -388,6 +388,28 @@ def delete_memory(mem_id: str) -> None:
         c.commit()
 
 
+def delete_memories_by_type(kind: str) -> int:
+    """Bulk-delete every memory of a given type. Returns the row count.
+    Used by the Memory panel's "delete all <kind>" affordance — the
+    auto-extracted transcript pile can easily hit five digits, and
+    deleting one-by-one is not a sane UX."""
+    if kind not in MEMORY_TYPES:
+        return 0
+    with _conn() as c:
+        cursor = c.execute("DELETE FROM memories WHERE type=?", (kind,))
+        c.commit()
+        return cursor.rowcount or 0
+
+
+def delete_all_memories() -> int:
+    """Wipe the memories table. Returns the row count. Explicit
+    nuclear-option for users who want to start fresh."""
+    with _conn() as c:
+        cursor = c.execute("DELETE FROM memories")
+        c.commit()
+        return cursor.rowcount or 0
+
+
 def get_memory_embedding(mem_id: str) -> bytes | None:
     with _conn() as c:
         row = c.execute(

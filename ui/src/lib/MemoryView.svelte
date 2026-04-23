@@ -32,6 +32,13 @@
   let flashId = $state<string | null>(null);
   let itemEls = $state<Record<string, HTMLElement>>({});
 
+  // Bulk-delete affordance — for users who've accumulated thousands
+  // of auto-extracted memories and want a clean slate (or just a
+  // kind-scoped wipe). Sentinel `__ALL__` nukes the whole store.
+  let bulkKind = $state<string>('');
+  let bulkBusy = $state<boolean>(false);
+  let bulkStatus = $state<string>('');
+
   async function loadFirstPage(): Promise<void> {
     loading = true;
     try {
@@ -78,6 +85,32 @@
       return memories.some((m: MemoryItem) => m.id === id);
     } catch {
       return false;
+    }
+  }
+
+  async function runBulkDelete(): Promise<void> {
+    if (!bulkKind || bulkBusy) return;
+    const isWipe = bulkKind === '__ALL__';
+    const label = isWipe ? 'EVERY memory' : `every "${bulkKind}" memory`;
+    if (!window.confirm(`This will permanently delete ${label}. Continue?`)) return;
+    bulkBusy = true;
+    bulkStatus = 'Deleting…';
+    try {
+      const body = isWipe ? { all: true } : { type: bulkKind };
+      const r = await fetch('/api/memories/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json() as { deleted: number };
+      bulkStatus = `Deleted ${data.deleted} ${isWipe ? 'memories' : bulkKind + ' memories'}.`;
+      bulkKind = '';
+      await loadFirstPage();
+    } catch (e) {
+      bulkStatus = `Failed: ${e instanceof Error ? e.message : String(e)}`;
+    } finally {
+      bulkBusy = false;
     }
   }
 
@@ -210,14 +243,38 @@
       <button onclick={saveManual} disabled={!manualInput.trim()}>Save</button>
     </div>
 
-    <button
-      class="extract"
-      onclick={triggerExtract}
-      disabled={!canExtract}
-      title={canExtract ? '' : 'Open a conversation first'}
-    >
-      {extractLabel}
-    </button>
+    <div class="row-tools">
+      <button
+        class="extract"
+        onclick={triggerExtract}
+        disabled={!canExtract}
+        title={canExtract ? '' : 'Open a conversation first'}
+      >
+        {extractLabel}
+      </button>
+      <div class="bulk">
+        <select
+          bind:value={bulkKind}
+          title="Pick a type to bulk-delete"
+        >
+          <option value="">Bulk delete…</option>
+          <option value="user_fact">All user facts</option>
+          <option value="knowledge">All knowledge</option>
+          <option value="correction">All corrections</option>
+          <option value="__ALL__">Wipe everything</option>
+        </select>
+        <button
+          class="danger"
+          onclick={runBulkDelete}
+          disabled={!bulkKind || bulkBusy}
+        >
+          {bulkBusy ? 'Deleting…' : 'Apply'}
+        </button>
+      </div>
+    </div>
+    {#if bulkStatus}
+      <p class="bulk-status">{bulkStatus}</p>
+    {/if}
 
     <div class="list">
       {#if loading}
@@ -347,6 +404,46 @@
   .extract {
     align-self: stretch;
     text-align: left;
+    flex: 1;
+  }
+
+  .row-tools {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .bulk {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .bulk select {
+    background: var(--loca-color-surface);
+    border: 1px solid var(--loca-color-border);
+    border-radius: var(--loca-radius-sm);
+    padding: 4px 8px;
+    font-size: 11px;
+    color: var(--loca-color-text);
+  }
+  .bulk .danger {
+    background: color-mix(in srgb, var(--loca-color-danger) 12%, transparent);
+    color: var(--loca-color-danger);
+    border: 1px solid color-mix(in srgb, var(--loca-color-danger) 35%, transparent);
+    border-radius: var(--loca-radius-sm);
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .bulk .danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--loca-color-danger) 22%, transparent);
+  }
+  .bulk .danger:disabled { opacity: 0.4; cursor: not-allowed; }
+  .bulk-status {
+    margin: 4px 0 0;
+    font-size: 11px;
+    color: var(--loca-color-text-muted);
   }
 
   .list {

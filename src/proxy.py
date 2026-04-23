@@ -1959,6 +1959,38 @@ async def api_delete_memory(mem_id: str) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
+@app.post("/api/memories/bulk-delete")
+async def api_bulk_delete_memories(request: Request) -> JSONResponse:
+    """Bulk delete by type or nuke everything.
+
+    Body: `{"type": "user_fact" | "knowledge" | "correction"}` deletes
+    every row of that kind. `{"all": true}` deletes every memory.
+    Destructive — the client must explicitly pick one of those two
+    modes (an empty body returns 400).
+    """
+    from .store import MEMORY_TYPES as _MEM_TYPES  # noqa: PLC0415
+    from .store import delete_all_memories, delete_memories_by_type  # noqa: PLC0415
+
+    body = await request.json()
+    if body.get("all") is True:
+        deleted = delete_all_memories()
+        # Wipe any sqlite-vec shadow + embeddings cache downstream.
+        if _plugin_manager and hasattr(_plugin_manager.memory_plugin, "refresh"):
+            try:
+                _plugin_manager.memory_plugin.refresh()
+            except Exception:
+                pass
+        return JSONResponse({"deleted": deleted, "mode": "all"})
+    kind = body.get("type")
+    if kind not in _MEM_TYPES:
+        return JSONResponse(
+            {"error": f"type must be one of {sorted(_MEM_TYPES)} or set all=true"},
+            status_code=400,
+        )
+    deleted = delete_memories_by_type(kind)
+    return JSONResponse({"deleted": deleted, "mode": "type", "type": kind})
+
+
 @app.get("/api/memories/recall")
 async def api_recall_memories(q: str, limit: int = 20) -> JSONResponse:
     """Semantic (or keyword) search over stored memories."""

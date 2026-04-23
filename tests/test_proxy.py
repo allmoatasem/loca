@@ -223,6 +223,36 @@ class TestMemoriesAPI:
         assert r.json() == {"ok": True}
         client._mock_memory_plugin.delete.assert_called_once_with("m1")
 
+    def test_bulk_delete_by_type(self, client, monkeypatch):
+        calls = {}
+        def fake_delete_by_type(kind):
+            calls["kind"] = kind
+            return 42
+        monkeypatch.setattr(
+            "src.store.delete_memories_by_type", fake_delete_by_type,
+        )
+        r = client.post("/api/memories/bulk-delete", json={"type": "user_fact"})
+        assert r.status_code == 200
+        assert r.json() == {"deleted": 42, "mode": "type", "type": "user_fact"}
+        assert calls["kind"] == "user_fact"
+
+    def test_bulk_delete_all(self, client, monkeypatch):
+        monkeypatch.setattr(
+            "src.store.delete_all_memories", lambda: 9369,
+        )
+        r = client.post("/api/memories/bulk-delete", json={"all": True})
+        assert r.status_code == 200
+        assert r.json() == {"deleted": 9369, "mode": "all"}
+
+    def test_bulk_delete_rejects_unknown_type(self, client):
+        r = client.post("/api/memories/bulk-delete", json={"type": "nonsense"})
+        assert r.status_code == 400
+        assert "error" in r.json()
+
+    def test_bulk_delete_rejects_empty_body(self, client):
+        r = client.post("/api/memories/bulk-delete", json={})
+        assert r.status_code == 400
+
 
 # ---------------------------------------------------------------------------
 # Models API
