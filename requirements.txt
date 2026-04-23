@@ -30,3 +30,7 @@ pytest-xdist>=3.5.0,<4.0
 sqlite-vec>=0.1.0,<1.0
 mempalace>=0.1.0,<5.0
 chromadb>=1.5.4,<2.0
+# MCP — Model Context Protocol SDK. Lets external clients (Claude
+# Desktop, Cursor, etc.) call Loca's memory + vault as tools over
+# stdio. See `src/mcp_server.py` for the exposed surface.
+mcp>=1.0.0,<2.0

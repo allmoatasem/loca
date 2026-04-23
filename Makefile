@@ -79,6 +79,11 @@ ui-dev:
 ui-build:
 	cd ui && npm install --silent --no-audit --no-fund && npm run build
 
+# Svelte e2e smoke suite. First run does a one-off `npx playwright
+# install chromium` to pull the browser binary; reuses it thereafter.
+ui-e2e:
+	cd ui && npm install --silent --no-audit --no-fund && npm run test:e2e:install && npm run test:e2e
+
 # Regenerate ui/openapi.json + ui/src/lib/api.ts from FastAPI's live schema.
 # Run whenever routes or schemas change; both files are committed.
 openapi:

@@ -27,6 +27,7 @@ Loca manages its own inference backend (MLX on Apple Silicon, llama.cpp everywhe
 - **Obsidian Watcher** — app-level background sync of registered vaults: incremental re-index, per-vault scan-now / remove, always-live analyser with stats, orphans, broken links, and semantic search
 - **Web search** — SearXNG + trafilatura; optional Playwright deep research mode for dynamic sites
 - **Tool use** — `web_search`, `web_fetch`, `file_read`, `file_write`, `shell_exec`, `image_describe`
+- **MCP server** — Loca exposes its memory + Obsidian vaults as MCP tools (`memory_recall`, `memory_list`, `memory_add`, `vault_search`) for Claude Desktop / Cursor / any MCP-aware client. See [docs/MCP.md](docs/MCP.md)
 - **Per-conversation adapter override** — pin a LoRA to a single conversation; siblings in the same project still use the project default
 - **Typo and intent handling** — system prompt understands informal/shorthand input
 
