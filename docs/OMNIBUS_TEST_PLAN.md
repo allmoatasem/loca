@@ -18,19 +18,20 @@
 - [ ] **A3.** Click Resume. **Expected:** bar resumes from the same percent; no `0%` flicker.
 - [ ] **A4.** Close + reopen the app, check Dock icon. **Expected:** Loca icon visible in Dock when running and in the app switcher.
 - [ ] **A5.** Build a DMG (`./build_app.sh` then inspect `Loca.app/Contents/Resources/`). **Expected:** `loca.icns` present; DMG mount shows the correct icon.
-- [ ] **A6.** Try to chat before a model is loaded. **Expected:** friendly "Load a model first" banner or disabled input, not a raw `curl: all connection attempts failed`.
+- [ ] **A6.** Try to chat before a model is loaded. **Expected:** friendly "Load a model first" banner ABOVE the composer; input stays active (both UIs match — no disabled textarea). Send fires the banner text as an error, not a raw `curl: all connection attempts failed`.
 - [ ] **A7.** Load a model, chat during the load. **Expected:** input disabled or a "loading model…" overlay until ready.
 - [ ] **A8.** Bottom stats bar RAM indicator. **Expected:** matches Activity Monitor's system-used figure to within ~0.5 GB.
-- [ ] **A9.** Discover → For You tab → click Get on any row. **Expected:** jumps to Search HF tab with the model name pre-populated.
+- [ ] **A9.** Discover → For You tab → click Get on any row. **Expected:** jumps to Search HF tab with the **repo_id** pre-populated (e.g. `allenai/OLMo-2-0425-1B-Instruct`) so HF always resolves the exact repo.
 
 ## B. Chat polish
 
-- [ ] **B1.** Settings → Preferences → typewriter-stream toggle. Flip on, send a message. **Expected:** response renders word-by-word at a readable pace.
-- [ ] **B2.** With typewriter on, Preferences has a reading-speed slider. Drag to slowest. **Expected:** display rate drops noticeably.
+*(B1 / B2 — typewriter stream + reading-speed slider — dropped in
+commit 487676e. Stream renders deltas immediately as they arrive.)*
+
 - [ ] **B3.** Hover over a link or `[memory: N]` pill in an assistant reply. **Expected:** cursor becomes a pointer (🖱️). Swift: paragraph-level (any paragraph containing a link gets the pointer on hover). Svelte: browser-default per link range.
 - [ ] **B4.** Ask a question that triggers tool use (via an agentic client). **Expected:** no raw JSON `{"name": "web_search", ...}` in the bubble; either hidden or collapsed into a "called web_search" indicator.
 - [ ] **B5.** Click any `[memory: N]` citation. **Expected:** an inline **popover** appears showing the cited source's kind badge (MEMORY / VAULT / WEB / PROJECT), title, and snippet. Web sources also offer an **"Open link ↗"** button. Missing-metadata or phantom indices render a "MISSING" placeholder explaining the turn didn't ship source data. *(Deep-linking the popover into the Memory panel is explicitly out — removed in this PR; follow-up ticket tracks it.)*
-- [ ] **B6.** After a reply that used memories but didn't cite inline, the bubble shows a **"📓 N sources used"** expandable footer. **Expected:** clicking expands a list of every retrieved source with kind badge, title, and snippet. Works even when the model skips `[memory: N]` markers entirely.
+- [ ] **B6.** After a reply that used memories but didn't cite inline, the bubble shows a **"📓 N sources used"** expandable footer. **Expected:** clicking expands a list of every retrieved source with kind badge, title, and snippet. Works even when the model skips `[memory: N]` markers entirely. **Trivial greetings** ("hi", "hello there", "thanks") do NOT get a footer — the retrieval pool is skipped for ≤3-token greeting/ack queries.
 - [ ] **B7.** Copy-button parity: assistant AND user bubbles both show a `doc.on.doc` icon button. Click it → flips to a checkmark for ~1s, clipboard contains the message text.
 
 ## C. Deep Dive consolidation
