@@ -697,7 +697,7 @@ actor BackendClient {
     }
 
     func registerWatchedVault(
-        path: String, scanIntervalS: Int = 300,
+        path: String, scanIntervalS: Int = 300
     ) async throws -> WatchedVault {
         let (data, resp) = try await postRaw(
             "/api/obsidian/register",
